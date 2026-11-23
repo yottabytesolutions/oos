@@ -46,7 +46,7 @@ impl Runtime {
 
     pub(super) fn text(&self) -> String {
         format!(
-            "{} {} persistence {} last_crash {} sd.mode={} sd.expected={} sd.state={} sd.degraded_in_a_row=0 sd.repair=none",
+            "{} {} persistence {} last_crash {} sd.mode={} sd.expected={} sd.state={} sd.degraded_in_a_row={} sd.repair=none",
             self.memory.status(),
             self.gpu,
             if self.persistence { "on" } else { "off" },
@@ -54,6 +54,7 @@ impl Runtime {
             self.sd_card.mode().as_str(),
             self.sd_card.expected().as_str(),
             self.sd_card.state().as_str(),
+            self.sd_card.degraded_in_a_row(),
         )
     }
 }

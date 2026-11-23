@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Boot SD card diagnostics shared by the start-up check and UI.
 
+mod history;
 mod probe;
 mod record;
 mod timing;
 
+pub use history::record_start;
 pub use probe::detect;
-pub use record::{read_state, write_state, STATE_PATH};
+pub use record::{read_state, write_state, HISTORY_PATH, STATE_PATH};
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum Mode {
@@ -24,6 +26,10 @@ pub enum Mode {
 impl Mode {
     const ALL: [Self; 8] =
         [Self::Legacy, Self::Hs, Self::Sdr12, Self::Sdr25, Self::Sdr50, Self::Ddr50, Self::Sdr104, Self::Unknown];
+
+    fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|mode| mode.as_str() == text)
+    }
 
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -69,7 +75,7 @@ pub enum CardState {
     Ok,
     Degraded,
     Worse,
-    /// Reserved for a card with no prior observation at the expected mode.
+    /// The card has yet to reach the running device-tree ceiling.
     Unverified,
     Unknown,
 }
@@ -142,15 +148,26 @@ impl Reason {
 pub struct Status {
     mode: Mode,
     expected: Mode,
+    ceiling: Mode,
     state: CardState,
     reason: Reason,
+    degraded_in_a_row: u32,
+    kexec: bool,
 }
 
 impl Status {
     fn from_probe(mode: Result<Mode, Reason>, expected: Result<Mode, Reason>) -> Self {
         let reason = mode.err().or(expected.err()).unwrap_or(Reason::None);
         let (mode, expected) = (mode.unwrap_or_default(), expected.unwrap_or_default());
-        Self { mode, expected, state: CardState::compare(mode, expected), reason }
+        Self {
+            mode,
+            expected,
+            ceiling: expected,
+            state: CardState::compare(mode, expected),
+            reason,
+            degraded_in_a_row: 0,
+            kexec: false,
+        }
     }
 
     pub const fn mode(self) -> Mode {
@@ -163,6 +180,18 @@ impl Status {
 
     pub const fn state(self) -> CardState {
         self.state
+    }
+
+    pub const fn ceiling(self) -> Mode {
+        self.ceiling
+    }
+
+    pub const fn degraded_in_a_row(self) -> u32 {
+        self.degraded_in_a_row
+    }
+
+    pub const fn is_kexec(self) -> bool {
+        self.kexec
     }
 }
 

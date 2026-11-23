@@ -22,6 +22,11 @@ pub fn detect() -> Status {
     detect_with(&System)
 }
 
+pub(super) fn card_key() -> Option<[u8; 16]> {
+    let cid = fs::read_to_string(Path::new(CARD_DEVICE).join("cid")).ok()?;
+    super::history::card_key(&cid)
+}
+
 fn detect_with(probe: &impl Probe) -> Status {
     let Some(host_path) = probe.resolve(Path::new(CARD_DEVICE)).ok().and_then(|path| path.parent().map(Path::to_owned))
     else {

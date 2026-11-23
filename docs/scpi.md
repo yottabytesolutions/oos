@@ -319,13 +319,13 @@ Logic commands are `:LA:STATe[?]`, `:LA:DIGital<n>:DISPlay[?]`, `:LA:POD<n>:THRe
 | Field | Values |
 | --- | --- |
 | `sd.mode` | `legacy`, `hs`, `sdr12`, `sdr25`, `sdr50`, `ddr50`, `sdr104`, `unknown` |
-| `sd.expected` | Running device-tree ceiling `hs`, `sdr50`, `sdr104`, or `unknown` |
-| `sd.state` | `ok` at or above the ceiling, `degraded` at least as fast as High speed but below the ceiling, `worse` below High speed, or `unknown` when either input is unavailable. `unverified` is reserved for per-card history. |
-| `sd.degraded_in_a_row` | `0` |
+| `sd.expected` | Lower of the running device-tree ceiling and the card's best recorded mode, or `unknown` when neither a known observation nor usable history gives an expectation, or the ceiling is unknown. Uses the `sd.mode` tokens. |
+| `sd.state` | `ok` at or above the ceiling, `degraded` at least as fast as High speed and below the ceiling, or `worse` below High speed, once the card has reached the ceiling. `unverified` means the card has yet to reach the ceiling. `unknown` means the current observation or ceiling is unavailable. |
+| `sd.degraded_in_a_row` | Count of consecutive ordinary `degraded` or `worse` starts for the same card. Kexec starts leave the count unchanged. |
 | `sd.repair` | `none` |
 
-A boot that negotiated High speed against an SDR104 ceiling reports
-`sd.mode=hs sd.expected=sdr104 sd.state=degraded sd.degraded_in_a_row=0 sd.repair=none`.
+A card previously seen in SDR104 that has just started slowly for the first time reports
+`sd.mode=hs sd.expected=sdr104 sd.state=degraded sd.degraded_in_a_row=1 sd.repair=none`.
 
 ## Errors and compatibility limits
 

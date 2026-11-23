@@ -5,3 +5,7 @@ pub(crate) mod card_check;
 pub(crate) mod messages;
 pub(crate) mod sign;
 pub(crate) mod storage;
+#[cfg(test)]
+pub(super) mod test_support;
+#[cfg(any(target_os = "linux", test))]
+pub(crate) mod watch;

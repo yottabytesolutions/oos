@@ -3,7 +3,7 @@
 use super::{
     card::Region,
     hash::{hex, unhex},
-    io, sd, Card, Entry, State, SLOT_WRITING,
+    io, lock, sd, short, Card, Entry, State, SLOT_WRITING,
 };
 use std::path::Path;
 
@@ -133,4 +133,62 @@ impl State {
             ""
         }
     }
+}
+
+/// The image passed its trial. Returns true when it was on trial. `expect`: only when the state still names this
+/// image as current.
+pub fn confirm(state_path: &Path, expect: Option<[u8; 32]>) -> Result<bool, String> {
+    confirm_running(state_path, expect, None)
+}
+
+/// `confirm`, and with `running` (the build of the running image) only if that is the build on trial: an image that was
+/// written but never started is not confirmed.
+pub fn confirm_running(state_path: &Path, expect: Option<[u8; 32]>, running: Option<&str>) -> Result<bool, String> {
+    confirm_start(state_path, expect, running, None)
+}
+
+/// Confirm a watched start and include the observed card mode in the SDR104 trial event.
+pub fn confirm_with_sd_mode(state_path: &Path, expect: [u8; 32], mode: crate::bootcard::Mode) -> Result<bool, String> {
+    confirm_start(state_path, Some(expect), None, Some(mode))
+}
+
+fn confirm_start(
+    state_path: &Path,
+    expect: Option<[u8; 32]>,
+    running: Option<&str>,
+    observed: Option<crate::bootcard::Mode>,
+) -> Result<bool, String> {
+    let _l = lock(state_path)?;
+    let mut st = State::load(state_path).map_err(io("reading the update state"))?;
+    if st.trial.is_none() {
+        return Ok(false);
+    }
+    if st.sd_trial.is_some() && st.trial == Some(0) {
+        return Err("SD mode trial has not booted yet: not confirmed".into());
+    }
+    if let Some(run) = running {
+        let cur = st.current.as_ref().map(|c| c.build.trim().to_string()).unwrap_or_default();
+        if run.trim() != cur {
+            return Err(format!(
+                "the running build {} is not the one on trial ({}): it has not started yet",
+                run.trim(),
+                cur
+            ));
+        }
+    }
+    if let Some(x) = expect {
+        if st.current.as_ref().map(|c| c.sha256) != Some(x) {
+            return Ok(false);
+        }
+    }
+    st.trial = None;
+    st.event = format!("confirmed {}", st.current.as_ref().map_or("?", |c| short(&c.build)));
+    if let Some(mode) = observed.filter(|_| st.sd_trial == Some(sd::Mode::Sdr104)) {
+        st.event.push_str(" (SDR104 trial, observed ");
+        st.event.push_str(mode.as_str());
+        st.event.push(')');
+    }
+    st.sd_trial = None;
+    st.save(state_path).map_err(io("writing the update state"))?;
+    Ok(true)
 }

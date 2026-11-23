@@ -105,6 +105,27 @@ fn trial_bookkeeping_precedes_crash_save() {
 }
 
 #[test]
+fn trial_bookkeeping_follows_the_stock_mount_and_precedes_the_sd_record() {
+    let rc = include_str!("../../rootfs/initramfs/etc/rcS");
+    let boot = rc.find("/bin/oos-update boot").unwrap();
+    let check = rc.find("/bin/oos-update card-check").unwrap();
+    let stock = rc.find("/bin/oos-mount-rigol").unwrap();
+    assert!(stock < boot && boot < check);
+}
+
+#[test]
+fn card_check_and_watch_follow_the_data_mount_and_watch_follows_ui_launch() {
+    let rc = include_str!("../../rootfs/initramfs/etc/rcS");
+    let data = rc.find("/bin/oos-mount-data").unwrap();
+    let boot = rc.find("/bin/oos-update boot").unwrap();
+    let check = rc.find("/bin/oos-update card-check").unwrap();
+    let watch = rc.find("/bin/oos-update watch").unwrap();
+    let ui = rc.find("/bin/oos-ui-loop").unwrap();
+    assert!(data < boot && boot < check && check < watch);
+    assert!(ui < watch);
+}
+
+#[test]
 fn counter_write_failures_preserve_retry_identity() {
     for (name, cmd, call) in [("file-sync", "sync", 1), ("rename", "mv", 1), ("dir-sync", "sync", 2)] {
         let f = Fake::new(name);

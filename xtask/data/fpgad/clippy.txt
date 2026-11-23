@@ -1,5 +1,5 @@
 # Clippy and rustc lint findings per file and lint: <count> <crate> <file> <lint>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
-3 fpgad fpgad/src/bin/oos-update.rs clippy::too_many_lines
+2 fpgad fpgad/src/bin/oos-update.rs clippy::too_many_lines
 6 fpgad fpgad/src/bin/oos-update.rs clippy::undocumented_unsafe_blocks
 1 fpgad fpgad/src/cmd/selfcal.rs clippy::too_many_lines

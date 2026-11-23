@@ -8,7 +8,7 @@
 962 file hal/src/dho/seq.rs
 870 file hal/src/dho/tpu.rs
 451 file hal/src/model.rs
-552 file hal/src/update/mod.rs
+519 file hal/src/update/mod.rs
 66 fn hal/src/dho/acq.rs configure_la
 65 fn hal/src/dho/afg.rs Wave::table
 250 fn hal/src/dho/boot/mod.rs Ctx::run

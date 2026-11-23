@@ -150,7 +150,10 @@ fn detected_status_round_trips_through_the_startup_file() {
     assert_eq!(read_state(&path), Status::default());
     let detected = detect_with(&Fake { ios: Some(HS_IOS), properties: &["sd-uhs-sdr104"], ..Fake::default() });
     write_state(&path, detected).unwrap();
-    assert_eq!(fs::read_to_string(&path).unwrap(), "mode=hs\nexpected=sdr104\nstate=degraded\nreason=none\n");
+    assert_eq!(
+        fs::read_to_string(&path).unwrap(),
+        "mode=hs\nexpected=sdr104\nstate=degraded\nreason=none\nceiling=sdr104\ndegraded_in_a_row=0\nkexec=0\n"
+    );
     assert_eq!(read_state(&path), detected);
     let unknown = detect_with(&Fake { debugfs: false, ..Fake::default() });
     write_state(&path, unknown).unwrap();

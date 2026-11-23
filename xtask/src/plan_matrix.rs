@@ -57,7 +57,8 @@ fn compare(ctx: &Context, root: &Path, actual: &str, update: bool) -> Outcome {
     }
     let expected = std::fs::read_to_string(&path).map_err(|e| vec![format!("{BASELINE}: {e}"), UPDATE.into()])?;
     if expected == actual {
-        return Ok(vec![format!("65 plans match {BASELINE} (host defaults, synthetic calibration)")]);
+        let count = cases().len();
+        return Ok(vec![format!("{count} plans match {BASELINE} (host defaults, synthetic calibration)")]);
     }
     let generated = host::target(ctx, root)?.join("plan-matrix.txt");
     std::fs::write(&generated, actual).map_err(|e| vec![e.to_string()])?;

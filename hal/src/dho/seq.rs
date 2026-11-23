@@ -26,8 +26,8 @@ pub use execute::{
     acquire_batch, acquire_batch_idle, acquire_batch_until, acquire_batch_with_clock, execute_bus, execute_bus_until,
 };
 pub use readout::{
-    compress_k, compress_word, compressed_len, frame_bytes, frame_stride, read_len, unpad, unpad_in, window, Playback,
-    COMPRESS_K_MAX, STAMP_BYTES, STAMP_WORDS,
+    compress_k, compress_word, compressed_len, frame_bytes, frame_stride, read_len, unpad, unpad_in, validate_readout,
+    window, Playback, ReadoutError, COMPRESS_K_MAX, STAMP_BYTES, STAMP_WORDS,
 };
 pub use settings::{
     raw_settings, tdiv_fs, time_fs, Chan, Couple, HwMask, HwZone, Segments, Settings, Trig, HOLDOFF_MIN,

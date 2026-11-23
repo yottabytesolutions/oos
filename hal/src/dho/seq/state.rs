@@ -3,7 +3,7 @@
 
 //! Persistent hardware shadows and acquisition configuration.
 
-use super::{frames, readout, settings::record_params, tdiv_fs, time_fs, Couple, Settings, Step};
+use super::{frames, readout, settings::record_params, tdiv_fs, time_fs, Couple, ReadoutError, Settings, Step};
 use crate::dho::{acq, adc, afe, auxout, hz, la, mask, scu, tpu, zone};
 
 mod qualify;
@@ -80,6 +80,7 @@ impl State {
         }
         let mut st = Vec::new();
         let p = record_params(s, &mut st)?;
+        readout::validate_readout(s, &p).map_err(|error| error.to_string())?;
         self.adc_steps(s.mask, cal_adc, &mut st)?;
         if s.afe {
             self.afe_steps(s, &p, cal, &mut st)?;
@@ -223,14 +224,15 @@ impl State {
     }
 
     /// One acquisition with the configured registers: arm, wait, read-out window, read.
-    pub fn acquire(&mut self, s: &Settings, p: &hz::Params) -> Vec<Step> {
+    pub fn acquire(&mut self, s: &Settings, p: &hz::Params) -> Result<Vec<Step>, ReadoutError> {
+        readout::validate_readout(s, p)?;
         let nf = frames(s, p);
         let mut st = self.arm_steps(s, p);
-        st.extend(self.read_steps(s, p, nf));
+        st.extend(self.read_steps(s, p, nf)?);
         if s.la.is_some() {
             st.extend(self.la_read_steps(s, p));
         }
-        st
+        Ok(st)
     }
 
     /// The raw LA read after the analog read of the same acquisition (la.md 4.2, UNTESTED): pass-through LA chain,
@@ -245,20 +247,26 @@ impl State {
     /// side (assumed: the next frame waits for the play-out of the one before), so a frame that is not played does not
     /// reach the average (B1, unit 2026-11-13: reading the newest frame alone left the noise near 0.5 mV at any
     /// count). The caller shows the newest.
-    pub fn read_steps(&mut self, s: &Settings, p: &hz::Params, count: u32) -> Vec<Step> {
+    pub fn read_steps(&mut self, s: &Settings, p: &hz::Params, count: u32) -> Result<Vec<Step>, ReadoutError> {
         self.read_steps_at(s, p, 0, count)
     }
 
     /// Frame `frame` of the last batch read again, with the window and compression of `s` (STOP: another part of the
     /// record, or the whole record): the same read-out with a type-4 play of that frame only; play-last without
     /// `play4`. Nothing is armed, the ring keeps the batch (acquisition-start.md, "Reading a stored frame again").
-    pub fn reread_steps(&mut self, s: &Settings, p: &hz::Params, frame: u32) -> Vec<Step> {
+    pub fn reread_steps(&mut self, s: &Settings, p: &hz::Params, frame: u32) -> Result<Vec<Step>, ReadoutError> {
         self.read_steps_at(s, p, frame, 1)
     }
 
     /// `read_steps` of `count` frames from frame `first` of the ring (the segments of a hardware segmented record,
     /// a stored frame read again).
-    pub fn read_steps_at(&mut self, s: &Settings, p: &hz::Params, first: u32, count: u32) -> Vec<Step> {
+    pub fn read_steps_at(
+        &mut self,
+        s: &Settings,
+        p: &hz::Params,
+        first: u32,
+        count: u32,
+    ) -> Result<Vec<Step>, ReadoutError> {
         readout::steps_at(s, p, &mut self.sh, (first, count))
     }
 
@@ -278,7 +286,7 @@ pub fn plan(
     cal_adc: Option<&adc::CalAdc>,
 ) -> Result<(Vec<Step>, hz::Params), String> {
     let (mut v, p) = st.configure(s, cal, cal_adc)?;
-    v.extend(st.acquire(s, &p));
+    v.extend(st.acquire(s, &p).map_err(|error| error.to_string())?);
     Ok((v, p))
 }
 

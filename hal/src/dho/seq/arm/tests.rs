@@ -32,7 +32,7 @@ fn prearm_writes_the_same_sequence_as_the_plain_batch_loop() {
     let p = State::handover(1, None).configure(&s, None, None).unwrap().1;
     let batch = |st: &mut State, pre: bool, armed: bool| -> Vec<Step> {
         let mut v = if armed { wait_steps(&p) } else { st.arm_steps(&s, &p) };
-        v.extend(st.read_steps(&s, &p, 100));
+        v.extend(st.read_steps(&s, &p, 100).unwrap());
         if pre {
             v.extend(st.arm_only_steps(&s, &p));
         }

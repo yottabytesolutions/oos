@@ -251,8 +251,8 @@ impl<T: PacingPolicy> AcqLoop<T> {
             self.replay.replayed = Some(view);
             let params = &batch.params;
             let (settings, point) = stop_plan(&batch.settings, params, view.scale, view.delay);
-            let steps = io.state.reread_steps(&settings, params, batch.index);
-            match io.execute(&steps) {
+            let result = io.state.reread_steps(&settings, params, batch.index).map_err(|error| error.to_string());
+            match result.and_then(|steps| io.execute(&steps)) {
                 Ok(bytes) => {
                     let fb = seq::frame_bytes(&settings, params);
                     self.seq += 1;

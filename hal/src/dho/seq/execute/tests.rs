@@ -23,6 +23,35 @@ impl time::Clock for TestClock {
 }
 
 #[test]
+fn invalid_batch_readout_is_reported_before_any_register_write() {
+    let clock = TestClock { start: Instant::now(), elapsed: Cell::default() };
+    let mut state = State::handover(1, None);
+    let mut settings = Settings { depth: 1000, ..Settings::default() };
+    let (_, params) = state.configure(&settings, None, None).unwrap();
+    settings.compress = 2;
+    settings.window = Some((24, 1 - i64::from(params.pre)));
+    let mut bar = Recorder::default();
+    let mut dma = DmaBuf::new();
+    let error = acquire_batch_with_clock(
+        &mut state,
+        &settings,
+        &params,
+        &mut bar,
+        &mut std::io::empty(),
+        &mut dma,
+        false,
+        0,
+        |_| {},
+        || false,
+        || false,
+        &clock,
+    )
+    .unwrap_err();
+    assert_eq!(error, super::super::ReadoutError::UnalignedWindow { start: 1, points: 24 }.to_string());
+    assert!(bar.writes.is_empty());
+}
+
+#[test]
 fn phase_observer_leaves_the_acquisition_sequence_and_read_unchanged() {
     let settings = Settings { frames: 2, ..Settings::default() };
     let start = Instant::now();

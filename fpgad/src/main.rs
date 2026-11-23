@@ -67,7 +67,8 @@
 //!   --no-read          do all writes but not the c2h read (diagnostic: read with dd afterwards)
 //!   --header           read with the 16-byte frame header (0x1010 bit31 = 0) like the stock live loop
 //!   --keep-config      skip trigger, acquisition configuration and auto trigger (arm with what the stock system left behind)
-//!   --compress 1       FPGA compression factor k of the whole record (0x1170, stock live display path; use with --all)
+//!   --compress 1       FPGA playback compression factor k (0x1170), applied to the play window
+//!   --capture peak:D|decimate:D  diagnostic capture reduction by D, with a whole-record read
 //!   --frames 1         frames per batch (one arm, one play, one read of all frames; capped at the frame ring)
 //!   --average N        hardware average of N triggers (0x1004 bit3; reads the newest frame of the batch; not verified)
 //!   --blocks 7         configuration blocks before the arm: bit0 trigger, bit1 acquisition, bit2 auto trigger

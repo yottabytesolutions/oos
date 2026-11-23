@@ -10,7 +10,9 @@ use oos_hal::dho::bus::DmaBuf;
 use oos_hal::dho::pairs;
 use oos_hal::dho::seg::sim::{engine, Engine};
 use oos_hal::dho::seq::time::{read_raw_again_with_clock, RawReadIo};
-use oos_hal::dho::seq::{acquire_batch_with_clock, compressed_len, frame_bytes, raw_settings, Settings, State};
+use oos_hal::dho::seq::{
+    acquire_batch_with_clock, compressed_len, execute_bus, frame_bytes, raw_settings, Settings, State,
+};
 
 fn words(b: &[u8]) -> Vec<u16> {
     b.chunks_exact(2).map(|x| u16::from_le_bytes([x[0], x[1]])).collect()
@@ -21,12 +23,13 @@ fn compressed_batch_then_the_newest_frame_raw() {
     let k = 4u32;
     let s = Settings { tdiv: 10e-6, frames: 10, compress: k, window: None, ..Settings::default() };
     let mut st = State::handover(1, None);
-    let p = st.configure(&s, None, None).unwrap().1;
+    let (config, p) = st.configure(&s, None, None).unwrap();
     assert_eq!(p.ratio, 1);
     // every frame recorded at the first look at the done flag
     let (eng, mut bar, mut c2h) = engine(Engine::new(0, 1_000_000_000, 10, p.ratio));
     let clock = support::clock::Manual::new(std::time::Instant::now());
     let mut dma = DmaBuf::new();
+    execute_bus(&config, &mut bar, &mut c2h, &mut dma, |_| {}).unwrap();
     let n = acquire_batch_with_clock(
         &mut st,
         &s,

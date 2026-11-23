@@ -120,7 +120,7 @@ mod tests {
         let mut st = State::handover(1, None);
         let (mut v, p) = st.configure(&s, None, None).unwrap();
         v.extend(st.arm_steps(&s, &p));
-        v.extend(st.read_steps(&s, &p, 4));
+        v.extend(st.read_steps(&s, &p, 4).unwrap());
         writes(&v)
     }
 

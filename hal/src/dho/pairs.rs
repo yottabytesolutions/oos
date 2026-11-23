@@ -39,10 +39,12 @@ pub struct Layout {
 /// The layout the UI assumes.
 pub const LAYOUT: Layout = Layout { block_k: BLOCK_K, order: ORDER, shift: 0 };
 
-/// First index of the minimum and of the maximum of `s` (not empty).
-fn extremes(s: &[u16]) -> ((usize, u16), (usize, u16)) {
-    let (mut lo, mut hi) = ((0, s[0]), (0, s[0]));
-    for (i, &x) in s.iter().enumerate() {
+/// Minimum and maximum of one block in the requested order, using the first occurrence of each extreme.
+pub(super) fn pair(samples: impl Iterator<Item = u16>, order: Order) -> Option<[u16; PAIR]> {
+    let mut indexed = samples.enumerate();
+    let mut lo = indexed.next()?;
+    let mut hi = lo;
+    for (i, x) in indexed {
         if x < lo.1 {
             lo = (i, x);
         }
@@ -50,7 +52,12 @@ fn extremes(s: &[u16]) -> ((usize, u16), (usize, u16)) {
             hi = (i, x);
         }
     }
-    (lo, hi)
+    let min_first = match order {
+        Order::Time => lo.0 <= hi.0,
+        Order::MinFirst => true,
+        Order::MaxFirst => false,
+    };
+    Some(if min_first { [lo.1, hi.1] } else { [hi.1, lo.1] })
 }
 
 /// Point `j` of a compressed read of `raw` with factor `k` in layout `l`, None outside the record.
@@ -64,17 +71,8 @@ pub fn point(raw: &[u16], k: usize, l: Layout, j: usize) -> Option<u16> {
     let span = l.block_k.max(1) * k;
     let a = if l.block_k >= 2 { j / PAIR * span } else { j * k };
     let b = (a + span).min(raw.len());
-    if a >= b {
-        return None;
-    }
-    let ((ilo, lo), (ihi, hi)) = extremes(&raw[a..b]);
-    let first = j.is_multiple_of(PAIR);
-    let min_first = match l.order {
-        Order::Time => ilo <= ihi,
-        Order::MinFirst => true,
-        Order::MaxFirst => false,
-    };
-    Some(if first == min_first { lo } else { hi })
+    let pair = pair(raw.get(a..b)?.iter().copied(), l.order)?;
+    Some(pair[j % PAIR])
 }
 
 /// The whole compressed read of `raw` (one point per k samples, the last block possibly short) in layout `l`.

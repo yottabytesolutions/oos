@@ -167,7 +167,7 @@ fn run(
 fn reread(ring: &mut Ring<'_>, state: &mut seq::State, batch: Batch, expected: u8) {
     let mut dma = DmaBuf::new();
     let settings = batch.plan(None).unwrap();
-    let steps = state.reread_steps(&settings, &batch.params, batch.index);
+    let steps = state.reread_steps(&settings, &batch.params, batch.index).unwrap();
     seq::execute_bus(&steps, ring, &mut Codes(ring.played), &mut dma, |_| {}).unwrap();
     assert!(!dma.data().is_empty());
     assert!(dma.data().iter().all(|&byte| byte == expected));

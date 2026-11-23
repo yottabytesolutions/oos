@@ -12,8 +12,6 @@ use std::ffi::CString;
 use std::io;
 
 mod flip;
-#[cfg(target_os = "linux")]
-pub(crate) use flip::FlipEvent;
 use flip::{Events, FlipState};
 
 const fn iowr(nr: u32, size: usize) -> libc::c_ulong {

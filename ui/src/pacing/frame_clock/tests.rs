@@ -83,6 +83,50 @@ fn duplicate_sequence_cannot_start_a_second_step() {
 }
 
 #[test]
+fn publication_predicts_an_immediate_step_while_a_slot_is_busy() {
+    let start = Instant::now();
+    let refresh = Duration::from_millis(10);
+    for busy in [FrameSlot::HelperBusy, FrameSlot::PanelBusy] {
+        let published = ClockPublication::new(start);
+        let mut clock = FrameClock::new(ClockMode::Flip, FlipDivisor::Two, start, refresh);
+        for (ms, sequence, slot, elapsed, deadline) in [
+            (10, Some(1), FrameSlot::Ready, None, 20),
+            (20, Some(2), busy, None, 20),
+            (22, None, busy, None, 22),
+            (23, None, FrameSlot::Ready, Some(23), 40),
+            (24, None, FrameSlot::Ready, None, 40),
+        ] {
+            let now = start + Duration::from_millis(ms);
+            let edge = sequence.map(|sequence| Flip { sequence, at: now });
+            assert_eq!(clock.advance_available(now, edge, slot), (elapsed.map(Duration::from_millis), false));
+            published.publish(&clock, now);
+            assert_eq!(
+                published.next_step_after(now),
+                Some(start + Duration::from_millis(deadline)),
+                "{busy:?} at {ms} ms"
+            );
+        }
+        assert_eq!(published.skipped(), 0);
+    }
+}
+
+#[test]
+fn a_new_due_step_supersedes_only_one_pending_step() {
+    let start = Instant::now();
+    for (slot, helper_skipped) in [(FrameSlot::HelperBusy, 1), (FrameSlot::PanelBusy, 0)] {
+        let mut clock = FrameClock::new(ClockMode::Flip, FlipDivisor::Two, start, REFRESH);
+        for sequence in [2, 4] {
+            let at = start + REFRESH * sequence;
+            assert_eq!(clock.advance_available(at, Some(Flip { sequence, at }), slot), (None, false));
+        }
+        let ready = start + REFRESH * 4 + Duration::from_millis(1);
+        assert_eq!(clock.advance(ready, None), (Some(ready - start), false));
+        assert_eq!(clock.advance(ready, None), (None, false));
+        assert_eq!((clock.skipped(), clock.helper_skipped()), (1, helper_skipped));
+    }
+}
+
+#[test]
 fn one_missing_completion_keeps_the_hardware_phase() {
     let at = Instant::now();
     let mut clock = FrameClock::new(ClockMode::Flip, FlipDivisor::Two, at, REFRESH);

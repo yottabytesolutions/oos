@@ -76,8 +76,8 @@ pub fn run(mut ui: Ui, args: &[String], sw: sysconf::Switches, state: Option<sto
 }
 
 impl Device {
-    fn available(&self) -> bool {
-        self.graphics.slot(&self.outputs.panel) == pacing::FrameSlot::Ready
+    fn slot(&self) -> pacing::FrameSlot {
+        self.graphics.slot(&self.outputs.panel)
     }
 
     fn intake(&mut self) -> Option<pacing::Flip> {
@@ -87,7 +87,7 @@ impl Device {
         let display_fds = [self.outputs.disp.poll_flip_fd(clock, now), self.graphics.reply_fd()];
         let deadline = [
             self.outputs.vblank.map(|_| now),
-            self.available().then(|| self.frame_clock.wait_until()),
+            (self.slot() == pacing::FrameSlot::Ready).then(|| self.frame_clock.wait_until()),
             self.graphics.deadline(),
             self.outputs.panel.wait_until(),
         ]
@@ -124,7 +124,7 @@ impl Device {
         self.remote.poll(&mut self.ui, &self.cv, &self.sw);
         pacing::note_remote_intake(remote_started.elapsed());
         crate::ui::step_draw::owner::intake_render_owner(&mut self.ui);
-        if self.available() {
+        if self.slot() == pacing::FrameSlot::Ready {
             self.outputs.poll(&mut self.ui, &mut self.graphics);
         }
         vblank
@@ -136,8 +136,7 @@ impl Device {
 
     fn frame(&mut self, vblank: Option<pacing::Flip>) {
         let t0 = Instant::now();
-        let slot = self.graphics.slot(&self.outputs.panel);
-        let (elapsed, fell_back) = self.frame_clock.advance_available(t0, vblank, slot);
+        let (elapsed, fell_back) = self.frame_clock.advance_available(t0, vblank, self.slot());
         if fell_back {
             pacing::note_flip_fallback();
         }

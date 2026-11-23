@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::{frame_clock::Flip, pct, push, state};
+use super::{pct, push, state};
 use std::{
     collections::VecDeque,
     fmt::Write,
@@ -73,11 +73,11 @@ impl Panel {
     pub(crate) fn service(
         &mut self,
         now: Instant,
-        event: Option<Flip>,
+        flipped: Option<Instant>,
         refresh: Duration,
         mut request: impl FnMut(usize) -> FlipRequest,
     ) {
-        self.service_with(now, event, refresh, &mut request, &mut |report| {
+        self.service_with(now, flipped, refresh, &mut request, &mut |report| {
             oos_hal::sync::lock(state()).compose.presentation.record(report);
         });
     }
@@ -85,15 +85,15 @@ impl Panel {
     fn service_with(
         &mut self,
         now: Instant,
-        event: Option<Flip>,
+        flipped: Option<Instant>,
         refresh: Duration,
         request: &mut impl FnMut(usize) -> FlipRequest,
         report: &mut impl FnMut(Outcome<'_>),
     ) {
         if let Some((requested, picture)) = self.flipping {
-            if let Some(flip) = event {
+            if let Some(at) = flipped {
                 self.flipping = None;
-                report(Outcome::Shown(&picture, requested, flip.at, refresh));
+                report(Outcome::Shown(&picture, requested, at, refresh));
             } else if now >= requested + FLIP_TIMEOUT {
                 self.flipping = None;
                 report(Outcome::Timeout);

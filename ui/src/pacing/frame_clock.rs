@@ -65,7 +65,7 @@ pub(crate) struct FrameClock {
     last_flip: Option<Flip>,
     flip_timeout: Instant,
     fallback: bool,
-    deferred: bool,
+    deferred: Option<FrameSlot>,
     skipped: MissedSteps,
 }
 
@@ -83,7 +83,7 @@ impl FrameClock {
             last_flip: None,
             flip_timeout: now + FLIP_TIMEOUT,
             fallback: false,
-            deferred: false,
+            deferred: None,
             skipped: MissedSteps::default(),
         }
     }
@@ -138,24 +138,23 @@ impl FrameClock {
                 u64::from(self.phase) + u64::from(flip.sequence.wrapping_sub(last.sequence))
             });
             self.phase = (refreshes % divisor) as u32;
-            let can_defer = slot == FrameSlot::HelperBusy
+            let can_defer = slot != FrameSlot::Ready
                 && flip.at >= self.last_step
                 && self.idle_since.saturating_duration_since(self.last_step) < self.period()
                 && self.resume_after.is_none();
             let due = self.phase == 0
                 && (flip.at >= self.flip_ready_after() || can_defer)
                 && now.saturating_duration_since(flip.at) < self.period();
-            let keep = due && slot != FrameSlot::PanelBusy;
             let periods = refreshes / divisor;
             // Timer fallback supplies its own steps until the flip clock resumes.
             if self.resume_after.is_none() {
-                let superseded = u64::from(periods > 0 && self.deferred);
-                self.skipped.total += periods.saturating_sub(u64::from(keep)) + superseded;
-                self.skipped.helper += superseded;
+                let superseded = self.deferred.filter(|_| periods > 0);
+                self.skipped.total += periods.saturating_sub(u64::from(due)) + u64::from(superseded.is_some());
+                self.skipped.helper += u64::from(superseded == Some(FrameSlot::HelperBusy));
             }
-            // Keep one due step for the helper reply, even between vblank events.
+            // Keep one due step until the display can accept it, even between vblanks.
             if periods > 0 || due {
-                self.deferred = keep;
+                self.deferred = due.then_some(slot);
             }
             self.last_flip = Some(flip);
             self.flip_timeout = now + FLIP_TIMEOUT;
@@ -164,10 +163,10 @@ impl FrameClock {
             self.fallback = now >= self.flip_timeout;
         }
         if self.fallback {
-            self.deferred = false;
+            self.deferred = None;
             return slot == FrameSlot::Ready && now >= self.timer_deadline();
         }
-        slot == FrameSlot::Ready && std::mem::take(&mut self.deferred)
+        slot == FrameSlot::Ready && self.deferred.take().is_some()
     }
 
     pub(crate) fn seal(&self) -> Picture {
@@ -191,6 +190,9 @@ impl FrameClock {
     }
 
     pub(crate) fn deadline(&self, now: Instant) -> Instant {
+        if self.deferred.is_some() {
+            return now;
+        }
         if self.mode == ClockMode::Timer || self.fallback {
             return self.timer_deadline();
         }

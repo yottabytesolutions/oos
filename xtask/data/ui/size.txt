@@ -1,6 +1,6 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
-509 file ui/src/drm.rs
+507 file ui/src/drm.rs
 528 file ui/src/fastdraw.rs
 649 file ui/src/gfx.rs
 621 file ui/src/gpu.rs

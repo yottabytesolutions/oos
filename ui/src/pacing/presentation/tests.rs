@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
-use crate::pacing::{ClockMode, FlipDivisor, FrameClock, FrameSlot};
+use crate::pacing::{ClockMode, Flip, FlipDivisor, FrameClock, FrameSlot};
 
 struct Script {
     panel: Panel,
@@ -24,12 +24,11 @@ impl Script {
         self.start + Duration::from_millis(ms)
     }
 
-    fn poll(&mut self, ms: u64, event: Option<(u32, u64)>) {
+    fn poll(&mut self, ms: u64, flipped: Option<u64>) {
         let now = self.at(ms);
-        let event = event.map(|(sequence, stamp)| Flip { sequence, at: self.at(stamp) });
         self.panel.service_with(
             now,
-            event,
+            flipped.map(|at| self.at(at)),
             Duration::from_millis(10),
             &mut |back| {
                 let (expected, outcome) =
@@ -40,13 +39,20 @@ impl Script {
             &mut |outcome| self.history.record(outcome),
         );
     }
+
+    fn advance_clock(&self, clock: &mut FrameClock, ms: u64, sequence: Option<u32>) -> (Option<Duration>, bool) {
+        let now = self.at(ms);
+        let edge = sequence.map(|sequence| Flip { sequence, at: now });
+        let slot = if self.panel.ready_for_picture() { FrameSlot::Ready } else { FrameSlot::PanelBusy };
+        clock.advance_available(now, edge, slot)
+    }
 }
 
 #[test]
 fn helper_completion_queues_its_own_picture_and_uses_the_event_timestamp() {
     let mut script = Script::new([(1, FlipRequest::Queued), (2, FlipRequest::Queued)]);
     let mut clock = FrameClock::new(ClockMode::Flip, FlipDivisor::Three, script.start, Duration::from_millis(10));
-    for (seq, back, done, displayed) in [(3, 1, 46, 5), (6, 2, 84, 9)] {
+    for (seq, back, done, vblank) in [(3, 1, 46, 50), (6, 2, 84, 90)] {
         let at = script.at(u64::from(seq) * 10);
         assert!(clock.advance(at, Some(Flip { sequence: seq, at })).0.is_some());
         let mut picture = clock.seal();
@@ -60,8 +66,7 @@ fn helper_completion_queues_its_own_picture_and_uses_the_event_timestamp() {
         script.panel.stage(back, picture, script.at(done));
         script.poll(done, None);
 
-        let vblank = u64::from(displayed) * 10;
-        script.poll(vblank + 4, Some((displayed, vblank)));
+        script.poll(vblank + 4, Some(vblank));
     }
     assert!(script.requests.is_empty());
     assert_eq!((script.history.shown, script.history.late, clock.skipped()), (2, 0, 0));
@@ -80,16 +85,22 @@ fn helper_completion_queues_its_own_picture_and_uses_the_event_timestamp() {
 #[test]
 fn a_busy_drm_slot_keeps_the_same_picture_until_retry_or_modeset() {
     let mut script = Script::new([(0, FlipRequest::Queued), (1, FlipRequest::Busy), (1, FlipRequest::Modeset)]);
-    script.panel.stage(0, Picture::new(script.at(0)), script.at(1));
-    script.poll(1, None);
+    let mut clock = FrameClock::new(ClockMode::Flip, FlipDivisor::Three, script.start, Duration::from_millis(10));
+    script.panel.stage(0, Picture::new(script.at(0)), script.at(10));
+    script.poll(10, None);
     script.panel.stage(1, Picture::new(script.at(30)), script.at(33));
     script.poll(34, None);
     assert!(!script.panel.ready_for_picture());
-    script.poll(51, None);
+    for (ms, sequence, retry, elapsed) in
+        [(40, Some(4), Some(60), None), (60, Some(6), Some(70), None), (70, None, None, Some(70))]
+    {
+        script.poll(ms, None);
+        assert_eq!(script.panel.wait_until(), retry.map(|at| script.at(at)));
+        assert_eq!(script.advance_clock(&mut clock, ms, sequence), (elapsed.map(Duration::from_millis), false));
+    }
     assert_eq!(script.history.timeout, 1);
-    assert_eq!(script.panel.wait_until(), Some(script.at(61)));
-    script.poll(61, None);
     assert!(script.panel.ready_for_picture());
+    assert_eq!(clock.skipped(), 0);
     assert_eq!((script.history.shown, script.history.modeset), (0, 1));
 }
 
@@ -98,7 +109,7 @@ fn cpu_picture_uses_the_same_flip_path_without_helper_timing() {
     let mut script = Script::new([(1, FlipRequest::Queued)]);
     script.panel.stage(1, Picture::new(script.at(0)), script.at(12));
     script.poll(12, None);
-    script.poll(21, Some((2, 20)));
+    script.poll(21, Some(20));
     assert_eq!(script.history.stages[0].1, [None, None, None, Some(8000.0), Some(20000.0), Some(8000.0)]);
     assert_eq!(script.history.shown, 1);
 }
@@ -106,6 +117,8 @@ fn cpu_picture_uses_the_same_flip_path_without_helper_timing() {
 #[test]
 fn two_completions_before_one_vblank_flip_in_order() {
     let mut script = Script::new([(1, FlipRequest::Queued), (2, FlipRequest::Queued)]);
+    let mut clock = FrameClock::new(ClockMode::Flip, FlipDivisor::Two, script.start, Duration::from_millis(10));
+    assert_eq!(script.advance_clock(&mut clock, 10, Some(1)), (None, false));
     for (back, done) in [(1, 12), (2, 15)] {
         let mut picture = Picture::new(script.at(done - 1));
         picture.helper_done(script.at(done - 1), script.at(done));
@@ -113,9 +126,14 @@ fn two_completions_before_one_vblank_flip_in_order() {
         script.poll(done, None);
     }
     assert!(!script.panel.ready_for_picture());
-    script.poll(20, Some((2, 20)));
-    script.poll(30, Some((3, 30)));
+    for (ms, panel, edge, elapsed) in
+        [(20, None, Some(2), None), (21, Some(20), None, Some(21)), (30, Some(30), Some(3), None)]
+    {
+        script.poll(ms, panel);
+        assert_eq!(script.advance_clock(&mut clock, ms, edge), (elapsed.map(Duration::from_millis), false));
+    }
     assert!(script.requests.is_empty());
+    assert_eq!(clock.skipped(), 0);
     assert_eq!((script.history.shown, script.history.late), (2, 1));
     assert_eq!(script.history.stages[1].1[5], Some(15_000.0));
 }
@@ -196,16 +214,16 @@ impl Simulation {
             *sequence += 1;
             flip
         });
-        let flip = edge.and_then(|edge| {
+        let flipped = edge.and_then(|edge| {
             self.scanout = self.requested.take()?;
-            Some(edge)
+            Some(edge.at)
         });
         if let Some((_, back, picture)) = self.rendering.take_if(|(done, _, _)| *done == now) {
             self.panel.stage(back, picture, now);
         }
         self.panel.service_with(
             now,
-            flip,
+            flipped,
             refresh,
             &mut |back| {
                 assert_ne!(back, self.scanout);

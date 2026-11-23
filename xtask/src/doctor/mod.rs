@@ -39,11 +39,11 @@ pub(crate) fn inventory(ctx: &crate::run::Context, root: &Path, flags: &[&str]) 
     let table = pins::table(&config, "target.aarch64-unknown-linux-musl").unwrap_or_default();
     let good = table.get("linker") == Some(&serde_json::json!("rust-lld"))
         && table.get("rustflags")
-            == Some(&serde_json::json!(["-C", "target-feature=+crt-static", "-C", "target-cpu=cortex-a72"]));
+            == Some(&serde_json::json!(["-C", "target-feature=+crt-static", "-C", "target-cpu=cortex-a53"]));
     report.check(
         "musl configuration",
         good,
-        "rust-lld, static, Cortex-A72",
+        "rust-lld, static, Cortex-A53",
         if good { "matches" } else { "mismatch" },
         "restore .cargo/config.toml",
     );

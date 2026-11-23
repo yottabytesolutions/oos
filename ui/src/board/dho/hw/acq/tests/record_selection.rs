@@ -4,11 +4,14 @@ use super::*;
 use std::ops::Range;
 
 mod fixture;
+mod steady;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Signal {
     Off,
     Edge,
+    First,
+    Both,
     Periodic,
     CoreOffsets,
 }
@@ -251,18 +254,17 @@ fn record_path_rejects_corrected_frame_one_but_deposit_accepts_its_uncorrected_e
 }
 
 #[test]
-fn record_path_checks_dma_frame_one_but_deposit_checks_the_separate_raw_newest() {
-    let raw = || Some(Frame::stamp(2, fixture::RAW_SLOT_MARKER));
-    let both_on = Case { signal: Signal::Edge, raw_edge: Some(true), ..Case::new(2) };
-    check(
-        both_on,
-        Expected { newest: raw(), ..Expected::queued(1..2, FRAME0) },
-        Expected { newest: raw(), ..Expected::worker(1..2, FRAME0) },
-    );
-    let dma_off = Case { raw_edge: Some(true), ..Case::new(2) };
-    check(dma_off, Expected::queued(1..1, BOTH), Expected { newest: raw(), ..Expected::worker(1..2, FRAME0) });
-    let raw_off = Case { signal: Signal::Edge, raw_edge: Some(false), ..Case::new(2) };
-    check(raw_off, Expected { newest: raw(), ..Expected::queued(1..2, FRAME0) }, Expected::worker(1..1, BOTH));
+fn both_routes_check_the_raw_replacement_for_the_second_of_two_slots() {
+    for (signal, raw_edge) in [(Signal::Edge, true), (Signal::Off, true), (Signal::Edge, false)] {
+        let case = Case { signal, raw_edge: Some(raw_edge), ..Case::new(2) };
+        let (slots, losses) = if raw_edge { (1..2, FRAME0) } else { (1..1, BOTH) };
+        let newest = || raw_edge.then(|| Frame::stamp(2, fixture::RAW_SLOT_MARKER));
+        check(
+            case,
+            Expected { newest: newest(), ..Expected::queued(slots.clone(), losses) },
+            Expected { newest: newest(), ..Expected::worker(slots, losses) },
+        );
+    }
 }
 
 #[test]

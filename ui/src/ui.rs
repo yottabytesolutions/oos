@@ -2909,14 +2909,7 @@ impl Ui {
                         let t1 = std::time::Instant::now();
                         got += composition.draw_record(self, &rec, sw.interp, drawing_input, eligibility, &mut first);
                         td += record_draw.placed(bill_record, t1.elapsed()).as_secs_f32() * 1000.0;
-                        if self.history.len() >= if hw_seg { HISTORY } else { HISTORY.max(self.seg_count()) } {
-                            self.history.pop_front();
-                        }
-                        // a deep LA record is tens of MB: the history keeps the LA of short records only
-                        let la = rec.la.clone().filter(|l| l.words.len() <= HISTORY_LA_WORDS);
-                        self.history.push_back(Record { raw: None, la, ..rec.clone() });
-                        self.hist_pos = None;
-                        self.mask_test(&rec);
+                        deep_draw::remember_record(self, &rec, hw_seg);
                         if deep_raw && rec.raw.as_ref().is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame)) {
                             raw_rec = Some(rec.clone());
                         }

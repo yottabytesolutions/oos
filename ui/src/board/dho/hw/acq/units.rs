@@ -47,13 +47,13 @@ impl Units {
         (settings, mode): (&Settings, Slow),
         (request, generator_on, single_completed): (&Request, bool, bool),
         mut disarm: impl FnMut(&mut Io<P>),
-    ) {
+    ) -> bool {
         if segments.is_some_and(SegRun::recording) {
-            return;
+            return false;
         }
-        self.dvm(io, out, settings, request.dvm, &mut disarm);
+        let latched = self.dvm(io, out, settings, request.dvm, &mut disarm);
         if mode != Slow::Off {
-            return;
+            return latched;
         }
         if let Some(pending) =
             self.trim_pending.filter(|t| !request.run.hold && !single_completed && t.due(io.clock.now()))
@@ -73,6 +73,7 @@ impl Units {
                 Some((id, result.map(|slots| slots.map(|s| [s.min as f32, s.max as f32, s.mean as f32]))));
             self.slots_done = Some(id);
         }
+        latched
     }
 
     fn dvm<P: Port>(
@@ -82,11 +83,11 @@ impl Units {
         settings: &Settings,
         want: Option<crate::board::DvmWant>,
         disarm: impl FnOnce(&mut Io<P>),
-    ) {
+    ) -> bool {
         let elapsed = self.dvm_run.map_or(0.0, |run| io.clock.now().duration_since(run.1).as_secs_f64());
         let (step, key) = dvm_step(want, settings.mask, self.configs, self.dvm_run.map(|run| run.0), elapsed);
         let reading = match step {
-            DvmStep::Idle => return,
+            DvmStep::Idle => return false,
             DvmStep::Start(lane) => {
                 disarm(io);
                 io.bar.apply(&dvm::start(lane, dvm::EXP));
@@ -105,5 +106,6 @@ impl Units {
         };
         lock(out).dvm = reading;
         self.dvm_run = key.map(|key| (key, io.clock.now()));
+        step == DvmStep::Read
     }
 }

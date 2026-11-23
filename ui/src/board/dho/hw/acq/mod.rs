@@ -148,6 +148,7 @@ enum SingleHandoff {
 struct FirstRecord {
     settings: Option<Settings>,
     dropped: bool,
+    proven: Option<(u64, u64)>,
 }
 
 #[derive(Default)]
@@ -212,7 +213,7 @@ impl<T: pacing::PacingPolicy> AcqLoop<T> {
                     &self.out,
                     (&settings, &params, self.configured.mode),
                     (&mut self.seq, request.identity),
-                    |io| io.disarm(&mut self.batch.armed, &mut self.replay, &self.out),
+                    |io| io.disarm(&mut self.batch, &mut self.replay, &self.out),
                 ) {
                     self.configured.current = None;
                 }
@@ -228,7 +229,7 @@ impl<T: pacing::PacingPolicy> AcqLoop<T> {
     }
 
     fn segments(&mut self, io: &mut Io<impl Port>, settings: &Settings, params: &hz::Params, identity: Identity) {
-        io.disarm(&mut self.batch.armed, &mut self.replay, &self.out);
+        io.disarm(&mut self.batch, &mut self.replay, &self.out);
         if !self.batch.dma.ready(identity, &io.clock, || {
             let g = crate::perfguard::deep::acq_lock(&self.out);
             publication::boundary(Some((identity.gen(), identity.epoch())), g.acquisition.identity())
@@ -258,8 +259,9 @@ impl<P: Port> Io<P> {
         execute(steps, &mut self.bar, &mut self.c2h, &self.clock)
     }
 
-    fn disarm(&mut self, armed: &mut Successor, replay: &mut Replay, out: &HwShared) {
-        armed.disarm(replay, out, || disarm(&mut self.state, &mut self.bar, &self.clock, out));
+    fn disarm(&mut self, batch: &mut BatchState, replay: &mut Replay, out: &HwShared) {
+        batch.first.proven = None;
+        batch.armed.disarm(replay, out, || disarm(&mut self.state, &mut self.bar, &self.clock, out));
     }
 
     fn abort_segments(&mut self, run: &mut Option<SegRun>, out: &HwShared) {

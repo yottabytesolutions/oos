@@ -37,8 +37,8 @@ impl Service {
         (!g.record_flow.shutdown).then_some(g.counter_want)
     }
 
-    pub(super) fn counter<P: Port>(&mut self, io: &mut Io<P>, out: &HwShared, counter: Option<CounterWant>) {
-        super::super::units::counter_tick(&mut io.bar, out, counter, &mut self.counting, &mut self.count_n);
+    pub(super) fn counter<P: Port>(&mut self, io: &mut Io<P>, out: &HwShared, counter: Option<CounterWant>) -> bool {
+        super::super::units::counter_tick(&mut io.bar, &io.clock, out, counter, (&mut self.counting, &mut self.count_n))
     }
 
     pub(super) fn readings<P: Port>(&mut self, io: &mut Io<P>, out: &HwShared) {

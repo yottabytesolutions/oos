@@ -153,7 +153,7 @@ fn settings_change_during_average_dma_rejects_the_old_result() {
         assert_eq!(want.mode, Mode::Average { count: 2 });
         let (mut io, trace) = sim::fixture(&want, out.clone(), (Run::Selection, 2, false), None);
         let (mut source, started) = source(&out, &io);
-        source.switches.board.frame0_drop = true;
+        source.switches.board.frame0 = crate::board::dho::switches::FrameZero::Drop;
         let shared = out.clone();
         io.c2h.on_dma(move |trace| trace.events.extend(edit_level(&mut ui, &shared)));
         capture(&mut source, &mut io);

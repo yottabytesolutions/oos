@@ -4,6 +4,7 @@
 //! Frames 0 and 1 of a batch (issue #5, docs/protocols/acquisition-start.md): which frames of a batch are left out
 //! before they reach the record or the deposit workers.
 
+use super::switches::FrameZero;
 use crate::board::Frame;
 #[cfg(any(target_os = "linux", test))]
 use oos_hal::dho::hz;
@@ -85,51 +86,71 @@ pub(super) fn left_out() {
     }
 }
 
-/// The first frame of a batch of `avail` that the deposit workers and the matcher may use: 0, or 1 with frame 0 left
-/// out (`frame0_drop`), or 2 when frame 1 has no edge at the trigger point (checked for records up to `CHECK_MAX`;
-/// with two frames the newest is frame 1, which `newest_kept` judges).
-#[cfg(any(target_os = "linux", test))]
-pub(super) fn first_kept(
-    bytes: &[u8],
-    fb: usize,
-    avail: usize,
-    frame0_drop: bool,
-    sp: (&Settings, &hz::Params),
-) -> usize {
-    let (s, p) = sp;
-    if !frame0_drop || avail < 2 {
-        return 0;
-    }
-    let off = avail > 2 && p.memsel <= CHECK_MAX && bytes_off_trigger(&bytes[fb..2 * fb], s, p);
-    if off {
-        left_out();
-    }
-    1 + usize::from(off)
+/// Worker indices close a possible hole at slot one while preserving physical DMA order.
+pub(super) struct DmaSelection {
+    pub(super) range: std::ops::Range<usize>,
+    pub(super) skip_second: bool,
+    pub(super) drop_first: bool,
 }
 
-/// Whether the newest frame of a batch of `avail` stays: with two frames it is frame 1, left out without its edge.
-#[cfg(any(target_os = "linux", test))]
-pub(super) fn newest_kept(
-    (raw, bytes): (Option<&Frame>, &[u8]),
-    (avail, frame0_drop): (usize, bool),
+pub(super) fn dma_selection(
+    (bytes, fb, avail): (&[u8], usize, usize),
+    raw: Option<&Frame>,
+    policy: FrameZero,
     (s, p): (&Settings, &hz::Params),
-) -> bool {
-    let off = avail == 2 && frame0_drop && raw.map_or_else(|| bytes_off_trigger(bytes, s, p), |f| off_trigger(f, s));
-    if off {
+) -> DmaSelection {
+    let check = avail == 2 || p.memsel <= CHECK_MAX;
+    let drop_second =
+        check && second_off_trigger(avail, policy, raw, s, || bytes_off_trigger(&bytes[fb..2 * fb], s, p));
+    if drop_second {
         left_out();
     }
-    !off
+    let drop_first = avail > 1
+        && ((avail == 2 && drop_second)
+            || match policy {
+                FrameZero::Keep => false,
+                FrameZero::Drop => true,
+                FrameZero::Steady => check && bytes_off_trigger(&bytes[..fb], s, p),
+            });
+    let skip_second = !drop_first && drop_second;
+    let start = if drop_first { 1 + usize::from(drop_second) } else { 0 };
+    let end = avail - usize::from(skip_second);
+    DmaSelection { range: start..end, skip_second, drop_first }
 }
 
-/// The record path: `all` holds the frames from `skip` on; when only frame 0 was skipped, frame 1 without its edge
-/// goes too. How many more were left out.
-pub(super) fn drop_frame1(all: &mut Vec<Frame>, skip: usize, frame0_drop: bool, s: &Settings) -> usize {
-    if !(frame0_drop && skip == 1 && all.first().is_some_and(|f| off_trigger(f, s))) {
-        return 0;
+/// For a two-slot batch, judge slot one by the waveform that would be published.
+fn second_off_trigger(
+    count: usize,
+    policy: FrameZero,
+    raw: Option<&Frame>,
+    settings: &Settings,
+    dma_off_trigger: impl FnOnce() -> bool,
+) -> bool {
+    count > 1
+        && policy != FrameZero::Keep
+        && raw.filter(|_| count == 2).map_or_else(dma_off_trigger, |frame| off_trigger(frame, settings))
+}
+
+pub(super) fn off_trigger_if_checked(
+    (slot, count): (usize, usize),
+    policy: FrameZero,
+    (frame, raw): (&Frame, Option<&Frame>),
+    settings: &Settings,
+) -> bool {
+    let off = if slot == 0 {
+        policy == FrameZero::Steady && off_trigger(frame, settings)
+    } else {
+        second_off_trigger(count, policy, raw, settings, || off_trigger(frame, settings))
+    };
+    if !off {
+        return false;
     }
-    all.remove(0);
-    left_out();
-    1
+    if slot == 0 {
+        crate::drawpipe::counters().lose(crate::drawpipe::Lost::Frame0, 1);
+    } else {
+        left_out();
+    }
+    true
 }
 
 /// The raw newest frame (live compression) stands for the newest record of the batch, under its sequence number.

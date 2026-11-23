@@ -68,6 +68,10 @@ impl Frame {
     pub(super) fn code(&self) -> u16 {
         self.code
     }
+
+    pub(super) fn seq(&self) -> u64 {
+        self.seq
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -181,6 +185,7 @@ pub(super) struct SimStream {
     run: Run,
     stop: Rc<StopSignals>,
     on_dma: Option<DmaHook>,
+    failed_read: bool,
 }
 
 type DmaHook = Box<dyn FnOnce(&mut Trace)>;
@@ -189,11 +194,19 @@ impl SimStream {
     pub(super) fn on_dma(&mut self, hook: impl FnOnce(&mut Trace) + 'static) {
         self.on_dma = Some(Box::new(hook));
     }
+
+    pub(super) fn fail_next(&mut self) {
+        self.failed_read = true;
+    }
 }
 
 impl Read for SimStream {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
         let count = self.stream.read(bytes)?;
+        if std::mem::take(&mut self.failed_read) {
+            // The transfer consumed the data before reporting its error.
+            return Err(io::Error::other("simulated DMA failure"));
+        }
         if let Some(hook) = self.on_dma.take() {
             hook(&mut self.trace.borrow_mut());
         }
@@ -446,7 +459,15 @@ pub(super) fn fixture(
     });
     let io = Io {
         bar: SimBus { engine: bus, trace: trace.clone(), stop: signals.clone() },
-        c2h: SimStream { stream, trace: trace.clone(), edge_at, run, stop: signals.clone(), on_dma: None },
+        c2h: SimStream {
+            stream,
+            trace: trace.clone(),
+            edge_at,
+            run,
+            stop: signals.clone(),
+            on_dma: None,
+            failed_read: false,
+        },
         clock: Virtual {
             origin: Instant::now(),
             engine,

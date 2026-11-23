@@ -118,7 +118,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
                 self.replay.fresh = false;
             }
             Published::Rejected => {
-                io.disarm(&mut self.batch.armed, &mut self.replay, out);
+                io.disarm(&mut self.batch, &mut self.replay, out);
                 self.batch.prearm_timing = None;
             }
         }
@@ -126,13 +126,13 @@ impl<T: PacingPolicy> AcqLoop<T> {
 
     fn clear_average(&mut self, io: &mut Io<impl Port>, clear: u64) {
         if let Some((tracker, seen, logged)) = self.batch.avg.as_mut().filter(|avg| avg.1 != clear) {
-            io.disarm(&mut self.batch.armed, &mut self.replay, &self.out);
+            tracker.reset();
+            (*seen, *logged) = (clear, 0);
+            io.disarm(&mut self.batch, &mut self.replay, &self.out);
             let steps = io.state.avg_clear_steps();
             if let Err(e) = io.execute(&steps) {
                 status(&self.out, format!("average clear: {}", e));
             }
-            tracker.reset();
-            (*seen, *logged) = (clear, 0);
         }
     }
 
@@ -160,13 +160,17 @@ impl<T: PacingPolicy> AcqLoop<T> {
         }
         let clock = &io.clock;
         let (mut ahead, tap) = plan.prepare(&mut batch.dma, &mut batch.armed, clock, obsolete, |armed| {
-            armed.disarm(replay, out, || super::disarm(&mut io.state, &mut io.bar, clock, out));
+            armed.disarm(replay, out, || {
+                batch.first.proven = None;
+                super::disarm(&mut io.state, &mut io.bar, clock, out);
+            });
         })?;
         let prearm = batch.prearm_timing.take().filter(|_| ahead);
         let mut timing = batch_timing::SourceTiming::new(prearm, grant);
         // Force uses a single pulse after arming, except when a hardware average counts triggers.
         let force = std::mem::take(&mut lock(out).force);
         if force && batch.avg.is_none() && (ahead || batch.arm_for_force(io, out, (b, p), &mut timing)) {
+            batch.first.proven = None;
             io.bar.apply(&oos_hal::dho::tpu::force(&io.state.ts));
             ahead = true;
         }
@@ -197,6 +201,7 @@ impl BatchState {
                     )
                 })
             })
+            .inspect_err(|_| self.first.proven = None)
             .map_err(|e| status(out, format!("force: arm: {}", e)))
             .is_ok()
     }
@@ -274,6 +279,7 @@ impl BatchState {
                             io.execute(&steps, &mut DmaBuf::new())
                         })
                     })
+                    .inspect_err(|_| self.first.proven = None)
                     .map_err(|e| status(out, format!("prearm: {}", e)))
                     .is_ok()
                 })

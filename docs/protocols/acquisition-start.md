@@ -353,10 +353,9 @@ and 1 kpts (6.25 MSa/s). The trigger is an edge on CH1, rising at 0 V, in Normal
 `OOS_FRAME_HEADER=off`, which logs only the frames without an edge within 20 samples of `pre`, plus a count every
 10,000 frames. Word 4 of the frame header is the frame's number in its batch.
 
-- **Frame 0** is a frame the FPGA recorded before the arm (issue #5, mj1911's runs R1 to R5). oos-ui leaves it out of
-  every batch of more than one frame; `acq.frame0 = keep` in system.conf keeps it.
-  - The batch path (`acq.pipeline = batch`) used to hand it to the deposit workers. The workers and the ADC core
-    matcher now start at frame 1, or at frame 2 when frame 1 is left out (`batch::Readout`, `frame1::first_kept`).
+- **Frame 0** can come from before the arm (issue #5, mj1911's runs R1 to R5). The current default checks it for ordinary
+  running batches after an intact batch under the same applied settings. See [first-record selection](../backlog/first-record.md)
+  for the age assumption, boundaries and switch values.
   - With batches on, 1 of 7,075 logged frames was off the trigger, and that one was frame 0.
 - **Frame 1**, the first trigger after the arm, now and then holds a piece of older memory.
   - Without frame 0, every frame found off the trigger was frame 1: 27 of 330,000 frames (about 12,700 batches). With

@@ -8,6 +8,21 @@ pub(super) const RAW_SLOT_MARKER: u16 = 8;
 
 /// Snapshot both routes at the same boundary, after intake and publication are observable.
 pub(super) fn trial(case: &Case, deposit: bool) -> (Outcome, u64, Vec<u8>) {
+    let conf = if case.keep { "acq.frame0 = keep" } else { "" };
+    let (outcome, seq, bytes) = series(case, deposit, conf, |source, io, trace| {
+        let bytes = dispatch(case, source, io);
+        let outcome = observed(source, io, trace, deposit);
+        (outcome, source.seq, bytes)
+    });
+    (outcome, seq, bytes)
+}
+
+pub(super) fn series<T>(
+    case: &Case,
+    deposit: bool,
+    conf: &str,
+    run: impl FnOnce(&mut AcqLoop<FixedPacing>, &mut Io<sim::Sim>, &std::cell::RefCell<sim::Trace>) -> T,
+) -> T {
     let scope = Scope::new();
     let id = Identity::default();
     let out = requested(&case.settings, id, deposit);
@@ -15,7 +30,7 @@ pub(super) fn trial(case: &Case, deposit: bool) -> (Outcome, u64, Vec<u8>) {
     let switches = Switches::parse(
         &|key| (case.average_hold && key == "OOS_HWAVG").then(|| "hold".into()),
         "acq.work_budget_ms = 12",
-        if case.keep { "acq.frame0 = keep" } else { "" },
+        conf,
         Default::default(),
     );
     let intake = deposit.then(|| {
@@ -25,21 +40,42 @@ pub(super) fn trial(case: &Case, deposit: bool) -> (Outcome, u64, Vec<u8>) {
         intake
     });
     let (mut io, trace) = sim::fixture(&case.settings, out.clone(), (Run::Selection, case.count, false), intake);
+    io.cal_adc = adc::CalAdc::from_payload(vec![0; 0x738]);
     let start = io.clock.now();
     let options = Spawn { mask: case.settings.mask, program_afe: false, cal_dir: String::new(), start_up: None };
     let mut source = AcqLoop::new(options, switches, out.clone(), Service::default(), None, start, FixedPacing);
-    let bytes = dispatch(case, &mut source, &mut io);
+    run(&mut source, &mut io, &trace)
+}
+
+pub(super) fn observed(
+    source: &AcqLoop<FixedPacing>,
+    io: &Io<sim::Sim>,
+    trace: &std::cell::RefCell<sim::Trace>,
+    deposit: bool,
+) -> Outcome {
     if deposit {
         io.clock.compose();
     }
-    let outcome = Outcome::snapshot(&mut trace.borrow_mut(), &lock(&out), io.clock.now().duration_since(start));
-    (outcome, source.seq, bytes)
+    let mut out = lock(&source.out);
+    let result = Outcome::snapshot(&mut trace.borrow_mut(), &out, Duration::ZERO);
+    out.queue.clear();
+    result
 }
 
-fn dispatch(case: &Case, source: &mut AcqLoop<FixedPacing>, io: &mut Io<sim::Sim>) -> Vec<u8> {
+pub(super) fn dispatch(case: &Case, source: &mut AcqLoop<FixedPacing>, io: &mut Io<sim::Sim>) -> Vec<u8> {
+    dispatch_with(case, source, io, |_, _| {})
+}
+
+pub(super) fn dispatch_with(
+    case: &Case,
+    source: &mut AcqLoop<FixedPacing>,
+    io: &mut Io<sim::Sim>,
+    after_fill: impl FnOnce(&mut seq::State, &mut sim::SimStream),
+) -> Vec<u8> {
     use super::super::super::dispatch::{Handoff, Published};
     let request = Request::read(&lock(&source.out));
     let (settings, params) = source.reconfigure(io, &request, &mut false).unwrap();
+    io.clock.capture_mask(settings.mask);
     let mut settings = super::super::super::super::batch_plan(&settings, &params, source.switches.board.zone_batch);
     assert!(settings.frames >= case.count);
     settings.frames = case.count;
@@ -49,6 +85,7 @@ fn dispatch(case: &Case, source: &mut AcqLoop<FixedPacing>, io: &mut Io<sim::Sim
     let timing = batch_timing::SourceTiming::new(None, grant);
     let plan = ArmPlan::new(&settings, request.identity, request.route, deposit, case.held);
     let capture = Capture { settings: &settings, params: &params, request: &request, uncapped: case.count };
+    assert!(source.batch.dma.ready(request.identity, &io.clock, || false));
     let mut io = io.batch_io();
     let batch = &mut source.batch;
     let completed =
@@ -58,8 +95,11 @@ fn dispatch(case: &Case, source: &mut AcqLoop<FixedPacing>, io: &mut Io<sim::Sim
     let fb = seq::frame_bytes(&settings, &params);
     assert_eq!(dma.data().len(), fb * case.count as usize);
     let bytes = fixture_bytes(case, &capture, dma);
+    after_fill(io.state, io.c2h);
     let mut readout = batch.read(&mut io, &capture, &completed, (&source.out, HeaderProbe::Off), None);
-    assert!(readout.raw_frame.is_none(), "the test provides any separate raw read at the decode boundary");
+    if request.run.deep.is_none() && !super::super::super::super::plan::raw_newest(&settings, &params) {
+        assert!(readout.raw_frame.is_none());
+    }
     if let Some(edge) = case.raw_edge {
         let mut raw = vec![0; fb];
         write_signal(&mut raw, &capture, if edge { Signal::Edge } else { Signal::Off });
@@ -83,7 +123,10 @@ fn fixture_bytes(case: &Case, capture: &Capture<'_>, dma: &mut DmaBuf) -> Vec<u8
         assert_eq!((capture.settings.mask, capture.settings.header, capture.settings.compress), (1, false, 1));
         let mut bytes = dma.data().to_vec();
         for (slot, record) in bytes.chunks_exact_mut(fb).enumerate() {
-            if slot == 1 || case.signal == Signal::Periodic {
+            if (slot == 0 && matches!(case.signal, Signal::First | Signal::Both))
+                || (slot == 1 && case.signal != Signal::First)
+                || case.signal == Signal::Periodic
+            {
                 write_signal(record, capture, case.signal);
             }
         }
@@ -107,7 +150,7 @@ fn write_signal(record: &mut [u8], capture: &Capture<'_>, signal: Signal) {
     for (i, word) in record.as_chunks_mut::<2>().0.iter_mut().enumerate().skip(1) {
         let code: u16 = match signal {
             Signal::Off => 25_000,
-            Signal::Edge => {
+            Signal::Edge | Signal::First | Signal::Both => {
                 if i < pre {
                     25_000
                 } else {

@@ -2,6 +2,7 @@
 
 use super::{DATA_LIMIT, META_LIMIT, VERSION};
 use crate::board::dho::cores::{Cores, Pattern, P};
+use crate::board::dho::switches::FrameZero;
 use crate::board::Frame;
 use crate::model::NCH;
 use oos_core::la::LaRec;
@@ -21,7 +22,7 @@ use view::view;
 pub(crate) use view::PictureView;
 
 type Fields<'a> = BTreeMap<&'a str, &'a str>;
-type ReadGeometry = (usize, usize, bool);
+type ReadGeometry = (usize, usize, FrameZero);
 
 pub(crate) struct Fixture {
     name: String,
@@ -36,7 +37,7 @@ pub(crate) struct Fixture {
 }
 
 pub(in crate::board::dho::hw) struct Dispatch {
-    frame0_drop: bool,
+    frame0: FrameZero,
     avail: usize,
     la: Option<LaRec>,
     submitted: Option<Range<usize>>,
@@ -96,7 +97,7 @@ impl Fixture {
     pub(in crate::board::dho::hw) fn source(&self) -> (Arc<[u8]>, ReadGeometry, Option<Frame>) {
         (
             self.bytes.clone(),
-            (self.frame_bytes, self.dispatch.avail, self.dispatch.frame0_drop),
+            (self.frame_bytes, self.dispatch.avail, self.dispatch.frame0),
             self.newest.as_deref().cloned(),
         )
     }
@@ -289,9 +290,14 @@ fn dispatch(path: &Path, fields: &Fields<'_>, route: Option<&str>, frames: usize
         "records" if route.is_none() => (None, None),
         _ => return Err("invalid dispatch or route.v1".into()),
     };
+    let drop_first = value::<bool>(fields, "frame0_drop")?;
+    let check = fields.contains_key("frame0_check") && value::<bool>(fields, "frame0_check")?;
+    if drop_first && check {
+        return Err("conflicting frame-zero policies".into());
+    }
     Ok(Dispatch {
         avail,
-        frame0_drop: value(fields, "frame0_drop")?,
+        frame0: if check { FrameZero::Steady } else { drop_first.into() },
         la: read_la(path, fields)?,
         submitted,
         route: route.map(str::to_owned),

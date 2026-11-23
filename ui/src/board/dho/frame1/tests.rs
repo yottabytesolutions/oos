@@ -38,23 +38,19 @@ fn frame1_without_its_edge_is_found() {
     assert!(!off_trigger(&frame(410), &Settings { trig_src: 9, ..s.clone() }));
 }
 
-// The record path (upstream 0cc8fcb6): with frame 0 left out, frame 1 without its edge goes too; when more was
-// skipped (the UI takes fewer), the first frame kept is not frame 1 and stays. Break it catches: frame 1 kept.
 #[test]
-fn the_record_path_leaves_out_frame1_only_after_frame0() {
+fn the_record_path_checks_only_the_early_slots_selected_by_policy() {
     let _scope = crate::drawpipe::test_scope::Scope::new();
     let s = settings();
-    let mut all = vec![frame(410), frame(506)];
-    assert_eq!(drop_frame1(&mut all, 1, true, &s), 1);
-    assert_eq!(all.len(), 1);
-    let mut all = vec![frame(410), frame(506)];
-    assert_eq!(drop_frame1(&mut all, 2, true, &s), 0, "not frame 1");
-    assert_eq!(drop_frame1(&mut all, 1, false, &s), 0, "acq.frame0 = keep");
-    assert_eq!(all.len(), 2);
-    let p = hz::prep(1, 1_000_000_000, 4096, 0);
-    let kept = |edge, avail| newest_kept((Some(&frame(edge)), &[]), (avail, true), (&s, &p));
-    assert!(kept(506, 2) && !kept(410, 2));
-    assert!(kept(410, 3), "with three frames the newest is not frame 1");
+    let off = frame(410);
+    let on = frame(506);
+    let rejects = |slot, policy, frame| off_trigger_if_checked((slot, 2), policy, (frame, None), &s);
+    assert!(!rejects(0, FrameZero::Drop, &off));
+    assert!(!rejects(0, FrameZero::Steady, &on));
+    assert!(rejects(0, FrameZero::Steady, &off));
+    assert!(rejects(1, FrameZero::Drop, &off));
+    assert!(rejects(1, FrameZero::Steady, &off));
+    assert!(!rejects(1, FrameZero::Keep, &off));
     assert!(crate::drawpipe::counters().records_text().contains("lost.frame1=2"));
     assert_eq!(crate::drawpipe::counters().read().2, 0);
 }

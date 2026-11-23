@@ -22,17 +22,26 @@ submitted records, and a second composition contributes zero.
 The universal raw guarantee fails in `live_compression_taps_use_pairs_until_another_raw_replay_is_due`, which
 finds the last eligible record as raw samples on successful due replays and as DMA pairs between them.
 A failed replay can also leave DMA pairs and deep replay can supply a raw window, while the records route
-updates its latest frame from the last queued record, two records with frame-zero selection enabled and frame
-one rejected by the edge check supply no new waveform, and a tap from an obsolete acquisition identity is stale.
+updates its latest frame from the last complete physical slot when it survives selection. If slot one is rejected in
+a two-record batch, slot zero may paint without replacing the previous waveform. A tap from an obsolete acquisition
+identity is stale.
 [Tap test](../../ui/src/board/dho/hw/acq/tests/raw.rs) · [Selection tests](../../ui/src/board/dho/hw/acq/tests/deposit.rs)
 · [Raw read](../../ui/src/board/dho/hw/acq/read.rs#L172) · [Tap dequeue](../../ui/src/picture/deposit/tap.rs#L273)
-· [Frame-one selection](../../ui/src/board/dho/frame1.rs#L112) · [Record publication](../../ui/src/board/dho/publication.rs#L102)
+· [Early-slot selection](../../ui/src/board/dho/frame1.rs) · [Record publication](../../ui/src/board/dho/publication.rs#L102)
 
 ## Selection losses
 
 The deposit selection tests show that frame zero and off-edge frame one each increment their named counter when
 excluded, with zero change to either drop aggregate on deposit dispatch. An unreliable initial ordinary singleton
 publishes no waveform and is charged to settings.
+
+The source remembers the generation and epoch of the immediately preceding complete ordinary batch. Only
+a matching pair allows frame zero to pass the route's trigger-window check. The proof is cleared at each RUN,
+Clear, STOP, calibration, reconfiguration, disarm, cancelled fill, read error or retained-ring loss. An
+incomplete DMA batch cannot use or supply proof for this rule. Worker admission counts physical slots before
+selection, and the worker accounts only the records it receives, including any eligible slot zero.
+[Previous-arm assumption](../backlog/first-record.md) · [Dispatch tests](../../ui/src/board/dho/hw/acq/tests/record_selection/steady.rs)
+
 [Selection tests](../../ui/src/board/dho/hw/acq/tests/deposit.rs) · [Dispatch](../../ui/src/board/dho/hw/batch.rs)
 
 ## Hardware-average publication

@@ -75,18 +75,18 @@ pub(super) fn dvm_reading(
 #[cfg(any(target_os = "linux", test))]
 pub(super) fn counter_tick(
     bar: &mut impl oos_hal::dho::bus::Bus,
+    clock: &impl oos_hal::dho::seq::time::Clock,
     out: &HwShared,
     want: Option<crate::board::CounterWant>,
-    counting: &mut Option<(crate::board::CounterWant, std::time::Instant)>,
-    n: &mut u64,
-) {
+    (counting, n): (&mut Option<(crate::board::CounterWant, std::time::Instant)>, &mut u64),
+) -> bool {
     use oos_hal::dho::counter;
     if want != counting.map(|c| c.0) {
         match want {
             Some(w) => {
                 let mode = [counter::Mode::Frequency, counter::Mode::Period, counter::Mode::Totalize][w.mode.min(2)];
                 bar.apply(&counter::start(&counter::Config { ch: w.ch, mode, digits: w.digits }));
-                *counting = Some((w, std::time::Instant::now()));
+                *counting = Some((w, clock.now()));
             }
             None => {
                 bar.apply(&counter::stop());
@@ -94,16 +94,18 @@ pub(super) fn counter_tick(
             }
         }
         crate::perfguard::deep::acq_lock(out).counter = None;
-        return;
+        return true;
     }
     if let Some((w, t)) = *counting {
         let gate = counter::gate_s(w.digits);
-        if t.elapsed().as_secs_f64() >= gate + 0.1 {
+        if clock.now().duration_since(t).as_secs_f64() >= gate + 0.1 {
             let r = counter::read(bar);
             *n += 1;
             crate::perfguard::deep::acq_lock(out).counter =
                 Some(crate::board::CounterRead { period: counter::period(&r, gate), total: r.total, n: *n });
-            *counting = Some((w, std::time::Instant::now()));
+            *counting = Some((w, clock.now()));
+            return true;
         }
     }
+    false
 }

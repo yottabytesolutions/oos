@@ -40,6 +40,11 @@ pub(crate) use source::{source_event, wake_source, SourceWake};
 
 const WORKERS: usize = 2;
 
+/// Map a compact worker index to the original DMA slot when slot one was excluded.
+pub(crate) fn dma_slot(index: usize, skip_second: bool) -> usize {
+    index + usize::from(skip_second && index > 0)
+}
+
 #[cfg(test)]
 mod budget_tests;
 #[cfg(test)]

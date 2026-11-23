@@ -105,14 +105,18 @@ impl BatchMatch {
     pub(super) fn prepare(
         bytes: &[u8],
         fb: usize,
-        records: std::ops::Range<usize>,
+        geometry: impl Into<MatchSlots>,
         s: &Settings,
         p: &hz::Params,
         cores: &mut Cores,
     ) -> Self {
+        let MatchSlots { records, skip_second } = geometry.into();
         let input = MatchInput::new(s, p);
         let mut frames = Vec::new();
-        let mut raw = bytes.chunks_exact(fb).take(records.end).skip(records.start);
+        let mut raw = records.clone().map(|i| {
+            let slot = crate::drawpipe::dma_slot(i, skip_second);
+            &bytes[slot * fb..(slot + 1) * fb]
+        });
         if let Some(first) = raw.next().filter(|_| input.period > 1) {
             frames.reserve_exact(records.len());
             let previous = std::array::from_fn::<_, 4, _>(|c| cores.learnt(input.key(c)));
@@ -181,6 +185,17 @@ impl BatchMatch {
     }
 }
 
+pub(super) struct MatchSlots {
+    records: std::ops::Range<usize>,
+    skip_second: bool,
+}
+
+impl From<std::ops::Range<usize>> for MatchSlots {
+    fn from(records: std::ops::Range<usize>) -> Self {
+        Self { records, skip_second: false }
+    }
+}
+
 /// Allocation census uses the same preparation and kept-vector decode as acquisition and workers.
 pub(crate) fn allocation_probe(mut sample: impl FnMut(&str, &mut dyn FnMut())) {
     let s = Settings { mask: 15, header: true, compress: 1, ..Settings::default() };
@@ -215,13 +230,13 @@ fn feed(
     cores: Option<&mut Cores>,
     (newest, reservation, decode): (Option<Frame>, Option<Arc<crate::drawpipe::TapReservation>>, bool),
 ) -> Option<Arc<Frame>> {
-    submit(pipe, raw, batch, settings, cores, (newest, reservation, decode, |frame| frame))
+    submit(pipe, (raw.0, raw.1, raw.2, false), batch, settings, cores, (newest, reservation, decode, |frame| frame))
 }
 
 #[cfg(any(target_os = "linux", test))]
 pub(super) fn submit(
     pipe: &crate::drawpipe::Pipe,
-    raw: (Box<dyn crate::drawpipe::RawBatch>, usize, std::ops::Range<usize>),
+    raw: (Box<dyn crate::drawpipe::RawBatch>, usize, std::ops::Range<usize>, bool),
     batch: (oos_core::change::Identity, impl Into<crate::drawpipe::clock::StageClock>),
     (s, p, probe): (Settings, hz::Params, super::switches::HeaderProbe),
     cores: Option<&mut Cores>,
@@ -232,10 +247,10 @@ pub(super) fn submit(
         impl FnOnce(Frame) -> Frame,
     ),
 ) -> Option<Arc<Frame>> {
-    let (buffer, fb, records) = raw;
-    let matched = cores
-        .filter(|_| eligible(&s))
-        .map(|cores| BatchMatch::prepare(buffer.bytes(), fb, records.clone(), &s, &p, cores));
+    let (buffer, fb, records, skip_second) = raw;
+    let matched = cores.filter(|_| eligible(&s)).map(|cores| {
+        BatchMatch::prepare(buffer.bytes(), fb, MatchSlots { records: records.clone(), skip_second }, &s, &p, cores)
+    });
     let needs_correction =
         |i| s.mask != 0 && matched.as_ref().and_then(|m| m.correction(i)).is_none_or(|frame| frame.uncorrected(s.mask));
     let missed = records.clone().filter(|&i| needs_correction(i)).count();
@@ -244,7 +259,8 @@ pub(super) fn submit(
         if from_dma {
             let i = records.end - 1;
             let correction = matched.as_ref().and_then(|m| m.correction(i));
-            let bytes = &buffer.bytes()[i * fb..(i + 1) * fb];
+            let slot = crate::drawpipe::dma_slot(i, skip_second);
+            let bytes = &buffer.bytes()[slot * fb..(slot + 1) * fb];
             super::hw::decode_into_matched(bytes, &s, &p, frame.seq, &mut frame, probe, correction);
         }
         Arc::new(tag(frame))
@@ -252,7 +268,8 @@ pub(super) fn submit(
     let probed_newest = (from_dma && newest.is_some()).then(|| records.end - 1);
     let (decode, codes) = BatchMatch::dispatch(matched, s, p, (probe, probed_newest));
     let identity = batch.0;
-    let fallback = pipe.feed_source((buffer, fb, records), batch, (decode, codes), (newest, reservation), from_dma);
+    let fallback =
+        pipe.feed_source((buffer, fb, records, skip_second), batch, (decode, codes), (newest, reservation), from_dma);
     let uncorrected = if fallback.is_some() { usize::from(newest_missed) } else { missed };
     pipe.batch_counters().metrics.source_uncorrected(identity, uncorrected);
     fallback

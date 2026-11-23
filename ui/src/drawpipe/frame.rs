@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::*;
+use super::{reuse, route};
+use crate::model::{Model, HDIV, NCH};
+use crate::{board::Frame, sparse::Interp, wave::Phosphor};
+
+pub struct Stats<'a> {
+    pub edges: &'a mut [u64; 4],
+    pub off: &'a mut (f64, f64),
+}
 
 /// One frame of the fast path into `ph`; false if its trigger edge was not found near the hardware trigger point.
 /// Sparse frames (fewer than 2 samples per column) take the record path (`sparse::draw_with`, else `board::to_record`).

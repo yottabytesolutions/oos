@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::board::dho::hw::header::{dispatch_fixture, for_each_fixture, Fixture};
+use std::sync::mpsc::sync_channel;
 use std::{ops::Range, sync::mpsc::Receiver};
 
 mod probe;

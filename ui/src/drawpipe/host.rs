@@ -33,7 +33,8 @@ mod tests {
 
     #[test]
     fn rejected_intake_returns_the_waveform_and_only_discards_its_neighbours() {
-        use super::super::{sync_channel, tests::Bytes, Counters, Message};
+        use super::super::{tests::Bytes, Counters, Message};
+        use std::sync::mpsc::sync_channel;
         use std::sync::Arc;
 
         for disconnected in [false, true] {

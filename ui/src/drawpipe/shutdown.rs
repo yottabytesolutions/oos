@@ -2,6 +2,12 @@
 //! Closing intake leaves all in-flight buffers owned until the coordinator and its pool finish.
 
 use super::*;
+use crate::picture::deposit::Handoff;
+#[cfg(test)]
+use crate::{model::Model, sparse::Interp};
+use std::sync::atomic::AtomicUsize;
+use std::sync::mpsc::{channel, sync_channel, SyncSender};
+use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 use std::time::Instant;
 

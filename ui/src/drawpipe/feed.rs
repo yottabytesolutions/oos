@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::{clock::StageClock, *};
-use std::time::Instant;
+use crate::{board::Frame, model::*, sparse::Interp};
+use oos_core::change::Identity;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::{ops::Range, time::Instant};
 
 mod placement;
 mod rejected;
@@ -12,17 +16,17 @@ pub(super) use view::{batch_view, set_view};
 
 pub(super) struct Header {
     pair: (u64, u64),
-    identity: Option<oos_core::change::Identity>,
+    identity: Option<Identity>,
     pub(super) tap: Option<Arc<TapReservation>>,
     pub(super) flight: Mutex<Option<admission::Flight>>,
     pub(super) order: Option<crate::picture::deposit::TapOrder>,
     pub(super) newest_from_dma: bool,
-    pub(super) reader: Option<(Arc<View>, Option<oos_core::change::Identity>)>,
+    pub(super) reader: Option<(Arc<View>, Option<Identity>)>,
     #[cfg(any(target_os = "linux", test))]
     pub(super) trace: Option<Box<route::RouteTrace>>,
 }
 impl Header {
-    fn new(stamp: u64, identity: Option<oos_core::change::Identity>) -> Self {
+    fn new(stamp: u64, identity: Option<Identity>) -> Self {
         let cfg = identity.map_or(0, |id| id.gen());
         #[cfg(test)]
         let cfg = if identity.is_none() { crate::pacing::APPLIED.load(Ordering::Relaxed) } else { cfg };
@@ -39,7 +43,7 @@ impl Header {
         }
     }
     #[cfg(any(target_os = "linux", test))]
-    fn attach_trace(&mut self, mut raw: Box<dyn RawBatch>, range: std::ops::Range<usize>) -> Box<dyn RawBatch> {
+    fn attach_trace(&mut self, mut raw: Box<dyn RawBatch>, range: Range<usize>) -> Box<dyn RawBatch> {
         // Erase the outer Box before dispatching. Test adapters implement RawBatch for the Box as well.
         self.trace = raw.as_mut().take_route_trace().map(|mut trace| {
             trace.submitted(range);
@@ -48,7 +52,7 @@ impl Header {
         raw
     }
 
-    pub(super) fn identity(&self) -> Option<oos_core::change::Identity> {
+    pub(super) fn identity(&self) -> Option<Identity> {
         self.identity
     }
     #[cfg(test)]
@@ -74,7 +78,7 @@ impl Pipe {
     pub(crate) fn staged_taps(&self) -> bool {
         self.slot.staged_taps()
     }
-    pub(crate) fn has_funded_taps(&self, id: oos_core::change::Identity) -> bool {
+    pub(crate) fn has_funded_taps(&self, id: Identity) -> bool {
         self.slot.has_funded_taps(id)
     }
     pub(crate) fn retire_tap_plan(&self) {
@@ -84,13 +88,13 @@ impl Pipe {
         self.slot.hold_taps(hold);
     }
     #[cfg(any(target_os = "linux", test))]
-    pub(crate) fn has_tap_plan(&self, id: oos_core::change::Identity, format: [u64; 6]) -> bool {
+    pub(crate) fn has_tap_plan(&self, id: Identity, format: [u64; 6]) -> bool {
         self.slot.has_tap_plan(id, format)
     }
     #[cfg(any(target_os = "linux", test))]
     pub(crate) fn admit_taps(
         &self,
-        id: oos_core::change::Identity,
+        id: Identity,
         format: [u64; 6],
         samples: usize,
         limit: std::time::Duration,
@@ -101,22 +105,18 @@ impl Pipe {
         self.slot.tap_drain()
     }
     #[cfg(test)]
-    pub(crate) fn reserve_plan(&self, id: oos_core::change::Identity) -> Option<Arc<TapReservation>> {
+    pub(crate) fn reserve_plan(&self, id: Identity) -> Option<Arc<TapReservation>> {
         let submitted = oos_hal::sync::lock(&self.view).gen;
         self.slot.reserve_plan(submitted, id)
     }
     #[cfg(any(target_os = "linux", test))]
-    pub(crate) fn reserve_plan_until(
-        &self,
-        id: oos_core::change::Identity,
-        canceled: &dyn Fn() -> bool,
-    ) -> Option<Arc<TapReservation>> {
+    pub(crate) fn reserve_plan_until(&self, id: Identity, canceled: &dyn Fn() -> bool) -> Option<Arc<TapReservation>> {
         let submitted = oos_hal::sync::lock(&self.view).gen;
         self.slot.reserve_plan_until(submitted, id, canceled)
     }
 
     #[cfg(any(target_os = "linux", test))]
-    pub(crate) fn try_prearm_tap(&self, id: oos_core::change::Identity) -> Option<Arc<TapReservation>> {
+    pub(crate) fn try_prearm_tap(&self, id: Identity) -> Option<Arc<TapReservation>> {
         let submitted = oos_hal::sync::lock(&self.view).gen;
         let reservation = self.slot.try_reserve_plan(submitted, id)?;
         self.slot.try_start_cycle(&reservation, Instant::now())?;
@@ -136,16 +136,12 @@ impl Pipe {
     }
 
     #[cfg(test)]
-    pub(crate) fn tap_start(&self, id: oos_core::change::Identity, now: Instant) -> Option<std::time::Duration> {
+    pub(crate) fn tap_start(&self, id: Identity, now: Instant) -> Option<std::time::Duration> {
         self.slot.tap_start(id, now)
     }
 
     #[cfg(test)]
-    pub(crate) fn reserve_waveform(
-        &self,
-        frame: &Frame,
-        identity: oos_core::change::Identity,
-    ) -> Option<Arc<TapReservation>> {
+    pub(crate) fn reserve_waveform(&self, frame: &Frame, identity: Identity) -> Option<Arc<TapReservation>> {
         self.reserve_waveform_until(frame, identity, &|| false)
     }
 
@@ -153,7 +149,7 @@ impl Pipe {
     pub(crate) fn reserve_waveform_until(
         &self,
         frame: &Frame,
-        identity: oos_core::change::Identity,
+        identity: Identity,
         canceled: &dyn Fn() -> bool,
     ) -> Option<Arc<TapReservation>> {
         let submitted = oos_hal::sync::lock(&self.view).gen;
@@ -161,12 +157,7 @@ impl Pipe {
     }
 
     #[cfg(any(target_os = "linux", test))]
-    pub(crate) fn grant(
-        &self,
-        identity: oos_core::change::Identity,
-        bound: u32,
-        budget: std::time::Duration,
-    ) -> super::admission::Grant {
+    pub(crate) fn grant(&self, identity: Identity, bound: u32, budget: std::time::Duration) -> super::admission::Grant {
         self.admission.grant(identity, bound, budget)
     }
 
@@ -176,7 +167,7 @@ impl Pipe {
     }
 
     #[cfg(any(target_os = "linux", test))]
-    pub(crate) fn read_limit(&self, identity: oos_core::change::Identity, live: Option<(u64, u32)>) -> Option<u32> {
+    pub(crate) fn read_limit(&self, identity: Identity, live: Option<(u64, u32)>) -> Option<u32> {
         let state = oos_hal::sync::lock(&self.view);
         let view = state.view.as_ref().filter(|_| same_pair(state.identity, Some(identity)))?;
         // An unclaimed batch may acquire any same-identity mapping. Bound the whole reachable
@@ -243,8 +234,8 @@ impl Pipe {
         &self,
         raw: Box<dyn RawBatch>,
         fb: usize,
-        frames: std::ops::Range<usize>,
-        identity: oos_core::change::Identity,
+        frames: Range<usize>,
+        identity: Identity,
         decode: DecodeInto,
         codes: Option<CodesInto>,
         newest: Option<Arc<Frame>>,
@@ -257,8 +248,8 @@ impl Pipe {
         &self,
         raw: Box<dyn RawBatch>,
         fb: usize,
-        frames: std::ops::Range<usize>,
-        (identity, fed): (oos_core::change::Identity, Instant),
+        frames: Range<usize>,
+        (identity, fed): (Identity, Instant),
         decode: DecodeInto,
         codes: Option<CodesInto>,
         newest: Option<Arc<Frame>>,
@@ -280,8 +271,8 @@ impl Pipe {
         &self,
         raw: Box<dyn RawBatch>,
         fb: usize,
-        frames: std::ops::Range<usize>,
-        (identity, fed): (oos_core::change::Identity, Instant),
+        frames: Range<usize>,
+        (identity, fed): (Identity, Instant),
         decode: IndexedDecodeInto,
         newest: Option<Arc<Frame>>,
     ) -> Option<Arc<Frame>> {
@@ -291,8 +282,8 @@ impl Pipe {
     #[cfg(test)]
     pub(crate) fn feed_readout(
         &self,
-        (raw, fb, frames): (Box<dyn RawBatch>, usize, std::ops::Range<usize>),
-        (identity, clock): (oos_core::change::Identity, impl Into<StageClock>),
+        (raw, fb, frames): (Box<dyn RawBatch>, usize, Range<usize>),
+        (identity, clock): (Identity, impl Into<StageClock>),
         decode: IndexedDecodeInto,
         codes: Option<CodesInto>,
         (newest, tap): (Option<Arc<Frame>>, Option<Arc<TapReservation>>),
@@ -303,8 +294,8 @@ impl Pipe {
     #[cfg(any(target_os = "linux", test))]
     pub(crate) fn feed_source(
         &self,
-        (raw, fb, frames): (Box<dyn RawBatch>, usize, std::ops::Range<usize>),
-        (identity, clock): (oos_core::change::Identity, impl Into<StageClock>),
+        (raw, fb, frames): (Box<dyn RawBatch>, usize, Range<usize>),
+        (identity, clock): (Identity, impl Into<StageClock>),
         (decode, codes): (IndexedDecodeInto, Option<CodesInto>),
         (newest, tap): (Option<Arc<Frame>>, Option<Arc<TapReservation>>),
         newest_from_dma: bool,
@@ -320,8 +311,8 @@ impl Pipe {
         &self,
         raw: Box<dyn RawBatch>,
         fb: usize,
-        frames: std::ops::Range<usize>,
-        header: (u64, Option<oos_core::change::Identity>),
+        frames: Range<usize>,
+        header: (u64, Option<Identity>),
         decode: impl Into<decoder::Decoder>,
         codes: Option<CodesInto>,
     ) -> Arc<Batch> {
@@ -342,7 +333,7 @@ impl Pipe {
         &self,
         raw: Box<dyn RawBatch>,
         fb: usize,
-        frames: std::ops::Range<usize>,
+        frames: Range<usize>,
         (mut header, clock): (Header, StageClock),
         decode: decoder::Decoder,
         codes: Option<CodesInto>,
@@ -390,7 +381,7 @@ impl Pipe {
         (b, fallback)
     }
 
-    fn reserve_flight(&self, identity: oos_core::change::Identity) -> admission::Flight {
+    fn reserve_flight(&self, identity: Identity) -> admission::Flight {
         let queued = oos_hal::sync::lock(&self.workers).queued.load(Ordering::Acquire);
         if queued != 0 {
             Counters::add(&self.counters.losses.unexpected_full, 1);

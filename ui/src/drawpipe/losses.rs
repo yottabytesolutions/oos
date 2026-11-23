@@ -1,6 +1,39 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#[cfg(test)]
+use super::test_scope;
+use super::{metrics, route};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
+
+/// Frames acquired, used and dropped since startup, with placement and publication diagnostics.
+#[derive(Default)]
+pub struct Counters {
+    pub acquired: AtomicU64,
+    pub used: AtomicU64,
+    pub dropped: AtomicU64,
+    /// frames whose cheap measurements went into the statistics (framestats.rs)
+    pub measured: AtomicU64,
+    pub deposited: AtomicU64,
+    pub shown: AtomicU64,
+    pub timing: crate::claim_timing::Timing,
+    pub losses: Losses,
+    pub acquisition: crate::board::AcquisitionCounters,
+    pub(crate) metrics: metrics::Metrics,
+    pub(crate) routes: route::RouteCounters,
+    #[cfg(test)]
+    pub(crate) diagnostics_disabled: std::sync::atomic::AtomicBool,
+}
+
+/// The process's counters (the acquisition thread, the workers and the UI add to them).
+pub fn counters() -> &'static Counters {
+    #[cfg(test)]
+    if let Some(counters) = test_scope::counters() {
+        return counters;
+    }
+    static C: OnceLock<Counters> = OnceLock::new();
+    C.get_or_init(Counters::default)
+}
 
 /// Independent loss causes. Identity counts are frame counts; folds count measurement samples.
 #[derive(Default)]
@@ -91,7 +124,7 @@ impl Rejection {
     }
 }
 
-impl super::Counters {
+impl Counters {
     pub(crate) fn diagnostics_enabled(&self) -> bool {
         #[cfg(test)]
         return !self.diagnostics_disabled.load(Ordering::Relaxed);

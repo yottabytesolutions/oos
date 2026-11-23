@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
+use crate::{model::*, sparse::Interp, wave::Phosphor};
+use std::sync::atomic::Ordering;
 
 #[test]
 #[ignore = "host Batch picture baseline: release, OOS_PERF_TESTS=1, one test thread"]

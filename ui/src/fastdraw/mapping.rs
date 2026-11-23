@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Exact scalar column and row mapping shared by independent and interleaved sample walks.
-use super::{code_rows::RowCache, Codes, Map, Samples, Spans};
+use super::{code_rows::RowCache, Codes, Samples};
 use std::ops::Range;
 #[inline]
 pub(crate) fn columns(width: usize, len: usize, m: &Map) -> Range<i64> {
@@ -102,4 +102,31 @@ pub(crate) fn spans_with(
         out.rows.push(rows(ka, kb));
         ka = kb;
     }
+}
+
+/// Screen mapping of one channel: x = (k - ti) * x_per_sample + x0 (columns), y = val * y_per_volt + y0 (rows).
+#[derive(Clone, Copy, Debug)]
+pub struct Map {
+    pub ti: f64,
+    pub x_per_sample: f64,
+    pub x0: f64,
+    pub y_per_volt: f32,
+    pub y0: f32,
+}
+
+/// One channel of a frame as `deposit` puts it on the screen: for each column from `c0` on, the first and last row its
+/// samples cover (first > last: nothing in that column). Worked out once per frame; the rows are then added band by
+/// band (`add_spans`), so even one channel is drawn on several cores.
+#[derive(Default)]
+pub struct Spans {
+    pub c0: usize,
+    pub rows: Vec<(i16, i16)>,
+}
+
+/// The rows a placed frame's spans can touch in channel `c`: (first, last + 1), empty when none.
+pub fn span_rows(s: &Spans) -> (usize, usize) {
+    s.rows
+        .iter()
+        .filter(|r| r.0 <= r.1)
+        .fold((usize::MAX, 0), |(a, b), r| (a.min(r.0 as usize), b.max(r.1 as usize + 1)))
 }

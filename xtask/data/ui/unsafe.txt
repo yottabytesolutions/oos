@@ -1,9 +1,9 @@
 # unsafe outside the allowed paths (architecture.txt): <count> unsafe <file>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
-1 unsafe ui/src/drawpipe.rs
+1 unsafe ui/src/drawpipe/batch.rs
 16 unsafe ui/src/drm.rs
 1 unsafe ui/src/ethlink.rs
-3 unsafe ui/src/fastdraw.rs
+3 unsafe ui/src/fastdraw/samples.rs
 18 unsafe ui/src/gpu.rs
 2 unsafe ui/src/main.rs
 1 unsafe ui/src/sntp.rs

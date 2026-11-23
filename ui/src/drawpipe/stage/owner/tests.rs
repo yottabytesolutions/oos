@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 use super::*;
+use crate::{board::Frame, model::Model, picture::deposit::TapProjection};
 use std::time::{Duration, Instant};
 struct Fixture {
     pipe: Pipe,

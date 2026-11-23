@@ -2,3 +2,7 @@
 # The integrator applies them with `cargo xtask ratchet --move` at merge, which empties this file.
 static ui/src/board/dho/hw.rs mask_map_cell::MAP -> static ui/src/board/dho/hw/comparator.rs mask_map_cell::MAP
 static ui/src/drawpipe.rs pipe::P -> static ui/src/drawpipe.rs pipe_slot::P
+static ui/src/drawpipe.rs pipe_slot::P -> static ui/src/drawpipe/pipe.rs pipe_slot::P
+unsafe ui/src/drawpipe.rs -> unsafe ui/src/drawpipe/batch.rs
+unsafe ui/src/fastdraw.rs -> unsafe ui/src/fastdraw/samples.rs
+ui ui/src/fastdraw.rs clippy::chunks_exact_to_as_chunks -> ui ui/src/fastdraw/samples.rs clippy::chunks_exact_to_as_chunks

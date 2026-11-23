@@ -355,3 +355,114 @@ fn check_upload_rows(channels: usize, dots: bool, tdiv: f64) {
     assert_eq!(pipe.counters.deposited.load(Ordering::Relaxed), 6);
     assert_eq!(pipe.counters.read().2, 0);
 }
+
+// Break it catches: the workers' codes path (large frames, no per-frame measurements) drawing another picture or
+// other trigger statistics than the frames mode, or frames lost on it
+#[test]
+fn batch_picture_from_the_codes_equals_the_frames_mode() {
+    let (w, h) = (970, 448);
+    let sig = |k: usize, c: usize, i: usize| {
+        0.9 * (((i as f64 + (k % 7) as f64 * 0.13 - 35_000.0) / 400.0) * (1.0 + c as f64 * 0.5) * std::f64::consts::TAU)
+            .sin()
+            + if k.is_multiple_of(5) { 0.05 } else { 0.0 }
+    };
+    for (mask, n) in [(1u32, 100_000u32), (3, 70_312)] {
+        let mut m = model(1e-5, mask == 3, false);
+        m.meas = Vec::new();
+        let (bytes, fb, s, p) = frames_of(mask, n, 9, &sig);
+        let pipe = Pipe::start(2, 0, fresh());
+        pipe.set_view(Some(&m), w, h, Interp::Exact);
+        let (cs, cp) = (s.clone(), p);
+        let codes: CodesInto =
+            Arc::new(move |_, c: &[u8], f: &mut Frame| crate::board::dho::hw::codes_into(c, &cs, &cp, 0, f));
+        pipe.feed_codes(Box::new(Bytes(bytes.clone())), fb, 9, 0, dec(&s, &p), Some(codes));
+        settle(&pipe);
+        let mut got = Phosphor::new(w, h);
+        let (mut clear, mut edges, mut off) = (false, [0u64; 4], (0.0, 0.0));
+        let n_got = pipe.accept(&mut got, &mut clear, &mut edges, &mut off);
+        let (want, trig, wedges, woff, _) = reference(&bytes, fb, &s, &p, &m, w, h);
+        assert_eq!((n_got.frames, n_got.triggered, edges), (9, trig, wedges), "mask {}", mask);
+        assert!((off.0 - woff.0).abs() <= 1e-9 * woff.0.abs().max(1.0) && off.1 == woff.1);
+        for c in 0..NCH {
+            assert!(got.maps()[c] == want.maps()[c], "mask {}: CH{} differs", mask, c + 1);
+        }
+    }
+}
+
+// Break it catches: a batch picture that differs from the frames mode for the same frames (decode into kept
+// vectors, frames claimed by several workers and the helper, dense and sparse frames, dots, two channels),
+// trigger or measurement statistics that leave frames out, frames lost or counted twice, a merge that does not
+// clear for minimum persistence, a buffer that does not come back.
+#[test]
+fn batch_picture_equals_the_frames_mode() {
+    let (w, h) = (970, 448);
+    for (tdiv, memsel, two, dots, workers, helper) in [
+        (1e-6, 12_512u32, false, false, 2, false),
+        (1e-6, 12_512, true, true, 4, true),
+        (1e-7, 1408, false, false, 1, true),
+        (2e-8, 400, true, false, 1, true),
+    ] {
+        let mut m = model(tdiv, two, dots);
+        m.meas = vec![
+            (Meas::Vpp, crate::model::WaveId::Ch(0)),
+            (Meas::Vavg, crate::model::WaveId::Ch(0)),
+            (Meas::Vrms, crate::model::WaveId::Ch(1)),
+        ];
+        let (bytes, fb, s, p) = batch(41, memsel, two);
+        let c = fresh();
+        let pipe = Pipe::start(workers, 0, c);
+        pipe.set_view(Some(&m), w, h, Interp::Exact);
+        assert!(pipe.accepting());
+        pipe.feed(Box::new(Bytes(bytes[..17 * fb].to_vec())), fb, 17, 0, dec(&s, &p));
+        pipe.feed(Box::new(Bytes(bytes[17 * fb..].to_vec())), fb, 24, 0, dec(&s, &p));
+        settle(&pipe);
+        let mut got = Phosphor::new(w, h);
+        got.channel_mut(0)[0] = 7;
+        let (mut clear, mut edges, mut off) = (true, [0u64; 4], (0.0, 0.0));
+        let n = collect(&pipe, &mut got, &mut clear, &mut edges, &mut off);
+        let (want, trig, wedges, woff, folds) = reference(&bytes, fb, &s, &p, &m, w, h);
+        let what = format!("{} s/div, {} workers, helper {}", tdiv, workers, helper);
+        assert_eq!((n.frames, n.triggered), (41, trig), "{}", what);
+        assert!(!clear && trig > 30 && trig < 41, "{}: {} triggered", what, trig);
+        assert_eq!(edges, wedges, "{}", what);
+        assert!((off.0 - woff.0).abs() <= 1e-9 * woff.0.abs().max(1.0) && off.1 == woff.1);
+        for c in 0..NCH {
+            assert!(got.maps()[c] == want.maps()[c], "{}: CH{} differs", what, c + 1);
+        }
+        // per-frame statistics: the same frames counted, sums in another order
+        assert_eq!(n.folds.len(), folds.len());
+        for ((k, a), (k2, b)) in n.folds.iter().zip(&folds) {
+            assert_eq!((k, a.n, a.min, a.max), (k2, b.n, b.min, b.max), "{}", what);
+            assert!(
+                (a.sum - b.sum).abs() <= 1e-12 * b.sum.abs().max(1.0)
+                    && (a.sumsq - b.sumsq).abs() <= 1e-12 * b.sumsq.abs().max(1.0)
+            );
+        }
+        assert!(tdiv < 1e-6 || folds.iter().all(|x| x.1.n > 30), "{}: {:?}", what, folds);
+        assert_eq!(c.read(), (0, 0, 0), "{}: nothing dropped", what);
+        assert_eq!(c.measured.load(Ordering::Relaxed), folds.first().map_or(0, |x| x.1.n));
+        // merged once; both buffers back in the pool
+        assert_eq!(pipe.accept(&mut got, &mut clear, &mut edges, &mut off).frames, 0);
+        let back: Vec<_> = std::iter::from_fn(|| pipe.take_buffer()).collect();
+        assert_eq!(back.len(), 2);
+        assert!(back.into_iter().all(|b| b.downcast::<Bytes>().is_ok()));
+    }
+}
+
+#[test]
+fn coordinator_alone_draws_the_same_picture() {
+    let (w, h) = (970, 448);
+    for (tdiv, memsel) in [(1e-6, 12_512u32), (1e-7, 1408)] {
+        let m = model(tdiv, false, false);
+        let (bytes, fb, s, p) = batch(20, memsel, false);
+        let pipe = Pipe::start(1, 0, fresh());
+        pipe.set_view(Some(&m), w, h, Interp::Exact);
+        pipe.feed(Box::new(Bytes(bytes.clone())), fb, 20, 0, dec(&s, &p));
+        settle(&pipe);
+        let mut got = Phosphor::new(w, h);
+        let n = pipe.accept(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+        let (want, trig, ..) = reference(&bytes, fb, &s, &p, &m, w, h);
+        assert_eq!((n.frames, n.triggered), (20, trig));
+        assert!(got.maps() == want.maps());
+    }
+}

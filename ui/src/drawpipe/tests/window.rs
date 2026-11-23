@@ -271,3 +271,73 @@ fn retained_narrow_bands_publish_the_fold_hull_and_clear_the_gap() {
     assert_eq!(f.picture.upload_rows(0, Some(&panel)).1, 8..9);
     assert!(f.picture.maps()[0].iter().all(|&v| v == 0));
 }
+
+// A partial batch cannot reach the picture while a decoder is blocked. A completed merge reports its read time.
+#[test]
+fn partial_merges_and_picture_age_are_counted() {
+    // This legacy pacing fixture writes process-global mirrors. Give only this test
+    // a child process so concurrent UI publication cannot replace its WANTED value.
+    const CHILD: &str = "OOS_PARTIAL_MERGE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "drawpipe::tests::window::partial_merges_and_picture_age_are_counted", "--nocapture"])
+            .env(CHILD, "1")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+    let m = model(1e-6, false, false);
+    let mut ph = Phosphor::new(970, 448);
+    let mut merge = |pipe: &Pipe| pipe.accept(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0));
+    // Inject the read timestamp on an identified submission, then keep the legacy stamp fixture below.
+    let timed = Pipe::start(2, 0, fresh());
+    let id = oos_core::change::Identity::default();
+    timed.publish_view(&m, 970, 448, Interp::Exact, id);
+    let (bytes, fb, s, p) = batch(20, 12_512, false);
+    let read_at = Instant::now();
+    timed.feed_at(Box::new(Bytes(bytes)), fb, 0..20, (id, read_at), dec(&s, &p), None, None);
+    settle(&timed);
+    let whole = merge(&timed);
+    assert_eq!(whole.frames, 20);
+    assert_eq!(whole.newest, Some(read_at), "picture age starts at the read timestamp");
+    assert_eq!(crate::pacing::PARTIAL.load(Ordering::Relaxed), 0);
+    let pipe = Pipe::start(2, 0, fresh());
+    pipe.set_view(Some(&m), 970, 448, Interp::Exact);
+    // The whole batch becomes available once the held worker can finish.
+    let gate = super::worker_shutdown::one_worker_held(&pipe);
+    let first = merge(&pipe).frames;
+    *gate.0.lock().unwrap() = true;
+    gate.1.notify_all();
+    settle(&pipe);
+    let second = merge(&pipe).frames;
+    assert_eq!((first, second), (0, 20));
+    assert_eq!(crate::pacing::PARTIAL.load(Ordering::Relaxed), 0);
+    // an empty merge reports no age
+    assert_eq!(merge(&pipe).newest, None);
+    // stale: frames acquired before a settings change count where their maps reach the picture, not where they
+    // are drawn: maps of an older mapping are dropped and do not count
+    crate::pacing::changed();
+    crate::pacing::changed();
+    let wanted = crate::pacing::WANTED.load(Ordering::Relaxed);
+    crate::pacing::APPLIED.store(wanted - 1, Ordering::Relaxed);
+    let (bytes, fb, s, p) = batch(20, 12_512, false);
+    pipe.feed(Box::new(Bytes(bytes)), fb, 20, 0, dec(&s, &p));
+    crate::pacing::APPLIED.store(0, Ordering::Relaxed);
+    settle(&pipe);
+    assert_eq!(merge(&pipe).stale, 20, "shown");
+    let (bytes, fb, s, p) = batch(20, 12_512, false);
+    crate::pacing::APPLIED.store(wanted - 1, Ordering::Relaxed);
+    pipe.feed(Box::new(Bytes(bytes)), fb, 20, 0, dec(&s, &p));
+    crate::pacing::APPLIED.store(0, Ordering::Relaxed);
+    settle(&pipe);
+    let mut m2 = m.clone();
+    m2.tscale += 1;
+    pipe.set_view(Some(&m2), 970, 448, Interp::Exact);
+    assert_eq!(merge(&pipe).stale, 0, "maps of the old mapping dropped, not counted");
+}

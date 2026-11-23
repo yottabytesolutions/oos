@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::picture::deposit::count::Count;
-use std::cell::RefCell;
+use std::{cell::RefCell, ops::Range};
 
 pub(crate) mod zoom;
 
@@ -186,4 +186,67 @@ mod tests {
             }
         }
     }
+}
+
+/// row-major `map` (`w` x `h`) and clears them: down each band a row at a time, its columns side by side (vector
+/// instructions), rows with nothing running pass the map by.
+pub fn fold_t(map: &mut [u16], acc: &mut [u16], w: usize, h: usize, band_cols: usize, rows: Range<usize>) {
+    let mut run = vec![0u16; band_cols.min(w)];
+    if band_cols == 0 {
+        return;
+    }
+    for (b, band) in acc.chunks_mut(band_cols * (h + 1)).enumerate() {
+        let bw = band.len() / (h + 1);
+        crate::picture::deposit::kernel::fold_band(
+            map,
+            band,
+            &mut run[..bw],
+            (w, h, b * band_cols),
+            rows.clone(),
+            true,
+        );
+    }
+}
+
+/// The first fold: differences column by column (`h + 1` a column), summed down the columns in tiles (the reference
+/// of the test, and the bench's baseline).
+#[cfg(test)]
+fn fold_t_cols(map: &mut [u16], acc: &mut [u16], w: usize, h: usize, rows: Range<usize>) {
+    const T: usize = 32;
+    let hp = h + 1;
+    let (r_lo, r_end) = (rows.start.min(h), (rows.end.min(h) + 1).min(hp));
+    if r_lo >= r_end {
+        return;
+    }
+    let mut run = vec![0u16; w];
+    for ra in (r_lo..r_end).step_by(T) {
+        let rb = (ra + T).min(r_end);
+        for ca in (0..w).step_by(T) {
+            for c in ca..(ca + T).min(w) {
+                let col = &mut acc[c * hp + ra..c * hp + rb];
+                let mut v = run[c];
+                if v == 0 && col.iter().fold(0u16, |a, &x| a | x) == 0 {
+                    continue;
+                }
+                for (j, x) in col.iter_mut().enumerate() {
+                    v = v.wrapping_add(*x);
+                    *x = 0;
+                    let r = ra + j;
+                    if v != 0 && r < h {
+                        let i = r * w + c;
+                        map[i] = map[i].saturating_add(v);
+                    }
+                }
+                run[c] = v;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod fold_tests;
+
+#[cfg(test)]
+pub fn add_spans(band: &mut [u16], w: usize, r_lo: usize, s: &Spans, wgt: u16) {
+    crate::picture::deposit::kernel::paint_spans(band, w, r_lo, s, wgt);
 }

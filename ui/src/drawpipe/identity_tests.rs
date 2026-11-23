@@ -1,7 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
+use crate::{
+    board::{Frame, PictureEligibility},
+    model::*,
+    picture::deposit::{Deposit, TapProjection},
+    sparse::Interp,
+    wave::Phosphor,
+};
 use oos_core::change::{Identity, Request, Shadow, UiAcq};
+use std::sync::{atomic::Ordering, mpsc::channel, Arc};
 
 #[test]
 fn stop_wakes_a_legacy_waveform_reservation_and_preserves_the_queued_tap() {

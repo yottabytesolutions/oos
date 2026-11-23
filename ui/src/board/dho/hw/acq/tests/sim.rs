@@ -85,6 +85,7 @@ pub(super) enum Event {
     SourceWake,
     Calibration(service::CalRequest),
     Generator(Option<Gen>),
+    Trim(u32),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -345,8 +346,9 @@ impl Port for Sim {
         None
     }
 
-    fn trim(_: &mut Io<Self>, _: u32) -> bool {
-        panic!("unexpected core trim");
+    fn trim(io: &mut Io<Self>, mask: u32) -> bool {
+        io.clock.mark(Event::Trim(mask));
+        true
     }
 }
 

@@ -43,6 +43,58 @@ fn stopped_view_uses_captured_geometry_and_mode_after_held_edits() {
     assert!(view.points < capture.points);
 }
 
+#[test]
+fn stop_on_an_identity_change_only_rereads_when_the_ring_is_retained() {
+    for prearm in [false, true] {
+        let (outcome, capture, view) = twice(|| stop_at_boundary(prearm));
+        let stop = outcome.events.iter().position(|event| *event == Event::Stop).unwrap();
+        let held = &outcome.events[stop + 1..];
+        assert_eq!(held.iter().filter(|event| matches!(event, Event::Dma(_))).count(), usize::from(!prearm));
+        assert_eq!(trigger_plans(held), 0);
+        assert!(!held.iter().any(is_arm));
+        assert_eq!(outcome.latest, Some(Frame::stamp(4, 3)));
+        assert_eq!(outcome.final_ack, 7);
+        if prearm {
+            assert!(view.is_none());
+        } else {
+            assert_eq!(view.unwrap().identity, capture.identity);
+        }
+    }
+}
+
+fn stop_at_boundary(prearm: bool) -> (Outcome, RawFrame, Option<RawFrame>) {
+    use oos_hal::dho::bus::Bus;
+
+    let _scope = Scope::new();
+    let want = Settings { tdiv: 10e-6, depth: 14_000, ..settings() };
+    let model = Model::default();
+    let shadow = Shadow::new(&model, UiAcq::default(), &crate::model::config()).unwrap();
+    let out = requested(&want, shadow.identity(), false);
+    let (mut io, trace) = sim::fixture(&want, out.clone(), (Run::Selection, 4, false), None);
+    let options = Spawn { mask: want.mask, program_afe: false, cal_dir: String::new(), start_up: None };
+    let conf = if prearm { "acq.prearm = on" } else { "" };
+    let switches = Switches::parse(&|_| None, conf, "acq.frame0 = keep", Default::default());
+    let started = io.clock.now();
+    let mut source = AcqLoop::new(options, switches, out.clone(), Service::default(), None, started, FixedPacing);
+    capture(&mut source, &mut io);
+    assert_eq!(source.batch.armed.is_some(), prearm);
+    if prearm {
+        // Give the successor a full poll of triggers before STOP reaches the source.
+        assert_ne!(io.bar.rd(0x4080), 0);
+    }
+    io.clock.stop();
+    {
+        let mut g = lock(&out);
+        Edit::Timebase.publish(&mut g, model, shadow);
+        g.stop_view = Some((1e-6, 0.0));
+    }
+    capture(&mut source, &mut io);
+    let g = lock(&out);
+    let frames = (raw_frame(&g.frame), g.replay.as_ref().map(raw_frame));
+    let outcome = Outcome::snapshot(&mut trace.borrow_mut(), &g, io.clock.now().duration_since(started));
+    (outcome, frames.0, frames.1)
+}
+
 #[derive(Clone, Copy, Debug)]
 enum Edit {
     Timebase,

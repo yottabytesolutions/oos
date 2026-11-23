@@ -55,7 +55,7 @@ impl Units {
         if mode != Slow::Off {
             return;
         }
-        if let Some(pending) = self.trim_pending.filter(|t| t.due(io.clock.now())) {
+        if let Some(pending) = self.trim_pending.filter(|t| !request.run.hold && t.due(io.clock.now())) {
             self.trim_pending = None;
             if !generator_on && pending.mode == io.state.mode.min(10) && io.cal_adc.is_some() {
                 io.disarm(armed);

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Real duration budgets run only in the explicitly selected release performance lane.
+//! Wall-time check for the manually selected local waveform benchmark.
 use std::time::{Duration, Instant};
 
 pub(crate) fn check(limit: Duration, action: impl FnOnce()) {
@@ -12,8 +12,4 @@ pub(crate) fn check(limit: Duration, action: impl FnOnce()) {
     let elapsed = start.elapsed();
     println!("latency: {elapsed:?}, limit {limit:?}");
     assert!(elapsed < limit, "latency {elapsed:?} exceeds {limit:?}");
-}
-
-pub(crate) fn wait_until(deadline: Instant) {
-    std::thread::sleep(deadline.saturating_duration_since(Instant::now()));
 }

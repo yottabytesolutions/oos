@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Best-of-rounds ratios remain the throughput guard. A separate p99 ratio checks tails.
-//! Tail limits allow 50 % contention headroom over each throughput limit; they never
-//! compare a candidate tail with the reference minimum. All rounds interleave the paths.
+//! UI timing rings and host CPU-cost guards.
 
 pub(crate) mod deep;
 mod draw;
@@ -27,7 +25,22 @@ pub fn guard_pair(
     reference: impl FnMut(),
     candidate: impl FnMut(),
 ) -> (Duration, Duration) {
-    let pair = samples::measure(rounds, runs, reference, candidate);
+    checked_pair(best_limit, samples::measure(rounds, runs, reference, candidate))
+}
+
+#[cfg(test)]
+pub(crate) fn guard_worker_pair(
+    best_limit: f64,
+    rounds: usize,
+    runs: usize,
+    reference: impl FnMut(),
+    candidate: impl FnMut(),
+) -> (Duration, Duration) {
+    checked_pair(best_limit, samples::measure_workers(rounds, runs, reference, candidate))
+}
+
+#[cfg(test)]
+fn checked_pair(best_limit: f64, pair: samples::Pair) -> (Duration, Duration) {
     pair.check_tail(best_limit * 1.5);
     if best_limit.is_finite() {
         let thread = std::thread::current();

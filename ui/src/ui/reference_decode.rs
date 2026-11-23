@@ -743,12 +743,4 @@ mod tests {
         let mut canvas = Canvas::new(W, H);
         ui.render(&mut canvas);
     }
-    #[test]
-    #[ignore = "perf-guard latency: release, OOS_PERF_TESTS=1, one test thread"]
-    fn perf_guard_reference_decode_dispatch() {
-        let ui = uart_ui(BACKGROUND_POINTS + 1000);
-        crate::perfguard::latency::check(std::time::Duration::from_millis(250), || {
-            assert_eq!(ui.reference_decode_packets(&ui.m).unwrap_err(), COMPUTING);
-        });
-    }
 }

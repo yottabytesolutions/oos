@@ -51,7 +51,7 @@ fn measure_codes_per_frame(mask: u32, n: u32, tdiv: f64, coup: TrigCoup) -> f64 
     };
     draw_codes();
     // one round: every frame once (each round's time divided by the frames below)
-    let (old, new) = crate::perfguard::guard_pair(
+    let (old, new) = crate::perfguard::guard_worker_pair(
         0.9,
         crate::perfguard::ROUNDS,
         1,
@@ -113,7 +113,7 @@ fn perf_guard_deposit_worker_per_frame() {
         one.set_view(Some(&m), w, h, Interp::Exact);
         // Copy once outside timing, then recycle through the real pool: 101 rounds still use one buffer.
         let mut buffer = Some(Box::new(Bytes(bytes.clone())));
-        let (old, one_t) = crate::perfguard::guard_pair(
+        let (old, one_t) = crate::perfguard::guard_worker_pair(
             if meas { f64::INFINITY } else { 1.5 },
             crate::perfguard::ROUNDS,
             1,
@@ -134,8 +134,9 @@ fn perf_guard_deposit_worker_per_frame() {
             },
         );
         assert_eq!(one.counters.read().2, 0);
-        let (old, mut per) = (old / frames as u32, vec![one_t / frames as u32]);
-        for n in [2usize, 4] {
+        let (old, one_t) = (old / frames as u32, one_t / frames as u32);
+        let mut rates = Vec::new();
+        for n in [1, 2, 4] {
             let pipe = Pipe::start(n, 0, fresh());
             pipe.set_view(Some(&m), w, h, Interp::Exact);
             let t0 = std::time::Instant::now();
@@ -143,11 +144,11 @@ fn perf_guard_deposit_worker_per_frame() {
                 pipe.feed(Box::new(Bytes(bytes.clone())), fb, frames, 0, dec(&s, &p));
                 drop(recycle_worker_round(&pipe, frames));
             }
-            per.push(t0.elapsed() / (3 * frames) as u32);
+            rates.push((3 * frames) as f64 / t0.elapsed().as_secs_f64());
             assert_eq!(pipe.counters.read().2, 0);
         }
-        let r = per[0].as_secs_f64() / old.as_secs_f64();
-        println!("{} s/div {} pt, frame statistics {}: frames mode {:?}/frame; one core in the pipeline {:?}/frame (ratio {:.2}); 1/2/4 workers {:.0}/{:.0}/{:.0} frames/s", tdiv, memsel, meas, old, per[0], r, 1.0 / per[0].as_secs_f64(), 1.0 / per[1].as_secs_f64(), 1.0 / per[2].as_secs_f64());
+        let r = one_t.as_secs_f64() / old.as_secs_f64();
+        println!("{} s/div {} pt, frame statistics {}: frames mode {:?}/frame; one core in the pipeline {:?}/frame (ratio {:.2}); 1/2/4 workers {:.0}/{:.0}/{:.0} frames/s", tdiv, memsel, meas, old, one_t, r, rates[0], rates[1], rates[2]);
         assert!(meas || r <= 1.5, "a frame in the pipeline must not cost more than in the frames mode: {:.2}", r);
     }
 }

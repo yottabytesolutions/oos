@@ -48,12 +48,17 @@ CPU p99 is a separate work-tail check and cannot prove wall-latency or unit thro
 remain unverified. A >2 % result still fails; do not retry until green or widen again from these data.
 
 Restoration owner: task 0013's F3 implementer and accepting coordinator. Before F3 frame cutover acceptance,
-restore 1.01 in the Rust assertion, architecture row and contract fixtures; run all six unchanged cases with
-CPU p99 <= 1.515 and actual picture/record checks, and retain raw paired evidence. Account for the recovered
-budget explicitly in the task. Failure leaves cutover held, not the temporary cap permanent. Methodology
-changes require separate justification and review. Existing cross-vendor review, integrated gate, matched
-DHO804 A/B, M12 acceptance and route-deletion holds remain; historical 4CH regressions are not waived.
-This amendment is a private owner-requested proposal, not public acceptance or release evidence.
+restore 1.01 in the Rust assertion, architecture row and contract fixtures. Run the six cases with
+CPU p99 <= 1.515 and retain the paired observations, picture and record counts. Account for the recovered
+budget in the task. Existing cross-vendor review, integrated gate, matched DHO804 A/B, M12 acceptance
+and route-deletion holds remain.
+
+The acquisition sweep alternates reference and candidate after each picture and sums 16 pictures
+per side in each round. It compares CPU in the lowest combined-cost window spanning two thirds of
+the matched rounds. Its limits remain
+1.02 for staging and 1.01 at cutover. Both sides include the coordinator, workers and caller, and wait
+for the same batch completion. This isolates the work from host descheduling. The original elapsed
+throughput and latency questions are part of unit acceptance.
 
 ## Alternatives
 

@@ -932,29 +932,4 @@ mod tests {
             assert!(r.value.is_nan() && r.reason.is_some());
         }
     }
-    #[test]
-    #[ignore = "perf-guard latency: release, OOS_PERF_TESTS=1, one test thread"]
-    fn perf_guard_catalog_dispatch_and_pending_reads() {
-        let mut ui = fixture();
-        put(&mut ui, 0, (0..400_000).map(|i| if i % 40 < 20 { -0.5 } else { 0.5 }).collect(), 0.0, 1e-9);
-        ui.m.cat = vec![row(tile(measures::jitter::EYE_HEIGHT)), row(tile(measures::jitter::TIE))];
-        crate::perfguard::latency::check(std::time::Duration::from_millis(500), || {
-            for _ in 0..100 {
-                let _ = ui.cat_row(
-                    row(tile(measures::jitter::EYE_HEIGHT)).0,
-                    row(tile(measures::jitter::EYE_HEIGHT)).1,
-                    row(tile(measures::jitter::EYE_HEIGHT)).2,
-                    row(tile(measures::jitter::EYE_HEIGHT)).3,
-                    row(tile(measures::jitter::EYE_HEIGHT)).4,
-                );
-                let _ = ui.cat_row(
-                    row(tile(measures::jitter::TIE)).0,
-                    row(tile(measures::jitter::TIE)).1,
-                    row(tile(measures::jitter::TIE)).2,
-                    row(tile(measures::jitter::TIE)).3,
-                    row(tile(measures::jitter::TIE)).4,
-                );
-            }
-        });
-    }
 }

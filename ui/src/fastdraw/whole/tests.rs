@@ -68,40 +68,53 @@ fn deposit_is_bit_identical_to_the_scattered_writes() {
     assert!(sweeps > 20 && sweeps < cases - 20, "{} of {} cases swept", sweeps, cases);
 }
 
-// Timing guard (tools/perf-guard.sh): the span pass against one scattered write per pixel, per signal, at 100 k and
-// 12.5 k points over 970 columns. Never slower on short spans (square), faster on long ones (sine, noise).
+// Count the writes on the real scatter and sweep branches. A dense sweep uses the
+// eight-lane cost model. A narrow span must stay on the cheaper scatter route.
 #[test]
-#[ignore = "host timing: set OOS_PERF_TESTS=1"]
+#[ignore = "host span work: set OOS_PERF_TESTS=1"]
 fn perf_guard_deposit_spans() {
-    assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
-    let (w, h) = (970usize, 448usize);
-    let names = ["sine", "two sines", "square", "ramp", "clipped", "flat", "noise", "noisy square", "gaps"];
-    let mut worst: f64 = 0.0;
-    for n in [100_000usize, 12_512] {
-        for (name, v) in names.iter().zip(signals(n)) {
-            let m = Map {
-                ti: n as f64 / 2.0,
-                x_per_sample: 970.0 / n as f64 * 0.8,
-                x0: 485.0,
-                y_per_volt: -56.0,
-                y0: 224.0,
-            };
-            let (mut ma, mut mb) = (vec![0u16; w * h], vec![0u16; w * h]);
-            let (old, new) = crate::perfguard::guard_pair(
-                1.25,
-                crate::perfguard::ROUNDS,
-                33,
-                || deposit_reference(&mut ma, w, h, &v, &m, 1),
-                || {
-                    std::hint::black_box(deposit(&mut mb, w, h, &v, &m, 1));
-                },
-            );
-            let r = new.as_secs_f64() / old.as_secs_f64();
-            worst = worst.max(r);
-            println!("deposit {} pt {}: one write per pixel {:?}, span pass {:?} (ratio {:.2})", n, name, old, new, r);
+    assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"));
+    for n in [100_000, 12_512] {
+        for (name, values) in NAMES.into_iter().zip(signals(n)) {
+            span_write_budget(name, &values);
         }
     }
-    assert!(worst <= 1.25, "the span pass must not be slower: worst ratio {:.2}", worst);
+}
+
+const NAMES: [&str; 9] = ["sine", "two sines", "square", "ramp", "clipped", "flat", "noise", "noisy square", "gaps"];
+
+fn work_map(samples: usize) -> Map {
+    Map {
+        ti: samples as f64 / 2.0,
+        x_per_sample: 970.0 / samples as f64 * 0.8,
+        x0: 485.0,
+        y_per_volt: -56.0,
+        y0: 224.0,
+    }
+}
+
+fn span_write_budget(name: &str, values: &[f32]) {
+    let (w, h) = (970, 448);
+    let (mut reference, mut actual) = (vec![0; w * h], vec![0; w * h]);
+    let m = work_map(values.len());
+    deposit_reference(&mut reference, w, h, values, &m, 1);
+    let work = work::count_spans(|| {
+        let _ = deposit_samples::<true>(&mut actual, w, h, &work::CountedSamples(values), &m, 1);
+    });
+    assert!(actual == reference, "{name}: span pixels changed");
+    let scattered = reference.iter().filter(|&&pixel| pixel != 0).count();
+    let rows = reference.chunks_exact(w).map(|row| row.iter().any(|&pixel| pixel != 0));
+    let (first, last) = (
+        rows.clone().position(|used| used).unwrap(),
+        rows.rev().position(|used| used).map(|last| h - 1 - last).unwrap(),
+    );
+    let width = crate::fastdraw::columns(w, values.len(), &m).count();
+    assert_eq!((work.samples, work.joins), (values.len(), width - 1), "{name}: one span scan");
+    let sweep = (last - first + 1) * width;
+    let expected = if sweep / 8 < scattered { (0, sweep) } else { (scattered, 0) };
+    assert_eq!((work.scattered, work.contiguous), expected, "{name}: use the cheaper raster write pattern");
+    let ratio = (work.scattered + work.contiguous.div_ceil(8)) as f64 / scattered as f64;
+    println!("SPAN_WORK points={} signal={name:?} ratio={ratio:.6} {work:?}", values.len());
 }
 
 // Break it catches: dots counted in runs drawing other pixels or other weights than one add per sample (runs
@@ -140,33 +153,40 @@ fn dots_are_bit_identical_to_one_add_per_sample() {
     }
 }
 
-// Timing guard (tools/perf-guard.sh): dots in runs against one add per sample, per signal at 100 k points.
+// Runs save writes on repeated rows. Noisy columns should only probe their first
+// eight samples before continuing with the single-add kernel.
 #[test]
-#[ignore = "host timing: set OOS_PERF_TESTS=1"]
+#[ignore = "host dot work: set OOS_PERF_TESTS=1"]
 fn perf_guard_dots() {
-    assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"), "set OOS_PERF_TESTS=1");
-    let (w, h) = (970usize, 448usize);
-    let names = ["sine", "two sines", "square", "ramp", "clipped", "flat", "noise", "noisy square", "gaps"];
-    let n = 100_000usize;
-    let mut worst: f64 = 0.0;
-    for (name, v) in names.iter().zip(signals(n)) {
-        let m =
-            Map { ti: n as f64 / 2.0, x_per_sample: 970.0 / n as f64 * 0.8, x0: 485.0, y_per_volt: -56.0, y0: 224.0 };
-        let (mut ma, mut mb) = (vec![0u16; w * h], vec![0u16; w * h]);
-        let (old, new) = crate::perfguard::guard_pair(
-            1.25,
-            crate::perfguard::ROUNDS,
-            22,
-            || deposit_dots_reference(&mut ma, w, h, &v, &m, 1),
-            || {
-                std::hint::black_box(deposit_dots(&mut mb, w, h, &v, &m, 1));
-            },
-        );
-        let r = new.as_secs_f64() / old.as_secs_f64();
-        worst = worst.max(r);
-        println!("dots {} pt {}: one add per sample {:?}, runs {:?} (ratio {:.2})", n, name, old, new, r);
+    assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"));
+    let (w, h, n) = (970, 448, 100_000);
+    for (name, values) in NAMES.into_iter().zip(signals(n)) {
+        let (mut reference, mut actual) = (vec![0; w * h], vec![0; w * h]);
+        let m = work_map(n);
+        deposit_dots_reference(&mut reference, w, h, &values, &m, 1);
+        let work = work::count_dots(|| {
+            let _ = dots::draw::<true>(&mut actual, w, h, &values, &m, 1);
+        });
+        assert!(actual == reference, "{name}: dots pixels changed");
+        let writes: usize = reference.iter().map(|&count| usize::from(count)).sum();
+        assert_eq!(work.samples, n, "{name}: visit each sample once");
+        assert!(work.writes <= writes && work.probes <= n, "{name}: {work:?}");
+        let write_limit = match name {
+            "flat" | "square" | "ramp" => writes / 20,
+            "sine" => writes * 4 / 5,
+            "gaps" => writes * 3 / 5,
+            _ => writes,
+        };
+        assert!(work.writes <= write_limit, "{name}: repeated rows must coalesce: {work:?}");
+        let probe_limit = match name {
+            "noise" | "two sines" => 8 * w,
+            "noisy square" => 16 * w,
+            "clipped" => n / 2,
+            _ => n,
+        };
+        assert!(work.probes <= probe_limit, "{name}: bound repeat probes: {work:?}");
+        println!("DOT_WORK signal={name:?} write_ratio={:.6} {work:?}", work.writes as f64 / writes as f64);
     }
-    assert!(worst <= 1.25, "dots in runs must not be slower: worst ratio {:.2}", worst);
 }
 
 #[test]

@@ -5,11 +5,9 @@
 #
 #   tools/perf-guard.sh [--build-only]
 #
-# 1. Deterministic guards (they also run in the normal `cargo test`): allocation counts of the batch read and decode,
-#    the early trigger end on the generic batch path, and the equivalence tests of the fork's fast paths.
-# 2. Timing guards: `#[ignore]` tests that compare a fork path with a reference copy of the path it replaced, in one
-#    release run on one thread. They assert ratios, not times. In oos-ui these are the ignored tests whose name
-#    contains `perf_guard`. Both best and p99 ratios are checked against the architecture host table.
+# Run deterministic allocation, early-trigger, equality and bounded-work guards,
+# plus interleaved CPU-cost ratios against the reference paths in the host budget table.
+# Compare CPU in a serial release test process. Reported wall timings are diagnostics.
 # Host only: touches no hardware. Exits non-zero on the first failing guard.
 set -eu
 export OOS_PERF_TESTS=1
@@ -21,8 +19,8 @@ case "${1-}" in
     ''|--build-only) ;;
     *) echo "usage: tools/perf-guard.sh [--build-only]" >&2; exit 2 ;;
 esac
-# Compilation can overlap other gate work; the timing guards still run alone. HAL reuses test-release artifacts;
-# UI timing guards keep the shipping release profile. Both share the selected target with the other gate steps.
+# HAL reuses test-release artifacts. UI uses the shipping release profile.
+# Both use the same target directory as the other gate steps.
 output=$CARGO_TARGET_DIR
 # Preserve Cargo's real status without a pipeline; keep complete observations for the budget reader.
 mkdir -p "$CARGO_TARGET_DIR"
@@ -30,7 +28,6 @@ log="$output/perf-guard.log"
 if [ "${1-}" = --build-only ]; then log="$output/perf-build.log"; fi
 step_log="$output/perf-guard-step.log"
 : > "$log"
-started=$(date +%s)
 run() {
     if "$@" > "$step_log" 2>&1; then
         cat "$step_log"
@@ -53,19 +50,19 @@ if [ "${1-}" = --build-only ]; then
 fi
 
 echo "== hal: deterministic guards"
-run cargo test --locked --profile test-release --quiet -p oos-hal --test alloc_batch --test early_trigger_end
+run cargo test --locked --profile test-release --quiet -p oos-hal --test alloc_batch --test early_trigger_end -- --nocapture
 run cargo test --locked --profile test-release --quiet -p oos-hal --lib -- \
     fused_decode_equals_deinterleave_and_volts decode_into_kept_vectors_equals_decode unpad_in_place_equals_unpad \
     prearm_writes_the_same_sequence_as_the_plain_batch_loop dma_buf_is_reused_aligned_and_exact_with_short_reads
 
-echo "== hal: timing guards (best and p99 ratios)"
+echo "== hal: CPU guards (best and p99 ratios)"
 run cargo test --locked --profile test-release --quiet -p oos-hal --test perf_ratio -- --ignored --nocapture --test-threads=1
 
 echo "== ui: zero-allocation hot paths"
 run cargo test --locked --release --quiet -p oos-ui --test soak -- hot_paths_allocate_nothing_after_warmup --nocapture
 
-echo "== ui: timing guards (best and p99 ratios; M12 draw-route build/allocation rows)"
+echo "== ui: work and CPU guards (M12 draw-route diagnostics)"
 run cargo test --locked --release --quiet -p oos-ui --bin oos-ui -- --ignored --nocapture --test-threads=1 perf_guard
 
 python3 "$root/tools/perf-budgets.py" --log "$log"
-echo "perf guards: all passed ($(( $(date +%s) - started )) s)"
+echo "perf guards: all passed"

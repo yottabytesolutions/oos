@@ -4,9 +4,10 @@ use super::*;
 use crate::{model::*, sparse::Interp, wave::Phosphor};
 
 #[test]
-#[ignore = "host Batch picture baseline: release, OOS_PERF_TESTS=1, one test thread"]
+#[ignore = "host Batch picture work: release, OOS_PERF_TESTS=1, one test thread"]
 fn perf_guard_batch_picture_merge() {
     use crate::board::scripted::{self, Batch};
+    use crate::picture::deposit::kernel::fold_work;
     use std::time::Instant;
     assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"));
     for (tdiv, frames) in [(1e-6, 90), (10e-6, 14)] {
@@ -26,22 +27,21 @@ fn perf_guard_batch_picture_merge() {
         let (fb, decode, codes) = (fixture.frame_bytes(), fixture.decode(), fixture.codes());
         let mut bytes: Box<dyn RawBatch> = Box::new(fixture.into_bytes());
         let mut ph = Phosphor::new(970, 448);
-        let mut times = Vec::new();
-        for round in 0..crate::perfguard::ROUNDS + 8 {
+        // This signal occupies 113 rows on each channel. Prefix the sentinel row too,
+        // then write only the occupied rows. A second fold or a full scan exceeds this.
+        let expected_work = [114 * 4 * 970, 113 * 4 * 970];
+        for round in 0..8 {
             pipe.feed_codes(bytes, fb, frames, 0, decode.clone(), codes.clone());
-            bytes = host::finish_batch(&pipe, round as u64).unwrap();
-            let start = Instant::now();
-            let got = pipe.accept(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0));
-            let elapsed = start.elapsed().as_nanos();
+            bytes = host::finish_batch(&pipe, round).unwrap();
+            let (got, work) = fold_work::count(|| pipe.accept(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0)));
             assert_eq!(got.frames as usize, frames);
-            if round >= 8 {
-                times.push(elapsed);
-            }
+            assert_eq!(work, expected_work, "one fold of the touched rows for tdiv={tdiv}");
         }
-        times.sort_unstable();
-        println!("BATCH_PICTURE channels=4 acq=Normal tdiv={tdiv} frames={frames} merge_ns_p50={} merge_ns_p90={} merge_ns_p99={} ui_ns_p50={} ui_ns_p99={}", times[50], times[90], times[99], times[50], times[99]);
+        println!(
+            "BATCH_PICTURE_WORK channels=4 tdiv={tdiv} frames={frames} prefix={} writes={}",
+            expected_work[0], expected_work[1]
+        );
         assert!(ph.maps().iter().all(|map| map.iter().any(|&v| v > 0)));
-        assert!(times[99] < 16_500_000, "merge must fit within half a picture period on the host");
         shutdown::close(&pipe, Instant::now() + crate::ui::lifecycle::test_wait::HANG_GUARD);
     }
 }

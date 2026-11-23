@@ -16,7 +16,7 @@ instead of the intended state transitions.
 Tests advance time explicitly through injected `Instant` or a real/manual Clock interface. They exercise the shipped
 algorithm; cfg(test) does not select another algorithm. Tests waiting for a thread wait for its completion event,
 channel or condition variable. Timeouts are hang guards of at least 60 seconds and name the missing event. Real duration
-assertions belong in perf-guard, not unit tests.
+budgets are measured on the unit. Host perf guards assert work counts or interleaved CPU ratios.
 
 Check: `test-time` scans test sleeps and deadline loops; its ratchet only shrinks. Review checks injected clocks and
 event waits.

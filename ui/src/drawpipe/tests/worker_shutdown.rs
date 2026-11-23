@@ -39,12 +39,3 @@ fn shutdown_leaves_a_busy_deposit_workers_buffers_owned() {
     *oos_hal::sync::lock(&gate.0) = true;
     gate.1.notify_all();
 }
-
-#[test]
-#[ignore = "perf-guard latency: release, OOS_PERF_TESTS=1, one test thread"]
-fn perf_guard_shutdown_retains_busy_workers_within_budget() {
-    crate::perfguard::latency::check(
-        std::time::Duration::from_millis(250),
-        shutdown_leaves_a_busy_deposit_workers_buffers_owned,
-    );
-}

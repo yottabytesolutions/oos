@@ -5,15 +5,25 @@ use std::process::Child;
 use std::time::{Duration, Instant};
 
 pub(super) fn stop(child: &mut Child, deadline: Instant) -> bool {
+    stop_with(child, deadline, wait, Child::kill, Instant::now)
+}
+
+fn stop_with<C>(
+    child: &mut C,
+    deadline: Instant,
+    mut wait: impl FnMut(&mut C, Instant) -> bool,
+    kill: impl FnOnce(&mut C) -> std::io::Result<()>,
+    now: impl FnOnce() -> Instant,
+) -> bool {
     if wait(child, deadline) {
         return true;
     }
     eprintln!("oos-ui: GPU helper shutdown deadline; killing helper");
-    if let Err(e) = child.kill() {
+    if let Err(e) = kill(child) {
         eprintln!("oos-ui: GPU helper kill: {}", e);
     }
     // Reaping is bounded too. Never use blocking wait after a kill request.
-    wait(child, Instant::now() + Duration::from_millis(100))
+    wait(child, now() + Duration::from_millis(100))
 }
 
 fn wait(child: &mut Child, deadline: Instant) -> bool {
@@ -38,15 +48,33 @@ mod tests {
     use super::*;
 
     #[test]
-    fn uncooperative_helper_is_killed_within_bound() {
-        let mut child = std::process::Command::new("sh").args(["-c", "exec sleep 60"]).spawn().unwrap();
+    fn uncooperative_helper_is_killed_at_the_deadline() {
+        let mut child = std::process::Command::new("cat").stdin(std::process::Stdio::piped()).spawn().unwrap();
+        let stdin = child.stdin.take().unwrap();
         // An already-expired grace period deterministically requests a kill. Reaping is an event.
         let _ = stop(&mut child, Instant::now());
+        drop(stdin);
         assert!(!child.wait().unwrap().success());
     }
+
     #[test]
-    #[ignore = "perf-guard latency: release, OOS_PERF_TESTS=1, one test thread"]
-    fn perf_guard_uncooperative_helper_stop() {
-        crate::perfguard::latency::check(Duration::from_millis(500), uncooperative_helper_is_killed_within_bound);
+    fn unreaped_helper_returns_after_one_bounded_reap_attempt() {
+        let start = Instant::now();
+        let killed_at = start + Duration::from_secs(5);
+        let mut polls = Vec::new();
+        assert!(!stop_with(
+            &mut false,
+            start,
+            |killed, deadline| {
+                polls.push((*killed, deadline));
+                false
+            },
+            |killed| {
+                *killed = true;
+                Ok(())
+            },
+            || killed_at,
+        ));
+        assert_eq!(polls, [(false, start), (true, killed_at + Duration::from_millis(100))]);
     }
 }

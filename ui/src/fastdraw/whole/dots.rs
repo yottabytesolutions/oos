@@ -11,10 +11,21 @@ use crate::wave::phosphor::RowBand;
 /// samples of the column before repeated their row; both give the same picture.
 #[must_use]
 pub fn deposit_dots(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) -> Range<usize> {
+    draw::<false>(map, w, h, v, m, wgt)
+}
+
+pub(super) fn draw<const TRACK: bool>(
+    map: &mut [u16],
+    w: usize,
+    h: usize,
+    v: &[f32],
+    m: &Map,
+    wgt: u16,
+) -> Range<usize> {
     let mut rows = RowBand::empty();
     let mut runs = false;
     dots_walk(w, v.len(), m, |c, a, b| {
-        rows.include(dots_column(map, w, h, c, &v[a..b], m, wgt, &mut runs));
+        rows.include(dots_column::<TRACK>(map, w, h, c, &v[a..b], m, wgt, &mut runs));
     });
     rows.into_range()
 }
@@ -72,7 +83,7 @@ fn dots_walk(w: usize, n: usize, m: &Map, mut col: impl FnMut(usize, usize, usiz
 // The column kernel shares its map, mapping and run selection with the whole-map walk.
 #[allow(clippy::too_many_arguments)]
 #[inline]
-fn dots_column(
+fn dots_column<const TRACK: bool>(
     map: &mut [u16],
     w: usize,
     h: usize,
@@ -82,56 +93,98 @@ fn dots_column(
     wgt: u16,
     runs: &mut bool,
 ) -> Range<usize> {
-    let row = |x| sample_row(x, m);
+    #[cfg(test)]
+    let mut work = super::work::DotWork::default();
+    let row = |x| {
+        #[cfg(test)]
+        {
+            work.samples += usize::from(TRACK);
+        }
+        sample_row(x, m)
+    };
+    let probe = || {
+        #[cfg(test)]
+        {
+            work.probes += usize::from(TRACK);
+        }
+    };
     let row_limit = (h as f32) as usize;
     let mut bounds = [(h, 0); 4];
-    let mut put = |r: isize, weight: u16, lane: usize| {
+    let put = |r: isize, weight: u16, lane: usize| {
         let r = r as usize;
         if r < row_limit {
             let i = r * w + c;
             map[i] = map[i].saturating_add(weight);
+            #[cfg(test)]
+            {
+                work.writes += usize::from(TRACK);
+            }
             bounds[lane].0 = bounds[lane].0.min(r);
             bounds[lane].1 = bounds[lane].1.max(r + 1);
         }
     };
-    let mut repeats = 0usize;
-    if *runs {
-        let mut run = (-1, 0u32);
-        for &x in s {
-            let r = row(x);
-            if r == run.0 {
-                run.1 += 1;
-                repeats += 1;
-                continue;
-            }
-            put(run.0, (run.1 * wgt as u32).min(u16::MAX as u32) as u16, 0);
-            run = (r, 1);
-        }
-        put(run.0, (run.1 * wgt as u32).min(u16::MAX as u32) as u16, 0);
-        *runs = 2 * repeats > s.len();
-    } else {
-        // the repeats of the first `PROBE` samples decide the next column (counting all cost more than it saved)
-        let (head, tail) = s.split_at(s.len().min(PROBE));
-        let mut prev = -1;
-        for &x in head {
-            let r = row(x);
-            repeats += (r == prev) as usize;
-            prev = r;
-            put(r, wgt, 0);
-        }
-        let (groups, remainder) = tail.as_chunks::<4>();
-        for group in groups {
-            for (lane, &x) in group.iter().enumerate() {
-                put(row(x), wgt, lane);
-            }
-        }
-        for &x in remainder {
-            put(row(x), wgt, 0);
-        }
-        *runs = 2 * repeats > head.len();
+    *runs = if *runs { add_runs(s, wgt, row, put, probe) } else { add_samples(s, wgt, row, put, probe) };
+    #[cfg(test)]
+    if TRACK {
+        super::work::dots(work);
     }
     let (first, end) = bounds.into_iter().fold((h, 0), |(a, b), (c, d)| (a.min(c), b.max(d)));
     first.min(end)..end
+}
+
+#[inline]
+fn add_runs(
+    samples: &[f32],
+    weight: u16,
+    mut row: impl FnMut(f32) -> isize,
+    mut put: impl FnMut(isize, u16, usize),
+    mut probe: impl FnMut(),
+) -> bool {
+    let mut repeats = 0;
+    let mut run = (-1, 0u32);
+    for &x in samples {
+        probe();
+        let r = row(x);
+        if r == run.0 {
+            run.1 += 1;
+            repeats += 1;
+            continue;
+        }
+        put(run.0, (run.1 * u32::from(weight)).min(u32::from(u16::MAX)) as u16, 0);
+        run = (r, 1);
+    }
+    put(run.0, (run.1 * u32::from(weight)).min(u32::from(u16::MAX)) as u16, 0);
+    2 * repeats > samples.len()
+}
+
+#[inline]
+fn add_samples(
+    samples: &[f32],
+    weight: u16,
+    mut row: impl FnMut(f32) -> isize,
+    mut put: impl FnMut(isize, u16, usize),
+    mut probe: impl FnMut(),
+) -> bool {
+    // Sampling the first rows bounds the cost of choosing the next column's path.
+    let (head, tail) = samples.split_at(samples.len().min(PROBE));
+    let (mut previous, mut repeats) = (-1, 0);
+    for &x in head {
+        probe();
+        let r = row(x);
+        repeats += usize::from(r == previous);
+        previous = r;
+        put(r, weight, 0);
+    }
+    let (groups, remainder) = tail.as_chunks::<4>();
+    for group in groups {
+        for (lane, &x) in group.iter().enumerate() {
+            put(row(x), weight, lane);
+        }
+    }
+    for &x in remainder {
+        put(row(x), weight, 0);
+    }
+    2 * repeats > head.len()
 }
 
 #[inline]
@@ -179,7 +232,7 @@ mod tests {
             for initial_runs in [false, true] {
                 let mut runs = initial_runs;
                 let mut map = vec![0; 32];
-                let column_rows = dots_column(&mut map, 1, 32, 0, &samples, &m, 24, &mut runs);
+                let column_rows = dots_column::<false>(&mut map, 1, 32, 0, &samples, &m, 24, &mut runs);
                 let mut bounded = vec![0; 32];
                 let band = deposit_dots(
                     &mut bounded,

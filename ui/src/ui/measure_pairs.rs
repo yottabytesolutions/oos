@@ -251,15 +251,4 @@ mod tests {
         ui.m.meas_tsetup = 4e-9;
         assert!(wait(&mut ui, 14) > 0.0);
     }
-    #[test]
-    #[ignore = "perf-guard latency: release, OOS_PERF_TESTS=1, one test thread"]
-    fn perf_guard_pair_dispatch_and_pending_reads() {
-        let ui = fixture();
-        crate::perfguard::latency::check(std::time::Duration::from_millis(100), || {
-            assert!(ui.pair_at(0, WaveId::Ref(0), WaveId::Ref(1)).is_nan());
-            for _ in 0..100 {
-                assert!(ui.pair_at(0, WaveId::Ref(0), WaveId::Ref(1)).is_nan());
-            }
-        });
-    }
 }

@@ -64,3 +64,111 @@ fn accepted_publication_refreshes_trigger_only_and_disables_for_single() {
     ui.step(0.04);
     assert!(!pipe.accepting(), "leaving the hardware source disables its retained view");
 }
+
+#[test]
+fn trigger_level_change_refreshes_batch_worker_view() {
+    let current = refreshed_batch(true);
+    let mapping_only = refreshed_batch(false);
+    assert_ne!(current, mapping_only, "negative control: mapping-only refresh must leave the old trigger view");
+}
+
+fn refreshed_batch(refresh: bool) -> Vec<u16> {
+    use oos_core::change::{Layout, MappingKey};
+    let (w, h) = (970, 448);
+    let mut m = model(1e-6, false, false);
+    let old_mapping = MappingKey::of(&m, Layout::default());
+    let (bytes, fb, s, p) = batch(13, 12_512, false);
+    let pipe = Pipe::start(2, 0, fresh());
+    pipe.set_view(Some(&m), w, h, Interp::Exact);
+    pipe.feed(Box::new(Bytes(bytes.clone())), fb, 13, 0, dec(&s, &p));
+    settle(&pipe);
+    let mut warm = Phosphor::new(w, h);
+    pipe.accept(&mut warm, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+    m.trig_level = 0.6;
+    assert_eq!(MappingKey::of(&m, Layout::default()), old_mapping);
+    if refresh && std::env::var_os("OOS_MAPPING_ONLY_PROBE").is_none() {
+        pipe.set_view(Some(&m), w, h, Interp::Exact);
+    }
+    pipe.feed(Box::new(Bytes(bytes.clone())), fb, 13, 0, dec(&s, &p));
+    settle(&pipe);
+    let mut got = Phosphor::new(w, h);
+    let result = pipe.accept(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+    let (want, trig, _, _, _) = reference(&bytes, fb, &s, &p, &m, w, h);
+    if refresh {
+        assert_eq!((result.frames, result.triggered), (13, trig));
+        assert!(got.maps() == want.maps(), "workers must match the new-level record path");
+    } else {
+        assert_ne!(got.maps(), want.maps(), "negative control must actually distinguish the levels");
+    }
+    got.maps()[0].clone()
+}
+
+// Break it catches: the newest frame of a batch reaching the UI before the batch's other frames (a picture with
+// the newest frame alone, the rest a picture later: docs/fork/stutter.md), or not at all.
+#[test]
+fn a_batch_is_delivered_with_its_frames() {
+    let (w, h) = (970, 448);
+    let m = model(1e-6, false, false);
+    let (bytes, fb, s, p) = batch(30, 12_512, false);
+    let pipe = Pipe::start(2, 0, fresh());
+    pipe.publish_view(&m, w, h, Interp::Exact, Default::default());
+    let newest = Arc::new(Frame { seq: 30, ..crate::board::dho::hw::decode(&bytes[29 * fb..], &s, &p, 0) });
+    pipe.feed_with(Box::new(Bytes(bytes)), fb, 0..30, Default::default(), dec(&s, &p), None, Some(newest.clone()));
+    settle(&pipe);
+    let mut ph = Phosphor::new(w, h);
+    let n = pipe.accept(&mut ph, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+    assert_eq!(n.frames, 30);
+    assert!(Arc::ptr_eq(&pipe.take_waveform((w, h)).unwrap(), &newest));
+    assert_eq!(pipe.accept(&mut ph, &mut false, &mut [0; 4], &mut (0.0, 0.0)).frames, 0);
+}
+
+// Break it catches: frames of older settings drawn, maps of an older mapping merged, frames nobody drew not
+// counted, batches taken while the fast path does not apply.
+#[test]
+fn stale_work_is_dropped_and_counted() {
+    let (w, h) = (970, 448);
+    let mut m = model(1e-6, false, false);
+    let (bytes, fb, s, p) = batch(10, 12_512, false);
+    let c = fresh();
+    let pipe = Pipe::start(2, 0, c);
+    let mut ph = Phosphor::new(w, h);
+    let merge = |ph: &mut Phosphor| pipe.accept(ph, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+    assert!(!pipe.accepting());
+    // settings stamp older than the view's: dropped
+    m.hw_stamp = 3;
+    pipe.set_view(Some(&m), w, h, Interp::Exact);
+    pipe.feed(Box::new(Bytes(bytes.clone())), fb, 10, 2, dec(&s, &p));
+    settle(&pipe);
+    assert_eq!(merge(&mut ph).frames, 0);
+    assert_eq!(c.read(), (0, 0, 10));
+    // drawn, then the mapping changes before the merge: dropped at the merge
+    pipe.feed(Box::new(Bytes(bytes.clone())), fb, 10, 3, dec(&s, &p));
+    settle(&pipe);
+    m.ch[0].offset = 0.5;
+    pipe.set_view(Some(&m), w, h, Interp::Exact);
+    assert_eq!(merge(&mut ph).frames, 0);
+    assert!(ph.maps().iter().all(|x| x.iter().all(|&y| y == 0)));
+    assert_eq!(c.read(), (0, 0, 20));
+    // a change the drawing does not depend on keeps the maps
+    pipe.feed(Box::new(Bytes(bytes.clone())), fb, 10, 3, dec(&s, &p));
+    settle(&pipe);
+    m.status = TrigStatus::Wait;
+    pipe.set_view(Some(&m), w, h, Interp::Exact);
+    assert_eq!(merge(&mut ph).frames, 10);
+    // many batches at once: all drawn, nothing more dropped
+    let (big, fb2, s2, p2) = batch(200, 12_512, false);
+    for _ in 0..6 {
+        pipe.feed(Box::new(Bytes(big.clone())), fb2, 200, 3, dec(&s2, &p2));
+    }
+    settle(&pipe);
+    assert_eq!(collect(&pipe, &mut ph, &mut false, &mut [0; 4], &mut (0.0, 0.0)).frames, 1200);
+    assert_eq!(c.read().2, 20);
+    // a batch dropped before anybody claimed a frame counts all of them
+    let pipe0 = Pipe::start(0, 0, c);
+    pipe0.set_view(Some(&m), w, h, Interp::Exact);
+    pipe0.feed(Box::new(Bytes(bytes.clone())), fb, 10, 3, dec(&s, &p));
+    assert_eq!(c.read().2, 30);
+    // no view: the acquisition thread queues the frames itself
+    pipe.set_view(None, 0, 0, Interp::Exact);
+    assert!(!pipe.accepting());
+}

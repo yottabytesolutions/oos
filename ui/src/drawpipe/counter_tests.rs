@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
+use crate::{model::*, sparse::Interp, wave::Phosphor};
+use std::sync::{atomic::Ordering, Arc};
 
 #[test]
 fn local_counts_and_sample_wait_for_existing_publication_and_picture_boundaries() {

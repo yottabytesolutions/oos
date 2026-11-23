@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Immutable pre-first-use intake. Five counted backing leases remain authoritative.
 use super::super::*;
-use crate::picture::PerMap;
+use crate::picture::deposit::{Deposit, Handoff};
+use crate::picture::{DepositWindow, PerMap};
+use crate::wave::Phosphor;
 use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
 mod compose;
 
 const PICTURE_INPUTS: usize = 5;

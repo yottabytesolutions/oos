@@ -5,6 +5,18 @@ use super::*;
 use crate::claim_timing::Sampler;
 use crate::picture::deposit::count::CountFormat;
 use crate::picture::deposit::{kernel, pool::Pool, standard, DiffBand, Tap, HIT_LIMIT};
+use crate::picture::deposit::{Deposit, Handoff, TapProjection};
+use crate::{board::Frame, model::*};
+#[cfg(test)]
+use crate::{
+    board::PictureEligibility,
+    picture::{deposit::TapView, DepositWindow},
+    sparse::Interp,
+    wave::Phosphor,
+};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc::Receiver;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[cfg(test)]

@@ -1,5 +1,8 @@
 # OOS tools
 
+Run `python3 tools/check-rust-split.py BASE path/to/module.rs [...]` after splitting Rust modules.
+It compares function bodies in the original files and module directories with the current worktree.
+
 | Tool | Touches the scope? | Purpose |
 |---|---|---|
 | `plan-matrix.sh [oos-fpgad]` | prints plans only | calibrated before/after comparisons for device tools; the host gate uses `cargo xtask plan-matrix` and a committed baseline ([development](../docs/development.md#register-plan-baseline)) |

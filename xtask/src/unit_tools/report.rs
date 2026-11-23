@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::Report;
+use serde::{de::DeserializeOwned, Serialize};
 use std::{
+    collections::BTreeMap,
     fs::{self, File},
     io::{self, Write},
     path::{Path, PathBuf},
 };
 
 #[derive(Debug)]
-pub(super) struct PendingReport<'a> {
+pub(crate) struct PendingReport<'a> {
     destination: &'a Path,
     temporary: PathBuf,
     file: File,
@@ -16,7 +17,7 @@ pub(super) struct PendingReport<'a> {
 }
 
 impl<'a> PendingReport<'a> {
-    pub(super) fn open(destination: &'a Path) -> io::Result<Self> {
+    pub(crate) fn open(destination: &'a Path) -> io::Result<Self> {
         let name = destination
             .file_name()
             .filter(|name| destination.as_os_str().as_encoded_bytes().ends_with(name.as_encoded_bytes()))
@@ -37,7 +38,7 @@ impl<'a> PendingReport<'a> {
         Ok(Self { destination, temporary, file, published: false })
     }
 
-    pub(super) fn write(mut self, report: &Report) -> io::Result<()> {
+    pub(crate) fn write(mut self, report: &impl Serialize) -> io::Result<()> {
         serde_json::to_writer_pretty(&mut self.file, report)?;
         self.file.write_all(b"\n")?;
         self.file.sync_all()?;
@@ -54,4 +55,28 @@ impl Drop for PendingReport<'_> {
             let _ = fs::remove_file(&self.temporary);
         }
     }
+}
+
+pub(crate) fn same_keys<T, U>(
+    left: &BTreeMap<String, T>,
+    right: &BTreeMap<String, U>,
+    kind: &str,
+    left_name: &str,
+    right_name: &str,
+) -> Result<(), String> {
+    let missing = left
+        .keys()
+        .filter(|key| !right.contains_key(*key))
+        .map(|key| (key, right_name))
+        .chain(right.keys().filter(|key| !left.contains_key(*key)).map(|key| (key, left_name)))
+        .next();
+    if let Some((key, label)) = missing {
+        return Err(format!("missing {kind} '{key}' in {label}"));
+    }
+    Ok(())
+}
+
+pub(crate) fn read<T: DeserializeOwned>(path: &Path, label: &str) -> Result<T, String> {
+    let data = fs::read(path).map_err(|e| format!("read {label} report: {e}"))?;
+    serde_json::from_slice(&data).map_err(|e| format!("invalid {label} report: {e}"))
 }

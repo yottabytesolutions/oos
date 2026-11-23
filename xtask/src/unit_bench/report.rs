@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+use crate::unit_tools::report::same_keys;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, fmt::Write};
 
@@ -15,6 +16,12 @@ pub(super) struct Report {
     cpu: u32,
     core_type: String,
     groups: BTreeMap<String, Group>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct AbReport {
+    pub(super) reference: Report,
+    pub(super) result: Report,
 }
 
 impl Report {
@@ -96,25 +103,6 @@ impl Timing {
     }
 }
 
-pub(super) fn same_keys<T, U>(
-    left: &BTreeMap<String, T>,
-    right: &BTreeMap<String, U>,
-    kind: &str,
-    left_name: &str,
-    right_name: &str,
-) -> Result<(), String> {
-    let missing = left
-        .keys()
-        .filter(|key| !right.contains_key(*key))
-        .map(|key| (key, right_name))
-        .chain(right.keys().filter(|key| !left.contains_key(*key)).map(|key| (key, left_name)))
-        .next();
-    if let Some((key, label)) = missing {
-        return Err(format!("missing {kind} '{key}' in {label}"));
-    }
-    Ok(())
-}
-
 #[derive(Debug, PartialEq)]
 enum Verdict {
     Regression,
@@ -141,6 +129,55 @@ impl Row<'_> {
 
     pub(super) fn insufficient(&self) -> bool {
         self.verdict == Verdict::InsufficientData
+    }
+
+    fn change(&self) -> Option<f64> {
+        let (old, new) = self.reference.zip(self.result)?;
+        (old.median > 0.0).then(|| (new.median - old.median) / old.median)
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct Placement {
+    median: f64,
+    slower: usize,
+    faster: usize,
+    verdict: Verdict,
+}
+
+impl Placement {
+    pub(super) fn summarize(rows: &[Row<'_>], tolerance: f64) -> Self {
+        let placement = || rows.iter().filter(|row| row.stage == "place");
+        let mut changes: Vec<f64> = placement().filter_map(Row::change).collect();
+        let slower = changes.iter().filter(|&&change| change > 0.0).count();
+        let faster = changes.iter().filter(|&&change| change < 0.0).count();
+        let median = super::measure::median(&mut changes).expect("each compared group has a positive place median");
+        let verdict = if placement().any(Row::insufficient) {
+            Verdict::InsufficientData
+        } else if median > tolerance {
+            Verdict::Regression
+        } else {
+            Verdict::Same
+        };
+        Self { median, slower, faster, verdict }
+    }
+
+    pub(super) fn regression(&self) -> bool {
+        self.verdict == Verdict::Regression
+    }
+
+    pub(super) fn summary(&self) -> String {
+        let status = match self.verdict {
+            Verdict::Regression => "REGRESSION",
+            Verdict::InsufficientData => "insufficient data",
+            _ => "pass",
+        };
+        format!(
+            "Run place median change {:+.2}%  {} groups slower  {} groups faster  {status}",
+            self.median * 100.0,
+            self.slower,
+            self.faster
+        )
     }
 }
 
@@ -239,11 +276,7 @@ pub(super) fn table(rows: &[Row<'_>]) -> String {
         let number = |timing: Option<Timing>, value: fn(Timing) -> f64| {
             timing.map_or_else(|| "n/a".into(), |t| format!("{:.1}", value(t)))
         };
-        let change = row
-            .reference
-            .zip(row.result)
-            .filter(|(old, _)| old.median > 0.0)
-            .map_or_else(|| "n/a".into(), |(old, new)| format!("{:+.2}%", 100.0 * (new.median / old.median - 1.0)));
+        let change = row.change().map_or_else(|| "n/a".into(), |change| format!("{:+.2}%", 100.0 * change));
         let status = status(row);
         writeln!(
             text,

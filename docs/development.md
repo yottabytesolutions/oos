@@ -29,8 +29,7 @@ or `gate passed (image)`. Hooks use the same command. Missing Docker cannot fail
 `cargo xtask unit-bench` measures cold nanoseconds per record for each drawing stage by replaying recorded DMA
 batches on a pinned CPU. On the unit, identical stage code showed a 2.90% difference in `deep / tile_writes`
 over three rounds. Five-round repeats for that stage differed by +3.32% and -4.53% from their reference.
-On 2026-11-22, code layout alone moved live records per second by up to 5% between builds. Use the replay for code-cost
-regressions and the installed live matrix for end-to-end acquisition acceptance.
+Use the [live acquisition matrix](#live-acquisition-matrix) for end-to-end acceptance.
 
 Follow the [DMA fixture capture procedure](architecture/fixture-benchmark.md). Enable `acq.dump` for the
 recording session, exercise each setup, and copy its completed batches from `/tmp/oos-batches` into a group
@@ -38,10 +37,27 @@ directory, for example `fixtures/short-1ch/…`. Disable the dump after recordin
 reference and candidate JSON files outside the repository.
 
 With the owner's release and a current [test lease](../tools/README.md#scope-lease), use trusted SSH and
-SCPI port 5555 on the same unit. Run from the baseline checkout to create a reference, then from the
-candidate checkout with the same unit, CPU and fixtures. If the baseline predates this command, apply
-the xtask tooling change to the baseline checkout first. Renew the lease while the command runs.
+SCPI port 5555 on the same unit. Run `ab` from the candidate checkout. Pass the reference checkout and use
+the same fixtures and CPU for both builds. Renew the lease while the command runs.
 The host uses system SSH, tar and SHA-256 tools (GNU tar and sha256sum on Linux, BSD tar and shasum on macOS).
+
+```sh
+cargo xtask unit-bench ab --unit root@example.invalid --fixtures /path/to/fixtures \
+  --reference-checkout /path/to/reference-checkout --out /path/to/report.json
+```
+
+`ab` builds each checkout with its pinned Rust version. Each checkout must contain the fixture benchmark.
+The reference build uses scratch space under the candidate's `target/`. The tool caches both binaries and
+one copy of each fixture group on the unit. Within each group it runs reference, candidate, candidate,
+reference and repeats that order, with at least five rounds per checkout. If acquisition is running,
+`ab` pauses it once and restores it after the session. The JSON report contains both runs as `reference`
+and `result`, and `ab` prints the comparison with the same exit codes as `compare`.
+
+Separate `run` reports are valid for comparison within one session only. Run first from the reference
+checkout and then from the candidate checkout with the same unit, CPU and fixtures. In two comparisons
+with unchanged reference code on the same unit and boot about six hours later, `place` rose in nearly
+every group. The two `deep` results rose 8.6% and 10.8%, `dense-1ch-1us` rose 4.4% and 7.8%, and
+`dense-4ch-10us` rose 6.6% and 4.9%. Most remaining changes were between 0% and 4%.
 
 ```sh
 cargo xtask unit-bench run --unit root@example.invalid --fixtures /path/to/fixtures --out /path/to/reference.json
@@ -52,10 +68,10 @@ cargo xtask unit-bench compare --reference /path/to/reference.json --result /pat
 The run cross-builds the ignored release test, verifies its test listing and caches the executable and
 fixture groups under `/tmp/oos-bench/` by SHA-256. By default it runs all groups for five rounds on CPU 2.
 That adds about 67% to replay time compared with three rounds. Build and initial transfer costs are fixed per run.
-Use repeatable `--group`, `--rounds` and `--cpu` to select a subset or change sampling. The report records the
+Both `run` and `ab` accept repeatable `--group`, `--rounds` and `--cpu` to select a subset or change sampling. The report records the
 checkout commit, executable SHA-256, the CPU number, the kernel's MIDR and a content SHA-256 for each fixture
 group. The group hash covers sorted relative file names and file contents. Keep fixtures fixed during a run.
-Run on a stopped scope or use `--stop` to pause an acquiring scope before uploads and rounds. When the command
+For `run`, use a stopped scope or `--stop` to pause acquisition before uploads and rounds. When either command
 pauses acquisition, it sends `:RUN` on completion or error and checks that acquisition resumed. If restoration
 fails, it reconnects and retries once. A failed retry reports the recovery command.
 Process termination by signal, including Ctrl+C or SIGKILL, can leave the scope stopped. Before pausing the
@@ -82,6 +98,10 @@ two builds with identical stage code: three round medians understated its spread
 Changes within either shared threshold are `same`, and changes that clear both but fall at or
 below the component floor are `within limits`.
 
+Both `compare` and `ab` show the median of the percentage changes in `place` and the number of groups
+with positive and negative changes. A median slowdown above the tolerance is a regression even if each
+individual change is inside the round-median ranges. Sampling requirements also apply to the run verdict.
+
 Two archived five-round runs of the same binary on CPU 2 on 2026-11-22 show the following
 placement variation. Each spread is the round-median range divided by that run's pooled median.
 
@@ -104,11 +124,8 @@ placement variation. Each spread is the round-median range divided by that run's
 | `zoom` | -0.14% | 2.69% | 2.78% |
 
 The two `dense-1ch-1us` round-median ranges overlap, with both endpoints lower in the result.
-Archived reports retain the extrema and pooled medians. Individual round values and their order
-would be needed to identify a first-round anomaly. A cache or frequency shift that persists
-through a run could move all rounds together without increasing its range. A follow-up could
-interleave reference and candidate rounds per group in one session on the same CPU and alternate
-which binary runs first in each pair.
+Archived reports retain the extrema and pooled medians. A cache or frequency shift that persists
+through a run could move all rounds together without increasing its range.
 
 The comparison exits 1 for a regression when sampling is sufficient. If a stage reports `insufficient data`,
 the comparison exits 2 and shows the required rounds at the observed sampling rate. Rerun older reports
@@ -116,6 +133,82 @@ that lack sampling counts or group hashes. Other exit 2 errors include missing g
 measurements and mismatches in CPU, MIDR or fixture SHA-256. Use the same repeatable group selection to make
 a subset reference.
 
+## Live acquisition matrix
+
+`cargo xtask unit-matrix` measures the installed build through SCPI. Use it for end-to-end acquisition
+acceptance. Use [unit-bench](#unit-stage-benchmark) to isolate the cost of a drawing stage by replaying the
+same DMA fixtures. On 2026-11-22, code layout alone moved live records per second by up to 5% between builds.
+
+With the owner's release and a current [test lease](../tools/README.md#scope-lease), save the existing
+setup to an available setup slot and stop other clients from changing the unit. Run the same groups on
+the incumbent and candidate builds. Keep the signal and wiring fixed, with the trigger on CH2. The tool
+uses SCPI port 5555 by default and needs the fresh-picture counters from a build with
+`private-picture-counts`. Renew the lease while it runs.
+
+```sh
+cargo xtask unit-matrix run --scpi example.invalid --out /path/to/reference.json
+cargo xtask unit-matrix run --scpi example.invalid --out /path/to/result.json
+cargo xtask unit-matrix compare --reference /path/to/reference.json --result /path/to/result.json
+cargo xtask unit-matrix sustained --scpi example.invalid --out /path/to/sustained.json --group dense-4ch-1us --minutes 10
+```
+
+The [matrix data](../xtask/data/unit-matrix.json) defines the base setup, group order and overrides, and
+the additional setup keys the tool snapshots and verifies. Its `bench_setup` section sets the analog
+input scales, offsets, coupling and trigger thresholds for the reference setup. The saved controls give
+these display centers and trigger requirements. The original signal shapes and frequencies are unrecorded.
+
+| Input | Signal for the checked-in settings |
+| --- | --- |
+| CH1 | DC-coupled input centered at 1.50 V, with excursions that fit the 10 mV/div view. |
+| CH2 | DC-coupled input near 4.90 V, with repeatable rising edges across 4.93 V. This channel triggers every group. Its effective scale is 225 mV/div. |
+| CH3 | DC-coupled input centered near 1.64 V, with excursions that fit the 1 V/div view. |
+| CH4 | DC-coupled input centered near 0 V, with excursions that fit the 10 mV/div view. |
+
+To use different signals, extract the `bench_setup` object as a JSON file, keep its keys and edit its
+string values. Pass `--bench /path/to/bench.json` to both `run` and `sustained` as needed. Keep the CH2
+trigger signal, wiring and transition rate fixed between reference and candidate runs. Reports identify
+the configured bench by a SHA-256 digest of its settings, computed with `shasum` on macOS or `sha256sum`
+on Linux.
+
+`run` defaults to a five-second warm-up and three five-second windows per group. The two drift controls
+default to one window each. Select groups with repeatable `--group` flags or override timing with
+`--warmup`, `--window`, or `--windows`. Sustained mode warms up for ten seconds and prints each one-minute
+window as it completes, including its late flips per minute based on measured elapsed time.
+SCPI commands run with zero pacing by default. `--pace-ms` sets a minimum gap
+after a write.
+
+The report identifies the firmware build and gives per-window and pooled rates, counter deltas,
+changed fallback causes and acquisition read-backs. Each query takes timestamps immediately before the
+write and after the reply line arrives. The lower elapsed bound is the second write minus the first reply.
+The upper bound is the second reply minus the first write. Fresh pictures/s uses both bounds. The
+`shown_records_per_s`, `first_records_per_s` and `read_per_s` rates use the midpoint. A decreasing counter
+invalidates its window with `counter reset` and fails the group. Sampling continues with the next group.
+A missing `watchdog ok` aborts sampling. The tool restores setup in two passes with offsets last and
+verifies each saved key and RUN/STOP once. A snapshot value resembling an address or hostname causes
+the tool to skip that key and print its name. After three consecutive SCPI transport failures,
+restoration stops and reports the verified and unverified key names. The report retains available
+windows when a group fails or the run aborts. Any group error, abort or restore failure makes `run`
+or `sustained` exit 2.
+
+Process signals such as Ctrl+C and SIGKILL skip automatic restoration. Recall the saved setup and use
+the RUN/STOP setting in the recovery hint printed before the first change. The current
+SCPI setup interface cannot remove a configured decoder slot. The command checks that the initial
+decoder selection and configured slots are compatible with the archived setup before changing settings.
+Finish any armed SINGLE capture before running the matrix.
+
+`compare` requires the same bench setup, requested window length and window count per group. It reports
+first-use records/s, midpoint fresh pictures/s and late flips per minute for each group. A group fails
+if its first-use rate falls below the floor (95% of the reference by default) or it loses more than one
+fresh picture per second. Repeat that group, then investigate.
+
+The run summary gives the total late flips and shown pictures for each side. The late-flip verdict uses
+the fraction of shown panel pictures that flipped late. It fails if that fraction more than doubles and
+rises by more than 2 percentage points. The two 26-group runs on 2026-11-23 measured 535/12,058 (4.44%)
+and 294/12,054 (2.44%), a 1.998 percentage point difference. The floor rounds that observed difference.
+Two runs cannot establish how much variation to expect in future sessions. Late flips come in bursts within
+a 15 s window. Judged per group, two runs of builds with equal record rates disagreed on 7 of 26 groups in
+both directions, so per-group late flips are reported only. Exit 1 means a group or the
+run regressed. Exit 2 means the reports are incompatible or lack complete measurements.
 
 ## Setup
 

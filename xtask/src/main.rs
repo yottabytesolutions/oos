@@ -41,12 +41,14 @@ mod testrun;
 mod text;
 mod tighten;
 mod unit_bench;
+mod unit_matrix;
+mod unit_tools;
 mod workspace;
 
 use std::process::ExitCode;
 
 const USAGE: &str =
-    "usage: cargo xtask doctor [--gpu] [--sim] [--image] | cargo xtask check [--fast] [--no-coverage] [--list] [--image] | cargo xtask step <id>... | cargo xtask ratchet [--coverage] [--move] [--init] | cargo xtask elf-static <file>... | cargo xtask loc [--json] [--compare <git-ref>] | cargo xtask plan-matrix [--update] | cargo xtask unit-bench --help";
+    "usage: cargo xtask doctor [--gpu] [--sim] [--image] | cargo xtask check [--fast] [--no-coverage] [--list] [--image] | cargo xtask step <id>... | cargo xtask ratchet [--coverage] [--move] [--init] | cargo xtask elf-static <file>... | cargo xtask loc [--json] [--compare <git-ref>] | cargo xtask plan-matrix [--update] | cargo xtask unit-bench --help | cargo xtask unit-matrix --help";
 
 /// The command line: a command and its flags.
 fn parse(args: &[String]) -> Result<(&str, Vec<&str>), String> {
@@ -55,7 +57,7 @@ fn parse(args: &[String]) -> Result<(&str, Vec<&str>), String> {
     let allowed: &[&str] = match cmd.as_str() {
         "step" | "elf-static" if flags.is_empty() => return Err(USAGE.into()),
         "step" => return check::known(&flags).map(|()| (cmd.as_str(), flags)),
-        "elf-static" | "unit-bench" => return Ok((cmd.as_str(), flags)),
+        "elf-static" | "unit-bench" | "unit-matrix" => return Ok((cmd.as_str(), flags)),
         "loc" => return loc::Options::parse(&flags).map(|_| (cmd.as_str(), flags)),
         "doctor" => &["--gpu", "--sim", "--image"],
         "check" => &["--fast", "--no-coverage", "--list", "--image"],
@@ -93,6 +95,7 @@ fn main() -> ExitCode {
         "loc" => loc::run(&root, &flags),
         "plan-matrix" => plan_matrix::run(&root, flags.contains(&"--update")),
         "unit-bench" => return unit_bench::run(&root, &flags),
+        "unit-matrix" => return unit_matrix::run(&flags),
         _ => tighten::run(
             &root,
             tighten::Options {

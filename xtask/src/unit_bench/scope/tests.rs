@@ -1,53 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
+use crate::unit_tools::scpi::fake::{Events, FakeScpi};
 use std::{
-    cell::RefCell,
     fs::{self, File},
     io::Read,
     process::ExitCode,
 };
-
-type Events = RefCell<Vec<String>>;
-
-struct FakeScpi<'a> {
-    events: &'a Events,
-    running: bool,
-    fail_stop: bool,
-    ignore_stop: bool,
-    fail_run: usize,
-}
-
-impl Scpi for FakeScpi<'_> {
-    fn send(&mut self, command: &str) -> Result<(), String> {
-        self.events.borrow_mut().push(command.into());
-        match command {
-            ":STOP" if self.fail_stop => return Err("stop write failed".into()),
-            ":STOP" if self.ignore_stop => return Ok(()),
-            ":RUN" if self.fail_run > 0 => {
-                self.fail_run -= 1;
-                return Err("run write failed".into());
-            }
-            _ => {}
-        }
-        self.running = match command {
-            ":STOP" => false,
-            ":RUN" => true,
-            _ => panic!("unexpected SCPI command"),
-        };
-        Ok(())
-    }
-
-    fn acquiring(&mut self) -> Result<bool, String> {
-        self.events.borrow_mut().push("query state".into());
-        Ok(self.running)
-    }
-
-    fn reconnect(&mut self) -> Result<(), String> {
-        self.events.borrow_mut().push("reconnect".into());
-        Ok(())
-    }
-}
 
 struct FakeRemote<'a> {
     events: &'a Events,
@@ -98,15 +57,29 @@ fn exercise(
     allow_stop: bool,
     fail_on: Option<&'static str>,
 ) -> (Result<Capture, String>, Vec<String>) {
+    let (result, events) = exercise_session(acquiring, allow_stop, fail_on, false);
+    (result.map(|sides| sides.result), events)
+}
+
+fn exercise_session(
+    acquiring: bool,
+    allow_stop: bool,
+    fail_on: Option<&'static str>,
+    ab: bool,
+) -> (Result<Sides<Capture>, String>, Vec<String>) {
     let scratch = Scratch::for_test();
-    let binary = scratch.path().join("test-bin");
-    fs::write(&binary, b"benchmark").unwrap();
+    let build = |side: &str| {
+        let binary = scratch.path().join(side);
+        fs::write(&binary, side).unwrap();
+        Build { binary, commit: side.into() }
+    };
+    let builds = Sides { reference: ab.then(|| build("reference")), result: build("result") };
     let options = Run {
         unit: "example.invalid",
         fixtures: scratch.path().join("fixtures"),
         out: scratch.path().join("report.json"),
         groups: vec![],
-        rounds: 2,
+        rounds: if ab { 5 } else { 2 },
         cpu: 2,
         stop: allow_stop,
     };
@@ -118,23 +91,39 @@ fn exercise(
     let groups = cache::groups(&options.fixtures, &options.groups).unwrap();
     let events = Events::default();
     let mut remote = FakeRemote { events: &events, fail_on, scripts: Vec::new() };
-    let mut scpi = FakeScpi { events: &events, running: acquiring, fail_stop: false, ignore_stop: false, fail_run: 0 };
-    let result = capture(&mut remote, &mut scpi, &scratch, &options, &binary, &groups);
+    let mut scpi = FakeScpi {
+        events: &events,
+        running: acquiring,
+        fail_stop: false,
+        ignore_stop: false,
+        fail_run: 0,
+        replies: Default::default(),
+    };
+    let result = capture(&mut remote, &mut scpi, &scratch, &options, builds, &groups).map(|(_, captures)| captures);
     assert_eq!(scpi.running, acquiring);
-    let ssh_events =
-        events.borrow().iter().filter(|event| ![":STOP", ":RUN", "query state"].contains(&event.as_str())).count();
+    assert_round_scripts(&remote, &events.borrow(), result.as_ref().ok());
+    (result, events.into_inner())
+}
+
+fn assert_round_scripts(remote: &FakeRemote<'_>, events: &[String], captures: Option<&Sides<Capture>>) {
+    let ssh_events = events.iter().filter(|event| ![":STOP", ":RUN", "query state"].contains(&event.as_str())).count();
     assert_eq!(remote.scripts.len(), ssh_events);
     let round_scripts: Vec<_> = remote.scripts.iter().filter(|script| script.starts_with("exec timeout")).collect();
-    assert_eq!(round_scripts.len(), events.borrow().iter().filter(|event| event.starts_with("group '")).count());
-    for script in round_scripts {
+    let operations: Vec<_> = events.iter().filter(|event| event.starts_with("group '")).collect();
+    assert_eq!(round_scripts.len(), operations.len());
+    for (operation, script) in operations.into_iter().zip(round_scripts) {
         assert!(
             script.starts_with("exec timeout -s KILL 120 env -u OOS_BENCH_STAGE OOS_FIXTURES=/tmp/oos-bench/group-")
         );
         assert!(script.contains(" OOS_BENCH_CPU=2 OOS_BENCH_REPEATS=1 "));
         assert!(script.ends_with(&format!("{BENCHMARK} --ignored --nocapture --exact --test-threads=1")));
         assert!(!script.contains(":STOP") && !script.contains(":RUN"));
+        if let Some(captures) = captures {
+            let side =
+                if operation.contains(", reference") { captures.reference.as_ref().unwrap() } else { &captures.result };
+            assert!(script.contains(&side.runner), "{operation} used the wrong binary");
+        }
     }
-    (result, events.into_inner())
 }
 
 #[test]
@@ -159,12 +148,59 @@ fn stops_before_uploading_and_restores_after_all_rounds() {
 }
 
 #[test]
+fn ab_uploads_both_builds_and_interleaves_each_group_under_one_stop() {
+    let (result, events) = exercise_session(true, true, None, true);
+    let captures = result.unwrap();
+    let reference = captures.reference.unwrap();
+    assert_ne!(reference.binary_sha256, captures.result.binary_sha256);
+    assert_eq!(&events[..3], ["query state", ":STOP", "query state"]);
+    assert_eq!(&events[events.len() - 2..], [":RUN", "query state"]);
+    assert_eq!(&events[3..14], [&UPLOADS[..4], &UPLOADS[1..4], &UPLOADS[4..]].concat());
+    let mut rounds = events[14..events.len() - 2].iter();
+    for group in ["dense", "short"] {
+        for (side, round) in [
+            ("reference", 1),
+            ("result", 1),
+            ("result", 2),
+            ("reference", 2),
+            ("reference", 3),
+            ("result", 3),
+            ("result", 4),
+            ("reference", 4),
+            ("reference", 5),
+            ("result", 5),
+        ] {
+            assert_eq!(rounds.next().unwrap(), &format!("group '{group}', {side} round {round}"));
+        }
+        assert_eq!(reference.groups[group].rounds.len(), 5);
+        assert_eq!(captures.result.groups[group].rounds.len(), 5);
+        assert_eq!(reference.groups[group].sha256, captures.result.groups[group].sha256);
+    }
+    assert!(rounds.next().is_none());
+}
+
+#[test]
+fn ab_restores_after_an_interleaved_round_fails() {
+    let operation = "group 'dense', result round 2";
+    let (result, events) = exercise_session(true, true, Some(operation), true);
+    assert_eq!(result.unwrap_err(), format!("{operation}: timed out"));
+    assert_eq!(&events[events.len() - 3..], [operation, ":RUN", "query state"]);
+}
+
+#[test]
 fn failed_stop_and_unconfirmed_stop_skip_work_and_attempt_restore() {
     for (fail_stop, ignore_stop, error) in
         [(true, false, "stop write failed"), (false, true, "scope did not stop acquiring")]
     {
         let events = Events::default();
-        let mut scpi = FakeScpi { events: &events, running: true, fail_stop, ignore_stop, fail_run: 0 };
+        let mut scpi = FakeScpi {
+            events: &events,
+            running: true,
+            fail_stop,
+            ignore_stop,
+            fail_run: 0,
+            replies: Default::default(),
+        };
         let result = with_scope_stopped(&mut scpi, true, || -> Result<(), String> { panic!("scope was not stopped") });
         assert_eq!(result.unwrap_err(), error);
         assert!(scpi.running);
@@ -180,7 +216,14 @@ fn failed_stop_and_unconfirmed_stop_skip_work_and_attempt_restore() {
 #[test]
 fn failed_restore_reconnects_once_and_confirms_acquisition() {
     let events = Events::default();
-    let mut scpi = FakeScpi { events: &events, running: true, fail_stop: false, ignore_stop: false, fail_run: 1 };
+    let mut scpi = FakeScpi {
+        events: &events,
+        running: true,
+        fail_stop: false,
+        ignore_stop: false,
+        fail_run: 1,
+        replies: Default::default(),
+    };
     assert_eq!(with_scope_stopped(&mut scpi, true, || Ok(42)).unwrap(), 42);
     assert!(scpi.running);
     assert_eq!(
@@ -194,7 +237,14 @@ fn restore_failure_names_recovery_with_or_without_a_work_error() {
     for work in [Ok(()), Err("benchmark failed".into())] {
         let work_error = work.is_err();
         let events = Events::default();
-        let mut scpi = FakeScpi { events: &events, running: true, fail_stop: false, ignore_stop: false, fail_run: 2 };
+        let mut scpi = FakeScpi {
+            events: &events,
+            running: true,
+            fail_stop: false,
+            ignore_stop: false,
+            fail_run: 2,
+            replies: Default::default(),
+        };
         let error = with_scope_stopped(&mut scpi, true, || work).unwrap_err();
         assert_eq!(error.starts_with("benchmark failed; "), work_error);
         assert!(error.contains("could not confirm :RUN restoration: run write failed; retry: run write failed"));
@@ -207,7 +257,14 @@ fn restore_failure_names_recovery_with_or_without_a_work_error() {
 #[test]
 fn combines_stop_and_restore_errors() {
     let events = Events::default();
-    let mut scpi = FakeScpi { events: &events, running: true, fail_stop: true, ignore_stop: false, fail_run: 2 };
+    let mut scpi = FakeScpi {
+        events: &events,
+        running: true,
+        fail_stop: true,
+        ignore_stop: false,
+        fail_run: 2,
+        replies: Default::default(),
+    };
     let error =
         with_scope_stopped(&mut scpi, true, || -> Result<(), String> { panic!("scope was not stopped") }).unwrap_err();
     assert!(error.starts_with("stop write failed; could not confirm :RUN restoration:"));
@@ -240,26 +297,6 @@ fn restores_after_group_timeout_and_reports_only_operation() {
         events,
         [&["query state", ":STOP", "query state"][..], UPLOADS, &ROUNDS[..3], &[":RUN", "query state"]].concat()
     );
-}
-
-#[test]
-fn selects_only_cargos_new_library_test_artifact() {
-    let lib = r#"{"reason":"compiler-artifact","target":{"name":"oos_ui","kind":["lib"]},"profile":{"test":true},"executable":"target/test-lib"}"#;
-    let bin = lib.replace("\"kind\":[\"lib\"]", "\"kind\":[\"bin\"]").replace("test-lib", "test-bin");
-    let non_test = lib.replace("true", "false").replace("test-lib", "regular-lib");
-    assert_eq!(executable(&format!("{bin}\n{lib}\n{non_test}")).unwrap(), PathBuf::from("target/test-lib"));
-    assert!(executable(&format!("{bin}\n{non_test}")).is_err());
-    assert!(executable(&format!("{lib}\n{lib}")).is_err());
-}
-
-#[test]
-fn reads_the_toolchain_pin_from_the_checkout() {
-    let scratch = Scratch::for_test();
-    let pins = scratch.path().join("rust-toolchain.toml");
-    fs::write(&pins, "[other]\nchannel = \"stable\"\n[toolchain]\nchannel = \"9.8.7\" # exact\n").unwrap();
-    assert_eq!(toolchain(scratch.path()).unwrap(), "9.8.7");
-    fs::write(pins, "[toolchain]\nchannel = \"stable\"\n").unwrap();
-    assert!(toolchain(scratch.path()).unwrap_err().contains("exact Rust version"));
 }
 
 #[test]

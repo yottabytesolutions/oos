@@ -42,7 +42,6 @@ impl Scratch {
         Self::new(&target).unwrap()
     }
 
-    #[cfg(test)]
     pub(super) fn path(&self) -> &Path {
         &self.0
     }

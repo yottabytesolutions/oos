@@ -17,7 +17,7 @@ pub const PREFIX_MIN: u8 = 48;
 
 /// `env` if set, else the `net.ipv6` line of `conf`; off unless `on`.
 pub fn enabled_from(env: Option<&str>, conf: &str) -> bool {
-    crate::drawpipe::conf_value(env, conf, "net.ipv6").as_deref() == Some("on")
+    crate::sysconf::conf_value(env, conf, "net.ipv6").as_deref() == Some("on")
 }
 
 /// Device service ports retain their family policy; host harnesses always use IPv4 loopback and port 0.

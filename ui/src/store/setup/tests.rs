@@ -14,10 +14,7 @@ fn every_table_row_round_trips_its_value() {
         };
         for i in 0..count {
             for key in keys {
-                let Some(value) = (key.read)(&model, i) else {
-                    assert!(["cur_b_ch", "tscale", "zscale", "hdmi_wave", "vscale", "bw20"].contains(&key.name));
-                    continue;
-                };
+                let value = (key.read)(&model, i).unwrap_or_else(|| panic!("{}[{i}] omitted", key.name));
                 let mut restored = Model::default();
                 (key.apply)(&mut restored, i, &value).unwrap_or_else(|e| panic!("{}: {e}", key.name));
                 assert_eq!((key.read)(&restored, i), Some(value), "{}[{i}]", key.name);
@@ -42,4 +39,28 @@ fn read_only_table_rows_preserve_legacy_mappings() {
         set(&mut model, &format!("ch{}.bw20", i + 1), "true").unwrap();
         assert_eq!(model.ch[i].bw, BW_20M);
     }
+}
+
+#[test]
+fn retired_draw_path_is_accepted_and_omitted_when_saved() {
+    assert!(is_retired_setup_key("draw_path"));
+    assert!(!is_retired_setup_key("draw_paths"));
+    for value in ["batch", "standard"] {
+        let model = parse_setup(&format!("draw_path = {value}\n")).unwrap();
+        assert!(!setup_text(&model).contains("draw_path"));
+    }
+}
+
+#[test]
+fn decoder_slot_accepts_legacy_logic_analyser_inputs() {
+    let model = parse_setup("d2.dec_la = 1 0 2 - -\n").unwrap();
+    let decoder = model.dec_view(1);
+    assert!(decoder.dec_la_in);
+    assert_eq!(decoder.dec_la, [Some(0), Some(2), None, None]);
+}
+
+#[test]
+fn setup_file_stores_decoder_slot_with_only_unknown_fields() {
+    let model = parse_setup("d2.future_key = ignored\n").unwrap();
+    assert!(model.decs[1].is_some());
 }

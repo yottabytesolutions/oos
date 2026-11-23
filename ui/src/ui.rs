@@ -656,8 +656,6 @@ enum Item {
     AcqSeg,
     /// software matching of the ADC cores' offsets (`board::dho::cores`)
     AcqCores,
-    /// Acquire > Draw path: Standard (fast path) or Batch (PR #7, `Model::draw_batch`)
-    AcqDrawPath,
     /// a note while the sample rate is below the ADC's: what lies above half of it folds down, nothing filters it
     AcqAlias,
     /// segments recorded by the FPGA (`Model::seg_hw`)
@@ -1280,8 +1278,6 @@ pub struct Ui {
     /// (`stat`, trigger.md 8)
     pub fast_edges: [u64; 4],
     pub fast_off: (f64, f64),
-    /// frames the fast path takes in one screen (`fast_max`), its time in the last screens (ms, smoothed) and that of
-    /// its two phases (placing, drawing; `:SYSTem:STATe?`)
     /// STOP: the software trigger of the record shown at the stop (s from the hardware trigger point), kept for the
     /// records read again (`stop_replay`)
     stop_ti_off: Option<f64>,
@@ -1554,7 +1550,6 @@ impl Ui {
     pub fn new(src: Source, host: host::Host) -> Ui {
         let mut m = Model::default();
         m.meas = Self::default_meas();
-        m.draw_batch = host.switches().pipeline == crate::drawpipe::Mode::Batch;
         if let Source::Replay { .. } = src {
             // the replayed frame of 2026-11-02: 3.2 µs at 0.8 ns
             m.tscale = tscales().iter().position(|&t| (t - 200e-9).abs() < 1e-12).unwrap_or(0);
@@ -2868,7 +2863,7 @@ impl Ui {
             // what this picture is made of (pacing::composition): frames through a deposit kernel, through the record
             // path, and when the newest pipe batch in it was fed
             let mut composition = step_draw::Composition::default();
-            let (mut ta, mut td, sw) = (0f32, 0f32, change::acquisition::draw_switches(self, &self.m));
+            let (mut ta, mut td, sw) = (0f32, 0f32, self.switches().clone());
             // the newest raw deep record of this step (deepmeas.rs): with one frame per batch (2 ms/div and up at
             // 10 M) the next pair frame is often queued behind it, which drew it on the fast path or replaced it as
             // the record, and the measurement stayed at the last one for good (unit 2026-11-13)
@@ -3192,10 +3187,10 @@ impl Ui {
             && board().slow_mode(m) == crate::board::Slow::Off
     }
 
-    /// The fast path for the queued frames (every one but the newest): placed on several cores (trigger, columns or
+    /// Draw the decoded batch fallback up to its newest record. Place in parallel (trigger, columns or
     /// screen record, statistics of each frame), then the maps filled in bands, channel by band on several cores.
     /// Returns the frames that counted as triggered.
-    fn fast_draw_all(&mut self, frames: Vec<std::sync::Arc<crate::board::Frame>>) -> usize {
+    fn draw_queued_prefix(&mut self, frames: Vec<std::sync::Arc<crate::board::Frame>>) -> usize {
         let (w, h) = (self.ph.w, self.ph.h);
         let m = &self.m;
         // the statistics of every frame for the voltage measurements, once the measurements of the record have set
@@ -3237,11 +3232,11 @@ impl Ui {
             }
             return trig;
         }
-        self.draw_standard_bands(&frames, &placed, (t0, t1));
+        self.draw_queued_bands(&frames, &placed, (t0, t1));
         trig
     }
 
-    fn draw_standard_bands(
+    fn draw_queued_bands(
         &mut self,
         frames: &[std::sync::Arc<crate::board::Frame>],
         placed: &[crate::picture::deposit::standard::FastFrame],
@@ -11415,7 +11410,7 @@ mod tests {
                 }
             }
             ui.ph.clear();
-            assert_eq!(ui.fast_draw_all(frames.iter().cloned().map(std::sync::Arc::new).collect()), 40);
+            assert_eq!(ui.draw_queued_prefix(frames.iter().cloned().map(std::sync::Arc::new).collect()), 40);
             for c in 0..NCH {
                 assert!(want.maps()[c].iter().any(|&x| x > 0), "{} s/div CH{}: nothing drawn", tdiv, c + 1);
                 assert!(ui.ph.maps()[c] == want.maps()[c], "{} s/div CH{}: maps differ", tdiv, c + 1);
@@ -11483,7 +11478,7 @@ mod tests {
                     fast_deposit(0, &mut want, 0, &f, &p.plan);
                 }
                 ui.ph.clear();
-                ui.fast_draw_all(frames.into_iter().map(std::sync::Arc::new).collect());
+                ui.draw_queued_prefix(frames.into_iter().map(std::sync::Arc::new).collect());
                 assert!(want.iter().filter(|&&x| x > 0).count() > w / 2, "{} s/div dots {}: little drawn", tdiv, dots);
                 assert!(ui.ph.maps()[0] == want, "{} s/div dots {}: maps differ", tdiv, dots);
             }

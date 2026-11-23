@@ -1,5 +1,8 @@
 # Logic analyzer D0..D15 (PLA2216): enable, sample rate, thresholds, read-out
 
+Stock write values are **decoded from stock**. Untested field meanings and generalizations from undated
+LA unit observations are **assumed**.
+
 Status: items marked "verified on the unit" were seen working. "Assumed" marks an inference.
 
 **Result of the first run with a probe (OOS, DHO924S, Pico on D0-D2, `tools/device-test.py --tier la`).** Works on the unit: line

@@ -9,8 +9,8 @@ fn stop_wakes_a_legacy_waveform_reservation_and_preserves_the_queued_tap() {
     use crate::ui::lifecycle::test_wait::HANG_GUARD;
 
     let _scope = test_scope::Scope::new();
-    let sw = crate::sysconf::Switches { pipeline: Mode::Batch, ..Default::default() };
-    let pipe = pipe(&sw).unwrap();
+    let sw = crate::sysconf::Switches::default();
+    let pipe = start_pipe(&sw);
     let id = Identity::default();
     pipe.publish_view(&Model::default(), 8, 8, Interp::Exact, id);
     let submitted = oos_hal::sync::lock(&pipe.view).gen;

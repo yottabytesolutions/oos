@@ -19,7 +19,7 @@ pub struct Config {
 }
 impl Config {
     pub fn parse(conf: &str) -> Self {
-        let on = |key| match crate::drawpipe::conf_value(None, conf, key).as_deref() {
+        let on = |key| match crate::sysconf::conf_value(None, conf, key).as_deref() {
             None | Some("on") => true,
             Some("off") => false,
             Some(value) => {

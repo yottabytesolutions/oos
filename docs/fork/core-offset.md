@@ -1,5 +1,8 @@
 # ADC core offset matching
 
+Offset-register interpretations and extensions to untested modes are **assumed**. The unit notes verify
+only the stated observations for their build and channel set.
+
 Status: implemented, opt-in (`cal.core_offset = tight` in system.conf). Verified on the unit for CH3 alone (ADC mode
 2) in rounds 13 to 16, including the kept overlay and the reduced phase spread. Other channel sets and modes are not
 yet verified on hardware.
@@ -71,6 +74,8 @@ alone at 1 us/div, input open):
 
 ## Round 9 (unit, build 20261113-210854)
 
+**Verified on the unit (DHO804, 2026-11-13)** for the measurements in this round.
+
 - `oos-fpgad adc slots` printed nothing and exited 0: the command dispatch did not route `adc` to the register tool,
   so it fell through to the usage path silently. Fixed: the routed commands are one list (`TOOL_CMDS`) and a test
   checks that every command the tool handles is in it.
@@ -85,6 +90,8 @@ alone at 1 us/div, input open):
 
 ## Round 11 (unit, build 20261113-220242)
 
+**Verified on the unit (DHO804, 2026-11-13)** for the measurements in this round.
+
 - `adc slots --runs 8` and the stepping work. Core to slot: 0-0, 1-2, 2-1, 3-3, 4-4, 5-6, 6-5, 7-7 (the pairs 1/2 and
   5/6 swapped). The far slot 6 is core 5. 16 register steps move a slot by 8 to 9 ADC steps against the slot average
   (core 5: 12.8), so a register step is about half an ADC step.
@@ -98,6 +105,8 @@ alone at 1 us/div, input open):
 
 ## Round 12 (unit, build 20261113-222353)
 
+**Verified on the unit (DHO804, 2026-11-13)** for the measurements in this round.
+
 - Mode 2 (CH3 alone): order found again (codes per register step 9.0 to 10.6, about 0.62 ADC step). Two tries ended
   "did not converge", best 5.60 and 1.21 steps; under the 1.0 limit of the time nothing was kept, and slot 6 stayed
   at +9. The limit is now the stock 1.5 and the failure line traces the worst slot per round.
@@ -107,6 +116,8 @@ alone at 1 us/div, input open):
   intended and leave the offsets alone.
 
 ## Round 13 (unit, build 20261113-224914): works
+
+**Verified on the unit (DHO804, 2026-11-13)** for the measurements in this round.
 
 CH3 alone, input open, 100 mV/div, 1.25 GSa/s, trigger CH3.
 

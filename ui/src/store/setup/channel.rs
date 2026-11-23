@@ -35,6 +35,9 @@ pub(super) const CHANNEL: &[Key] = keys! { m, _i, v;
     );
     "probe" => value(m.ch[_i].probe, p_f32(v)?);
     "invert" => value(m.ch[_i].invert, p_bool(v)?);
+};
+
+pub(super) const LEGACY: &[Key] = keys! { m, _i, v;
     "vscale" => custom(None, m.ch[_i].vscale = (p_idx(v, VSCALES.len() - 1)? + 2).min(VSCALES.len() - 1));
     "bw20" => custom(None, m.ch[_i].bw = if p_bool(v)? { BW_20M } else { BW_FULL });
 };

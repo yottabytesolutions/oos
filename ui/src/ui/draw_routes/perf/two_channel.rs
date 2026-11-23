@@ -4,7 +4,7 @@ use super::*;
 #[test]
 fn default_two_channel_bound_is_composed_and_credited_once_by_real_ui() {
     let _scope = Scope::new();
-    let mut route = Route::new(BatchKind::Raw, true, 2, 1e-6);
+    let mut route = Route::new(BatchKind::Raw, 2, 1e-6);
     for (key, value) in [
         ("trig_mode", "Normal"),
         ("trig_type", "Edge"),
@@ -26,7 +26,7 @@ fn default_two_channel_bound_is_composed_and_credited_once_by_real_ui() {
     route.ui.m.run = RunState::Run;
     route.ui.relayout();
     let id = change::acquisition::script_prepare_route(&mut route.ui, false);
-    let switches = change::acquisition::draw_switches(&route.ui, &route.ui.m);
+    let switches = route.ui.switches().clone();
     let original = crate::board::dho::hw::settings(&route.ui.m, false, &switches);
     let params = oos_hal::dho::hz::prep(original.mask, oos_hal::dho::seq::tdiv_fs(original.tdiv), original.depth, 0);
     assert_eq!((original.mask, params.rate, params.memsel), (3, 625_000_000, 7032));

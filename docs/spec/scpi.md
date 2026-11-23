@@ -245,8 +245,8 @@ Table conventions apply to every row:
 
 | Requirement | Long / short header | Kind | Parameters, units and limits | Reply | Command/Query mapping | Model field or action; side effects | Transport | Compatibility / disposition | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
-| scpi-137 | `:SYSTem:SET` | C | key=value via store::set; emitted-key validation with optional suffixes vfine/unit/bias/skew/label/tfine, math_expr prefix and cat exception | none | C: tbd at M14 | store::set(&mut m), mark_changed; errors -224 | T/V/M | changed: cat accepted even empty/omitted | `ui/src/scpi.rs:2302` |
-| scpi-138 | `:SYSTem:GET` | Q | setup key, exact case | serialized value; empty when omitted/unknown | Q: tbd at M14 | store::setup_text lookup; no error for missing key | T/V/M | OOS; keep with empty-reply fix D1 | `ui/src/scpi.rs:2328` |
+| scpi-137 | `:SYSTem:SET` | C | key=value, exact key from the setup parser | none | C: tbd at M14 | applies known keys; error -224 for unknown keys and invalid values | T/V/M | accepts retired keys and logs one notice per command, for example `ignoring retired setup key draw_path` | `ui/src/scpi/system.rs` |
+| scpi-138 | `:SYSTem:GET` | Q | setup key, exact case | serialized value; empty when retired, omitted or unknown | Q: tbd at M14 | store::setup_text lookup | T/V/M | OOS; keep with empty-reply fix D1 | `ui/src/scpi/system.rs` |
 | scpi-139 | `:SYSTem:STATe` | Q | none | diagnostic line; state-query.md | Q: tbd at M14 | cmd::stat_text | T/V/M | OOS; keep | `ui/src/scpi.rs:2336` |
 | scpi-140 | `:SYSTem:GRAPhics` | both | CPU/GPU | CPU/GPU (requested, not necessarily active) | C/Q: tbd at M14 | ui.graphics_set; changes renderer preference | T/V/M | OOS; keep | `ui/src/scpi.rs:2359` |
 | scpi-141 | `:SYSTem:AOUTput` | both | TOUT/OFF/PFA/PFAIL; PFA only with mask/zone HW offered | TOUT/OFF/PFA | C/Q: tbd at M14 | m.aux_out; OFF constant low | T/V/M | Stock TOUT/PFAil; OFF is OOS; keep | `ui/src/scpi.rs:2371` |
@@ -481,7 +481,6 @@ acceptance predicates below are part of every affected row.
 | scpi-701 | `:DECode:CPHY:RATE` | both | AUTO or finite D 0..1e12 symbols/s | AUTO if 0 else E sym/s | C/Q: tbd at M14 | m.dec_cphy_rate; errors: -224 invalid parameter; -113 unsupported header | T/V/M/H | added; keep merged behavior pending cited target decisions | `ui/src/scpi.rs:1053` |
 | scpi-702 | `:DECode:CPHY:SRATe` | both | AUTO or finite D 0..1e12 symbols/s | AUTO if 0 else E sym/s | C/Q: tbd at M14 | m.dec_cphy_rate alias; errors: -224 invalid parameter; -113 unsupported header | T/V/M/H | added; keep merged behavior pending cited target decisions | `ui/src/scpi.rs:1053` |
 | scpi-703 | `:DECode:BUSY` | Q | ignored | B | Q: tbd at M14 | ui.decode_busy; no acquisition/statistics effects; errors: none | T/V/M/H | added; keep merged behavior pending cited target decisions | `ui/src/scpi.rs:4117` |
-| scpi-704 | `:SYSTem:PIPeline` | both | prefix BATC/FRAM/STAN (case-insensitive) | BATC/FRAM | C/Q: tbd at M14 | m.draw_batch only; selected route can still be Frames for unsupported source; no mark_changed here; errors: -224 invalid parameter; -113 unsupported header | T/V/M/H | added; keep merged behavior pending cited target decisions | `ui/src/scpi.rs:2341` |
 
 ## Removed side-effect query aliases
 
@@ -843,11 +842,11 @@ new SINGLE record. Evidence: `ui/src/scpi.rs:4262` through `ui/src/scpi.rs:4890`
 **scpi-311 (changed current barrier; M15 target retained): query consistency.**
 Exact case-insensitive segment `*OPC?` is intercepted by advance_program and
 captures finite operations active at that point: autoset, SIM generation and
-armed SINGLE, tied to workflow epoch and exact operation IDs. Continuous RUN
-and future captures are not tracked. Complete sends 1; pending suspends this
-program while other clients run. Cancellation/changed workflow or expired
-receipt queues -410 and drops all prior buffered replies and the remaining
-tail, with no response. Receipt deque holds 128 tokens. *OPC command registers
+armed SINGLE. The SINGLE receipt follows record acceptance. STOP, RUN and the
+hardware hold after SINGLE are outside the barrier. Complete sends 1. Pending
+suspends this program while other clients run. Cancellation, a changed workflow
+or an expired receipt queues -410 and drops prior buffered replies and the
+remaining tail, with no response. The receipt deque holds 128 tokens. *OPC command registers
 up to 64 such fences and latches ESR bit 0 on completion; cancellation does not
 set bit 0. Parameters or repeated '?' defeat the exact *OPC? interception and
 fall through as unsupported (-113), although other headers strip repeated '?'.
@@ -1174,7 +1173,6 @@ No implementation or validator behavior was changed for this re-spec.
 | Counter/acquisition, scpi-35..37/76/77 | Fork prefixes, digits 3..6, exact average ladder; upstream strict tokens, digits 3..7, floor average count | Upstream wins; invalid explicit values now -224 in delegated handlers. Existing fork segment/hardware-average/CORes/serial trigger extensions retained |
 | Waveforms, scpi-88..93 and paging additions | Fork channel source, RAW/NORM coercions, whole current window, fixed preamble type 0; upstream refs, MAX, strict enums and pages | Upstream wins; mode in preamble, bounded count before copy, page origin. Unsigned LE WORD policy agrees and remains |
 | Display/views | Fork BMP with ignored args and five analyser choices; upstream PNG validation and analyser registry | Merged keeps fork DotsMode VECT/DOTS/AUTO (upstream was boolean VECT/DOTS), plus upstream PNG and MAG/INV/DPT. STEP target D5 still unimplemented; BAND fact query does not grant VIEW BANDwidth |
-| SYST SET/GET and PIPEline | Fork lacked cat key exception and pipeline header; upstream adds catalogue setup and draw path preference | Upstream wins for keys/header; both draw paths retained by merge decision. PIPEline query reports m.draw_batch preference; diagnostic pipeline reports the effective draw_switches route for hardware sources (#182) |
 | IDN | Fork build/cached firmware identity versus upstream fixed package-version text | Fork firmware_version() retained; runtime build identity can differ from package version. Model/serial placeholders remain producer-owned |
 | Debug and transport adapters | Fork board/debug/capability APIs, IPv6 and accept ACL; upstream newer protocol handlers and program transports | Fork board abstraction/debug extensions retained. VXI queue and HiSLIP host continuation retained; immediate HTTP/MCP text transport uses checked adapter. AOUT/MASK map/DVM lane retain direct err.push ESR exception |
 | State diagnostics | Fork shadow/generation/loss/acquisition diagnostics versus upstream hardware fast-path suffix and HTTP workflow JSON | Both retained. Diagnostic 130 old positions +10 suffix fields; JSON has 8 separate keys. Global frames regex gets a third match when hardware suffix is present |

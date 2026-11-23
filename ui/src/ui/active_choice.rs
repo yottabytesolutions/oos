@@ -111,7 +111,6 @@ fn acquisition(u: &Ui, it: Item) -> Option<usize> {
         Item::AcqSegHw => usize::from(m.seg_hw),
         Item::AcqAvgHw => usize::from(m.avg_hw),
         Item::AcqCores => usize::from(m.cores),
-        Item::AcqDrawPath => usize::from(m.draw_batch),
         Item::Zoom => usize::from(m.zoom),
         Item::AutoRoll => usize::from(m.auto_roll),
         Item::LogOn => usize::from(u.log.file.is_some()),

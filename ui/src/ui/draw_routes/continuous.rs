@@ -16,7 +16,7 @@ fn admitted_modes_use_their_pool_adapters_and_keep_the_newest_record() {
         (AcqMode::Normal, 1e-3, BatchKind::DeepPairs, Placement::Pairs),
     ] {
         let _scope = Scope::new();
-        let mut route = Route::new(kind, true, 2, tdiv);
+        let mut route = Route::new(kind, 2, tdiv);
         route.ui.m.acq = mode;
         assert!(route.ui.fast_ok());
         let mut reference = scripted::source(kind, 123);
@@ -48,7 +48,7 @@ fn admitted_modes_use_their_pool_adapters_and_keep_the_newest_record() {
 
 #[test]
 fn only_native_trigger_conditions_are_eligible_for_continuous_placement() {
-    let mut route = Route::new(BatchKind::Codes, true, 1, 1e-6);
+    let mut route = Route::new(BatchKind::Codes, 1, 1e-6);
     for kind in TRIG_TYPES {
         route.ui.m.trig_type = kind;
         route.ui.m.video_sync = VSync::Odd;

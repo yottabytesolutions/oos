@@ -153,3 +153,16 @@ def require_captures(directory, names):
         raise ValueError(f'capture inventory mismatch: missing={set(names) - found}, extra={found - set(names)}')
     if not names:
         raise ValueError('zero captures selected')
+
+
+def reference_capture(capture):
+    """Read the older demo labels as their current equivalent."""
+    if not capture['path'].startswith('demo/'):
+        return capture
+    settings = capture['settings']
+    if settings.endswith(' Demo acq.pipeline=batch'):
+        settings = settings.removesuffix(' Demo acq.pipeline=batch') + ' Demo records'
+    route = capture['source_route']
+    if route == 'Demo records; acq.pipeline=batch':
+        route = 'Demo records'
+    return dict(capture, settings=settings, source_route=route)

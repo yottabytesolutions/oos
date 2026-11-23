@@ -1,7 +1,7 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
-319 fn core/src/model/defaults.rs <Model as Default>::default
+318 fn core/src/model/defaults.rs <Model as Default>::default
 24 struct core/src/model/decoder.rs DecCfg
 15 struct core/src/model/generator.rs GenCh
-296 struct core/src/model/state.rs Model
+295 struct core/src/model/state.rs Model
 13 struct core/src/model/trigger.rs SerialTrig

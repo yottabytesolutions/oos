@@ -9,12 +9,22 @@ from unittest.mock import patch
 import struct
 import zlib
 
-from golden import (SIGNATURE, compare_rgb, read_png, require_captures, write_diff, write_png, write_report)
+from golden import (SIGNATURE, compare_rgb, read_png, reference_capture, require_captures, write_diff, write_png,
+                    write_report)
 
 
 class GoldenTests(unittest.TestCase):
     def image(self, n=1000, value=40):
         return n, 1, bytes([value] * n * 3)
+
+    def test_reference_demo_labels_map_to_current_metadata(self):
+        old = dict(path='demo/default.png', settings='settings dots=Auto Demo acq.pipeline=batch',
+                   source_route='Demo records; acq.pipeline=batch', rgb_sha256='unchanged')
+        new = dict(old, settings='settings dots=Auto Demo records', source_route='Demo records')
+        self.assertEqual(reference_capture(old), new)
+        self.assertEqual(reference_capture(new), new)
+        batch = dict(old, path='batch/default.png')
+        self.assertEqual(reference_capture(batch), batch)
 
     def test_publish_preserves_foreign_subtrees_and_replaces_owned_captures(self):
         from golden_run import publish
@@ -88,10 +98,10 @@ class GoldenTests(unittest.TestCase):
 
     def test_child_coverage_is_preserved_without_application_overrides(self):
         from golden_run import child_environment
-        with patch.dict(os.environ, {'LLVM_PROFILE_FILE': 'coverage-%p.profraw', 'OOS_PIPELINE': 'frames'}, clear=True):
+        with patch.dict(os.environ, {'LLVM_PROFILE_FILE': 'coverage-%p.profraw', 'OOS_INTERP': 'fast'}, clear=True):
             env = child_environment(Path('synthetic'))
             self.assertEqual(env['LLVM_PROFILE_FILE'], 'coverage-%p.profraw')
-            self.assertNotIn('OOS_PIPELINE', env)
+            self.assertNotIn('OOS_INTERP', env)
         with patch.dict(os.environ, {}, clear=True):
             self.assertNotIn('LLVM_PROFILE_FILE', child_environment(Path('synthetic')))
 

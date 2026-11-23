@@ -29,7 +29,7 @@ fn check_normal_lines_plans(staged: bool) {
             } else {
                 Default::default()
             };
-            let pipe = crate::drawpipe::pipe(&sw).unwrap();
+            let pipe = crate::drawpipe::start_pipe(&sw);
             pipe.publish_view(&m, 970, 448, sw.interp, id);
             let (worker, limited) = deposit_plan(&b, &p, id, true);
             assert!(worker.is_some());
@@ -324,12 +324,11 @@ fn ordered_record_route(profile: &str) {
 
     let _scope = crate::drawpipe::test_scope::Scope::new();
     let sw = crate::sysconf::Switches::parse(&|_| None, profile, "", Default::default());
-    let pipe = crate::drawpipe::pipe(&sw).unwrap();
+    let pipe = crate::drawpipe::start_pipe(&sw);
     let shared = crate::board::HwShared::default();
     let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 }, Host::headless());
     let (m, _, mut s, p) = normal_lines_plan(1e-6, false);
     ui.m = m;
-    ui.m.draw_batch = true;
     s.header = false;
     ui.step(0.03);
     let id = lock(&shared).acquisition.identity();
@@ -381,7 +380,7 @@ fn sparse_remap_admission_reduces_the_arm_before_any_read() {
     let _scope = crate::drawpipe::test_scope::Scope::new();
     let (m, sw, b, p) = normal_lines_plan(10e-9, false);
     let id = Identity::default();
-    let pipe = crate::drawpipe::pipe(&sw).unwrap();
+    let pipe = crate::drawpipe::start_pipe(&sw);
     pipe.publish_view(&m, 1024, 448, sw.interp, id);
     assert_eq!(b.frames, 250);
     assert_eq!(deposit_plan(&b, &p, id, true).1, 182);
@@ -399,7 +398,7 @@ fn one_raw_dot_record_selects_lossless_wide_admission() {
     let hits = crate::picture::deposit::standard::dot_hit_bound(271.0 / (p.rate as f64 * s.tdiv * 10.0));
     assert_eq!(hits, 2884);
     assert_eq!(hits * 24, 69_216);
-    let pipe = crate::drawpipe::pipe(&sw).unwrap();
+    let pipe = crate::drawpipe::start_pipe(&sw);
     let id = Identity::default();
     pipe.publish_view(&m, 271, 448, sw.interp, id);
     let format = crate::picture::deposit::count::CountFormat::for_hits(hits);

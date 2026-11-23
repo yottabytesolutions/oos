@@ -3,7 +3,7 @@
 use super::*;
 use crate::board::QueuedFrame;
 use crate::drawpipe::reuse::EdgeInputs;
-use crate::drawpipe::{self, Access, Pipe, TapRead};
+use crate::drawpipe::{self, Pipe, TapRead};
 use std::sync::{Arc, Weak};
 
 pub(super) struct ReaderTaps {
@@ -19,7 +19,7 @@ pub(super) struct ReaderTaps {
 
 impl ReaderTaps {
     pub(super) fn new(ui: &Ui) -> Self {
-        let pipe = ui.src.is_hw().then(|| drawpipe::pipe(Access::Existing)).flatten();
+        let pipe = ui.src.is_hw().then(drawpipe::pipe).flatten();
         let attempts = pipe.map_or(0, Pipe::tap_drain);
         let ready = pipe.map_or(0, |pipe| pipe.tap_count().min(attempts));
         Self {

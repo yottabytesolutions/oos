@@ -2,9 +2,9 @@
 
 //! The DMA return and acquisition commands share one source event.
 
+use super::pipe;
 #[cfg(test)]
 use super::Pipe;
-use super::{pipe, Access};
 use oos_hal::sync::lock;
 use std::sync::{Condvar, Mutex};
 use std::time::{Duration, Instant};
@@ -38,11 +38,11 @@ impl SourceWake {
 }
 
 pub(crate) fn source_event() -> Option<&'static SourceWake> {
-    pipe(Access::Existing).map(|pipe| pipe.source.as_ref())
+    pipe().map(|pipe| pipe.source.as_ref())
 }
 
 pub(crate) fn wake_source() {
-    if let Some(pipe) = pipe(Access::Existing) {
+    if let Some(pipe) = pipe() {
         pipe.source.notify();
         pipe.slot.wake_tap_commands();
     }
@@ -86,7 +86,7 @@ mod tests {
     #[test]
     fn published_command_uses_the_existing_pipe_event_without_a_buffer() {
         let _scope = drawpipe::test_scope::Scope::new();
-        let pipe = pipe(&crate::sysconf::Switches::default()).unwrap();
+        let pipe = crate::drawpipe::start_pipe(&crate::sysconf::Switches::default());
         let observed = pipe.source_generation();
         wake_source();
         assert!(pipe.wait_source(observed, Duration::ZERO).is_none());

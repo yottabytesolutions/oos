@@ -1,5 +1,8 @@
 # Trigger lock-in (2026-11-13)
 
+Register effects beyond the dated measurements below are **assumed**. Values transcribed from the stock
+driver are **decoded from stock**.
+
 User report: a square wave took long to capture, and a noisy 5 V signal hardly locked in, where the stock firmware
 locks in fast. This covers the hardware trigger set-up, autoset, the software edge refinement, and where the time
 goes. Code at `dho804` 1a4a8ec. Measurements on the unit with the 1 kHz, 300 mVpp probe-comp square on CH1, over SCPI.
@@ -161,9 +164,12 @@ Fixes:
 | F1 | Persistence Min: grade against the frame count of the picture (counts / frames merged), or let `vmax` follow downwards at once when the picture was replaced | small |
 | F2 | Persistence Min: replace on a fixed window (for example 50 ms, at least one batch) rather than per refresh, so every picture holds a similar number of frames | small |
 
-Stock behaviour for comparison was not measured. Comparing with `acq.pipeline = frames` needs an oos-ui restart.
+Stock behaviour for comparison was not measured.
 
 ## Trigger status from the hardware (FPGA use)
+
+**Verified on the unit (2026-11-13)** for the status behavior identified below. Other status-bit
+interpretations are **assumed**.
 
 0x4034 bits 6 and 7, traced in the netlist of the 00.01.05.00.01 bitstream (private RE notes
 `docs/re/netlist`: `regmap/read_sim.tsv` gives the source FF of each read bit; the cones were dumped with
@@ -176,7 +182,7 @@ Stock behaviour for comparison was not measured. Comparing with `acq.pipeline = 
 - Both are sticky until a status clear: 0x4034 written with bits 31:30 set, then with them clear.
 - So bit 6 = the TPU fired, bit 7 = a trigger was accepted, both sticky until a status clear. Forced by the
   auto timeout = bit 7 without bit 6. The stock priority (bit 6 first, acquisition-start.md section 2) agrees.
-  The assumed names there (bit 6 = AUTO, bit 7 = TD) are the wrong way round.
+  The current acquisition protocol gives the same bit assignments.
 - On the unit (running build, never cleared): 0x11d2 with the level above the signal, 0x11c2 and others while
   triggering. Bits 6 and 7 set in both: sticky, as traced.
 
@@ -194,6 +200,9 @@ Verification on the unit, before turning it on by default:
    every batch) instead of staying set.
 
 ## ADC measure-unit diagnostics
+
+**Verified on the unit (DHO924S, 2026-11-15)** for the stale-level observations. The remaining register
+interpretation is **assumed**.
 
 The autoset measure-unit experiment was removed under ADR 0012: on a DHO924S
 (2026-11-15), every request returned the levels of an earlier signal. Autoset uses records for its levels.
@@ -265,6 +274,9 @@ crashes the unit (a user-chosen 1 M depth with 4 channels takes the same read). 
 (branch fix/meas-slots): the unit's observation fits it. These are historical results of the removed autoset path.
 
 ## Slot map cross-check (for unitlab)
+
+**Assumed** for the register sequence or effect on hardware. Code and host fixtures establish the
+intended software writes.
 
 The slot table is in [../hardware/fpga.md](../hardware/fpga.md) "Channel to core and slot mapping"; since branch
 fix/meas-slots `hal::dho::levels::slots` follows it. This diagnostic check confirms it on the unit without moving a cable.

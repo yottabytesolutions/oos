@@ -1,5 +1,8 @@
 # Frequency counter (FPGA, DHO800/DHO900)
 
+Counter configuration words from the stock driver are **decoded from stock**. Field meanings beyond the
+dated observations are **assumed**.
+
 Scope: the hardware counter behind Menu > Instruments > DVM / counter on the unit. Code: `hal/src/dho/counter.rs` (registers and
 the conversion), `ui/src/board/dho/hw.rs` (`counter_tick`, in the acquisition loop), `ui/src/ui/tools.rs` (the strip
 row, statistics, SCPI `:COUNter`). Off the hardware (host runs, demo source) the counter is worked out from the records.

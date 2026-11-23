@@ -45,9 +45,8 @@ fn script_route_updates_an_existing_prepared_worker_policy() {
     );
     ui.m.meas.clear();
     ui.m.meas2.clear();
-    ui.m.draw_batch = true;
     let id = crate::ui::change::acquisition::script_prepare_route(&mut ui, false);
-    let pipe = crate::drawpipe::pipe(crate::drawpipe::Access::Existing).unwrap();
+    let pipe = crate::drawpipe::pipe().unwrap();
     assert!(pipe.accepting());
     assert_eq!(crate::ui::change::acquisition::script_prepare_route(&mut ui, true), id);
     assert!(!pipe.accepting(), "record-fed scripts must disable an already prepared worker view");
@@ -64,9 +63,8 @@ fn batch_worker_view_stays_enabled_during_stop_final_read() {
     );
     ui.m.meas.clear();
     ui.m.meas2.clear();
-    ui.m.draw_batch = true;
     ui.step(0.04);
-    let pipe = crate::drawpipe::pipe(crate::drawpipe::Access::Existing).unwrap();
+    let pipe = crate::drawpipe::pipe().unwrap();
     assert!(pipe.accepting());
     let frame = std::sync::Arc::new(crate::board::Frame {
         envelope: true,

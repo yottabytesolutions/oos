@@ -1,5 +1,8 @@
 # AFE bus (4x RT1642)
 
+AFE write sequences transcribed from the driver are **decoded from stock**. Untested effects on
+acquisition are **assumed**.
+
 Register-level settings (V/div, offset, coupling, bandwidth) are in `afe-settings.md`.
 
 ## Physical layer

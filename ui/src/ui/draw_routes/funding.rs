@@ -9,16 +9,16 @@ fn configured_first_whole_b_step_consumes_every_owned_tap() {
             let _scope = Scope::new();
             let sw =
                 crate::sysconf::Switches::parse(&|_| None, drawpipe::funding::TEST_PROFILE, "", Default::default());
-            let mut route = Route::new(BatchKind::Raw, true, 4, tdiv);
+            let mut route = Route::new(BatchKind::Raw, 4, tdiv);
             route.ui.host = route.ui.host.with_switches(sw.clone());
             let id = change::acquisition::script_prepare(&mut route.ui);
-            let pipe = drawpipe::pipe(drawpipe::Access::Existing).unwrap();
+            let pipe = drawpipe::pipe().unwrap();
             let input = route.source.next_batch(&route.ui.m, &sw, records, None).unwrap();
             let sample_bound = input.newest(id.epoch()).ch.iter().map(Vec::capacity).sum();
             assert!(pipe.admit_taps(id, [0; 6], sample_bound, std::time::Duration::from_micros(500)));
             let b = pipe.tap_drain();
             assert_eq!(b, 70);
-            assert!(crate::cmd::stat_text(&route.ui).contains("pipeline Batch route=batch-funded"));
+            assert!(crate::cmd::stat_text(&route.ui).contains("route=batch-funded"));
             for sequence in 0..b {
                 let batch = route.source.next_batch(&route.ui.m, &sw, records, None).unwrap();
                 let mut frame = batch.newest(id.epoch());
@@ -47,17 +47,17 @@ fn configured_first_whole_b_step_consumes_every_owned_tap() {
 }
 
 #[test]
-fn staged_status_reports_standard_until_current_geometry_is_admitted() {
+fn staged_status_reports_records_until_current_geometry_is_admitted() {
     for conf in ["f2.stage=configured-evaluation", drawpipe::funding::TEST_PROFILE] {
         let _scope = Scope::new();
-        let mut route = Route::new(BatchKind::Raw, true, 4, 10e-6);
+        let mut route = Route::new(BatchKind::Raw, 4, 10e-6);
         let sw = crate::sysconf::Switches::parse(&|_| None, conf, "", Default::default());
         route.ui.host = route.ui.host.with_switches(sw);
         let id = change::acquisition::script_prepare(&mut route.ui);
-        let pipe = drawpipe::pipe(drawpipe::Access::Existing).unwrap();
-        assert!(crate::cmd::stat_text(&route.ui).contains("pipeline Frames route=standard"));
+        let pipe = drawpipe::pipe().unwrap();
+        assert!(crate::cmd::stat_text(&route.ui).contains("route=records"));
         assert!(!pipe.admit_taps(id, [0; 6], usize::MAX, std::time::Duration::from_secs(1)));
-        assert!(crate::cmd::stat_text(&route.ui).contains("pipeline Frames route=standard"));
+        assert!(crate::cmd::stat_text(&route.ui).contains("route=records"));
         assert!(pipe.reserve_plan(id).is_none());
     }
 }

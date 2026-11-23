@@ -1,7 +1,7 @@
 # Acquisition start (RUN / SINGLE / STOP, auto trigger)
 
-Status: arming, the done flag, batches, deep records and the read rules at the end of this file are verified on the unit where
-they say so. Anything else is not yet verified on hardware. "Assumed" marks an interpretation.
+Register evidence follows the nearest evidence note. Unlabelled register details, derived field meanings
+and wider claims from undated observations are **assumed**.
 
 The read-out is the **play** path (0x400c play mode, then FSM start). The FSM replays a stored frame. A new acquisition needs the
 **record** set-up (0x400c record bits + the frame window in 0x4010/0x4014/0x4018) before the FSM start. So a repeated read-out
@@ -14,6 +14,9 @@ value *read*). "RMW" = write the copy with bits changed. Time values are in **fe
 `hal::dho::clock` for another clock (`docs/models.md`).
 
 ## 1. Sequences and register writes
+
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
 
 ### States
 
@@ -57,7 +60,7 @@ set_run(chmask, type, memsel, n, w4=first, w5=first, w6=first+n-1, x7=0, stack=0
 ```
 (stack = the ultra acquisition value, in ultra mode only. One case needs a single extra 20 ms sleep here, its condition is not known.)
 
-Evidence for the slot model, verified on the unit: in STOP 0x4014 = 0x1380, 0x4010 = 0x141f (160 frames from max_frames 0x1380);
+An undated unit observation supports the stock slot layout: in STOP 0x4014 = 0x1380, 0x4010 = 0x141f (160 frames from max_frames 0x1380);
 while running 0x4010/0x4014 alternate between {0..0x9f} and {0x1380..0x141f}.
 
 ### Set-up `set_run(fsm, type, memsel, n, w4, w5, w6, x7, stack)`
@@ -121,6 +124,9 @@ read-out starts clean.
   the path: roll/scan exit (`roll-mode.md` 6 D), and a final raw replay of the newest frame (`docs/fork/stop-exact.md`).
 
 ## 2. Detecting the finished acquisition, fetching the frame, re-arming
+
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
 
 Completion is polled. OOS uses `/dev/xdma0_bypass` and `/dev/xdma0_c2h_0` only, and the read is a plain blocking `read()`.
 
@@ -199,6 +205,9 @@ Other observed values: 0x31c0 (bits 6,7,8,12,13), 0x11c7, 0x7, 0x12.
 
 ## 3. Trigger set-up the start depends on
 
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
+
 ### SCU auto trigger
 
 | register | value |
@@ -229,13 +238,16 @@ Force trigger: 0x205c bit5 pulse. The TPU registers are write-only (0x2034 reads
 
 ## 4. OOS sequence: one auto-trigger acquisition with the left-behind configuration
 
+**Assumed** for hardware behavior beyond the observations below. The retained unit account has no dated
+trace for this register sequence.
+
 Precondition: warm hand-over, the stock system configured RUN once (all configuration registers, TPU, auto trigger, TX size
 in place), FPGA in STOP. OOS tracks the copies itself, starting from the hand-over values (`scu::Shadows::HANDOVER`):
 s4004, s4008, s400c, s1000, s4080 (s4080 = last read of 0x4080). `chmask` from the settings, first = 0, n = 1.
 
 ### A. Arm (= run sequence, type 2, slot 0, n = 1), 29 writes
 
-`scu::arm`. Verified on the unit.
+`scu::arm`. The unit account below records an undated test.
 
 | # | reg | value |
 |---|---|---|
@@ -269,7 +281,7 @@ Poll `rd(0x4080)` every 5-10 ms until bit30 = 1 (store the read value as s4080),
 ~10 ms + pre/post-trigger time. OOS waits at least 2 s, and at least twice the record time + 500 ms. Diagnostic only: `rd(0x4034)` (bit4
 waiting, bit6/bit7 triggered, bit13 FSM idle). If it never completes in NORMAL mode: 0x205c bit5 pulse (force trigger).
 
-Verified on the unit: the arm works, done comes after 162 ms in that test and the FSM stops with 0x4034 = 0x3180.
+In the undated unit test, done came after 162 ms and the FSM stopped with 0x4034 = 0x3180.
 
 ### C. Read
 
@@ -293,19 +305,28 @@ Live-equivalent variant (no OOS window): leave 0x1100/0x1108/0x11f0 as the horiz
 and read `count * (16 + 2*ratio*len)` bytes with an 8-word header per frame, len = the 0x11f0 value (a multiple of 8, so
 no padding).
 
-### D. Next frame
+### Next frame
 
-Repeat A (it begins with the stop sequence). Two slots, slot 0 (first = 0) and slot 1 (first = max_frames), keep the previous batch
-alive. OOS uses slot 0 only, which is simpler. Throughput note: at fast time bases read several frames per batch in one
-`read()` (see "Batches of frames on the unit").
+Repeat the arm sequence, starting with its stop sequence. **Decoded from stock.** The
+two-slot layout starts slot 0 at frame 0 and slot 1 at `max_frames`. A disjoint slot
+can preserve the preceding record.
 
-### Out of scope (not touched by A-D)
+OOS defaults to `acq.stop_slot = zero`. With `alternate`, the serial Normal path can
+start at `max_frames.max(1)` when the previous stored record was at frame 0. The code
+requires Play4, room for at least two records, and no hardware mask or zone.
+An overlapping capture or an ineligible plan starts at zero. **Assumed on hardware.**
+Preservation for STOP replay under alternate-slot operation still needs a unit run.
+See [STOP and replay](../fork/stop-exact.md#now) and
+[`first_frame`](../../ui/src/board/dho/hw/stop.rs).
 
-AFE (channel scale in the acquisition block), ADC SPI (0x1034), clocks (LMK/LMX), SPI flash, calibration files.
-A-D only use 0x1000, 0x4004, 0x4008, 0x400c, 0x4010-0x4018, 0x4068, 0x406c, 0x4080 (+ the read-out's 0x1010, 0x1100,
-0x1108, 0x11f0).
+### Out of scope
+
+The arm and read sequence above excludes AFE scale, ADC SPI, clocks, SPI flash and calibration files.
 
 ## Not yet verified on hardware
+
+**Assumed** for the register sequence or effect on hardware. Code and host fixtures establish the
+intended software writes.
 
 1. Whether the read-out's own 0x1100/0x1108/0x11f0 values affect the next recording. They are read-out window and TX size, and
    the live loop does not rewrite them per frame.
@@ -313,6 +334,9 @@ A-D only use 0x1000, 0x4004, 0x4008, 0x400c, 0x4010-0x4018, 0x4068, 0x406c, 0x40
 3. 0x400c bit29 and bit26 meaning; 0x4064 (t2) role (auto re-trigger period?).
 
 ## Batches of frames on the unit
+
+**Assumed** for hardware behavior beyond the observations below. The retained unit account has no dated
+trace for this register sequence.
 
 `oos-fpgad run --frames 100` (1 us/div, CH1, 12 500 points per frame, probe comp 1 kHz):
 
@@ -327,6 +351,8 @@ A-D only use 0x1000, 0x4004, 0x4008, 0x400c, 0x4010-0x4018, 0x4068, 0x406c, 0x40
   of ~30 with single frames. `frames` is capped by `max_frames` = 7 340 032 / segment size.
 
 ## Frames 0 and 1 of a batch (issue #5)
+
+**Verified on the unit (DHO924S, 2026-11-16)** for the recorded stray-frame and header observations.
 
 Verified on the unit (DHO924S, 2026-11-16): the built-in generator gives a 1 kHz square of 2 Vpp on CH1, at 10 us/div
 and 1 kpts (6.25 MSa/s). The trigger is an edge on CH1, rising at 0 V, in Normal sweep. The headers were logged with
@@ -357,16 +383,23 @@ and 1 kpts (6.25 MSa/s). The trigger is an edge on CH1, rising at 0 V, in Normal
 
 ## Reading a stored frame again (STOP)
 
-After a batch has been read, any frame of it can be played and read again with the same type-4 read-out, as long as
-nothing is armed in between: 0x4010 = 0x4014 = frame, 0x4018 = frame, with any read-out window or compression. OOS
-does this in STOP for every new view (time base, delay): the newest frame of the last batch, as a window of every
-sample when the view with a quarter screen on each side fits 625 k points (also far from the trigger), else the whole
-record through the compression. Verified on the unit 2026-11-13: CH1, 10 M points at 1.25 GSa/s (8 ms), a 100 kHz
-square; stopped at 100 ns/div, then 10 us/div, 1 ms/div (the whole record, -4..4 ms), 1 us/div and 1 us/div at a
-delay of 3 ms (the edge at 3 ms at every sample). Any arm overwrites the ring from frame `first` on, so the stored
-record is only good until the next RUN.
+**Assumed** as a general hardware rule. A unit report from 2026-11-13 records the stopped-view test below.
+The unit model is unrecorded.
+
+The type-4 reread selects a retained frame with `0x4010 = 0x4014 = 0x4018 = frame`.
+OOS requests a stopped view for an eligible displayed record, including a complete raw record.
+With a valid ring slot, it reads a raw window if the view and its margins fit the limit. Otherwise
+it can read the full record as pairs. See [STOP behavior](../fork/stop-exact.md#now).
+The dated check used CH1, 10 M points at 1.25 GSa/s and a 100 kHz square wave. It stopped at
+100 ns/div and checked 10 us/div, 1 ms/div, and 1 us/div with and without a 3 ms delay.
+
+An arm clears reread eligibility for an overlapping frame range.
+Alternate-slot preservation for serial STOP remains **assumed**. See [Next frame](#next-frame).
 
 ## Memory depth beyond 50 M on the unit
+
+**Assumed** for hardware behavior beyond the observations below. The retained unit account has no dated
+trace for this register sequence.
 
 `oos-fpgad run --depth D --tdiv 1e-2 --at A` (CH1, probe comp 1 kHz), 4000-point windows at the start, around the
 trigger and at the end of the record:
@@ -384,6 +417,9 @@ completely (250 MB at 125 M) is not an option: the live path lets the FPGA compr
 window memsel + 0x248, 0x11f0 = len; `horizontal-config.md`, `record-play.md` section 3.1).
 
 ## FPGA compression = min/max (peak) decimation
+
+**Assumed** for hardware behavior beyond the observations below. The retained unit account has no dated
+trace for this register sequence.
 
 `oos-fpgad run --depth 1000000 --tdiv 2e-4 --all` (full, 1 M points, 2 MB) and the same with `--compress 4`
 (`seq::Settings::compress`: 0x1170 = 0xc0000004, window = whole record, 0x11f0 = 250 000; 500 kB), verified on the
@@ -410,6 +446,9 @@ Rounding up asked for 3912 points at k = 256 and 1 M points, and the C2H read ti
 
 ### Time axis of compressed reads by depth
 
+**Assumed** for hardware behavior beyond the observations below. The retained unit account has no dated
+trace for this register sequence.
+
 `oos-fpgad run --tdiv 1e-2 --depth D --all --compress ceil(D / 625 000)`, probe comp 1 kHz, period measured over all
 edges of the 625 000 compressed points, segment capped at 7 864 320 bursts:
 
@@ -435,6 +474,9 @@ With a memory size of 0x5000000 bursts (`hal::dho::hz::MEM_BURSTS`) the cap is 4
 path (`max_frames`) keeps the 16 777 216-burst memory size.
 
 ## C2H read rules found on the unit
+
+**Assumed** for hardware behavior beyond the observations below. The retained unit account has no dated
+trace for this register sequence.
 
 1. **Frames are padded to 8 bytes in the stream.** A play-out of N frames of `b` bytes delivers N x roundup8(b)
    bytes. 10 MHz sine, batches of 4..6 frames at 1.25 GSa/s: 1250 points (100 ns/div) come at a stride of 1252 points,

@@ -84,7 +84,6 @@
 15 ui ui/src/store.rs clippy::unwrap_used
 1 ui ui/src/sysconf.rs clippy::double_ended_iterator_last
 3 ui ui/src/sysconf.rs clippy::field_reassign_with_default
-1 ui ui/src/sysconf.rs clippy::too_many_lines
 1 ui ui/src/trig.rs clippy::needless_borrows_for_generic_args
 9 ui ui/src/ui.rs clippy::cognitive_complexity
 1 ui ui/src/ui.rs clippy::collapsible_if

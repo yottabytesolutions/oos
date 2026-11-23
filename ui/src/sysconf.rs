@@ -201,6 +201,7 @@ impl SysConf {
             };
             let (k, v) = (k.trim(), v.split(" #").next().unwrap_or("").trim());
             let ok = match k {
+                "acq.pipeline" => true,
                 "ntp" => on_off(v).map(|b| c.ntp = b).is_some(),
                 "ntp.server" if v.eq_ignore_ascii_case(DHCP) => {
                     c.ntp_server = DHCP.into();
@@ -224,13 +225,7 @@ impl SysConf {
                     let n = v.to_ascii_lowercase();
                     crate::mdns::name_ok(&n).then(|| c.net_name = n).is_some()
                 }
-                "graphics" => match v {
-                    "cpu" | "gpu" => {
-                        c.gpu = v == "gpu";
-                        true
-                    }
-                    _ => false,
-                },
+                "graphics" => matches!(v, "cpu" | "gpu").then(|| c.gpu = v == "gpu").is_some(),
                 "backlight" => {
                     v.parse::<u32>().ok().filter(|p| (10..=100).contains(p)).map(|p| c.backlight = p).is_some()
                 }
@@ -364,7 +359,17 @@ impl SysConf {
     }
 }
 
-/// The text the opt-in keys (`acq.*`, `perf.*`, `trig.*`, ...; `drawpipe::conf_value`) are looked up in: the settings
+/// `env` if set, else the value of `key` in system.conf text `conf` (a fork key: kept by `SysConf` as an unknown line).
+pub fn conf_value(env: Option<&str>, conf: &str, key: &str) -> Option<String> {
+    let conf_val = conf
+        .lines()
+        .filter_map(|l| l.split('#').next()?.split_once('='))
+        .find(|(k, _)| k.trim() == key)
+        .map(|(_, v)| v.trim().to_string());
+    env.map(str::to_string).or(conf_val)
+}
+
+/// The text the opt-in keys (`acq.*`, `perf.*`, `trig.*`, ...; `conf_value`) are looked up in: the settings
 /// file (`default_path`), then the image defaults (`IMAGE_PATH`). `conf_value` takes the first line of a key, so the
 /// settings file wins, also with an empty value, as `oos-conf` has it for the scripts.
 pub fn fork_text_of(settings: &str, image: &str) -> String {
@@ -383,16 +388,16 @@ pub fn default_path() -> PathBuf {
 #[cfg(test)]
 mod tests {
 
-    // Break it catches: a fork key (acq.pipeline, perf.place, acq.prearm) that only /oos/system.conf can set, so the
+    // Break it catches: a fork key (acq.compress, perf.place, acq.prearm) that only /oos/system.conf can set, so the
     // unit image's defaults (/etc/oos/system.conf) do nothing; or an image default that beats the user's setting
     #[test]
     fn fork_keys_take_the_image_default_unless_the_settings_set_them() {
-        let image = "acq.pipeline = batch\nperf.place = on\n";
-        let v = |settings: &str, k: &str| crate::drawpipe::conf_value(None, &super::fork_text_of(settings, image), k);
-        assert_eq!(v("", "acq.pipeline").as_deref(), Some("batch"));
+        let image = "acq.compress = on\nperf.place = on\n";
+        let v = |settings: &str, k: &str| crate::sysconf::conf_value(None, &super::fork_text_of(settings, image), k);
+        assert_eq!(v("", "acq.compress").as_deref(), Some("on"));
         assert_eq!(v("perf.place = off\n", "perf.place").as_deref(), Some("off"));
         assert_eq!(
-            v("acq.pipeline =\n", "acq.pipeline").as_deref(),
+            v("acq.compress =\n", "acq.compress").as_deref(),
             Some(""),
             "an empty value in the settings wins too"
         );

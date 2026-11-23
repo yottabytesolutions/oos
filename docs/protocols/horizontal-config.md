@@ -1,5 +1,8 @@
 # Horizontal / acquisition configuration (time base, memory depth, channel set, acquire mode)
 
+Unlabelled register effects and generalizations from undated readbacks are **assumed**. The evidence
+notes identify the stock-derived write sequences and dated exceptions.
+
 Status: OOS runs normal-mode acquisitions with this model on the unit (1 to 4 channels, depth up to 125 M). Statements
 marked "verified on the unit" were seen there. Everything else in this file has not been verified on hardware.
 
@@ -26,6 +29,9 @@ channel, `ratio` = interleave factor, `dot` = sample period in fs, `mask` = chan
   is the plain channel mask (verified on the unit).
 
 ## 1. Time base + memory depth -> sample rate, memsel, segment size, frame count
+
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
 
 ### 1.1 Inputs and tables
 
@@ -180,6 +186,10 @@ Verified on the unit: a window of 4000 points around memory index 1,250,000 hold
 
 ### 1.7 Sample-rate divider registers
 
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported. The reported aliasing observation was verified on the
+unit on 2026-11-14.
+
 | condition | 0x10d0 | 0x10d8 | 0x10d4 |
 |---|---|---|---|
 | rate > 62,500,000 | `0x8000 \| (maxrate(ratio) / rate) & 0xff` | 1 | 0 |
@@ -197,6 +207,9 @@ every sample of the full rate) shows what lies between the kept samples. OOS not
 is below the ADC's.
 
 ## 2. Channel set -> mask, interleave, ADC mode, stream layout
+
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
 
 ### 2.1 Mask, ratio, lanes
 
@@ -250,6 +263,9 @@ After a warm hand-over it is in the mode of the last channel set of the stock OS
 
 ## 3. Acquire modes, interpolation: FPGA vs software
 
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
+
 Acquire mode numbers: 0 normal, 1 peak detect, 2 average, 3 high resolution (assumed), 7 ultra acquisition.
 
 | item | registers | notes |
@@ -297,6 +313,9 @@ then the arm (`acquisition-start.md`). WPU/WAU = display engines, SCU = auto tri
 (`acquisition-start.md` section 3). The TPU (trigger) registers are written separately (`trigger.md`).
 
 ### 4.1 Example 1: CH1 only, 200 us/div, Auto -> 2.5 Mpts at 1.25 GSa/s
+
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
 
 Derived: mask 1, ratio 1, rate 1.25e9, dot 800,000 fs, memsel 2,500,000 (0x2625a0), segsize 0x40000, max_frames 28,
 frames/batch 1, pre = post = 1,250,000 (0x1312d0), screen points 2,500,000, k = 4, len 625,000 (0x98968), sinc factor 1,
@@ -359,6 +378,8 @@ no linear interpolation. Ratio, FSM nibble, memsel, len and frames/batch are ver
 
 ### 4.2 Example 2: CH1 + CH2, 1 us/div, Auto
 
+**Assumed** for the computed register tuple. The underlying algorithm is **decoded from stock**.
+
 Derived (computed, not seen on the unit): mask 3, ratio 2, rate 625 MSa/s per channel, dot 1,600,000 fs, memsel 6250
 (0x186a) per channel (12,500 words), segsize 0x800, max_frames 3584, frames/batch 160 (80 if series 800/900),
 pre = post = 3125 (0xc35); screen: 6.25 samples per column -> resampled to 7 points per column, k = 1, len = 7000.
@@ -390,6 +411,9 @@ words alternate CH1, CH2; 0x1108 = start point per channel. The window registers
 
 ## 5. Proposed OOS implementation
 
+**Assumed** for the register sequence or effect on hardware. Code and host fixtures establish the
+intended software writes.
+
 Precondition: FPGA, clocks, ADC and lane calibration from the cold boot (`cold-boot.md`) or a warm hand-over. OOS keeps
 shadows of 0x1000, 0x1004, 0x1080, 0x1084, 0x4008, 0x1154, 0x1170 (start value of 0x1004 after a warm hand-over: 0x04000000).
 
@@ -412,6 +436,9 @@ Assumed, not verified on hardware: acquire mode 3 = high res and its handling, t
 linear resampling fraction and len of example 2.
 
 ## 6. Field reference
+
+**Decoded from stock** for the documented sequence and values. Interpretations and extrapolated values
+are **assumed** unless individually supported.
 
 | parameter | meaning | register |
 |---|---|---|

@@ -1,5 +1,8 @@
 # Hardware mask test
 
+Comparator register effects beyond the stated unit cases are **assumed**. Stock sequence values
+identified in the text are **decoded from stock**.
+
 The mask (pass/fail) test in the FPGA's mask unit. Opt-in: `mask.hw = on` in system.conf, read once at start. Off by
 default until the steps below confirm the assumptions. Code:
 `hal/src/dho/mask.rs`, `seq::State::mask_steps`, `ui/src/ui/hwmask.rs`.
@@ -43,6 +46,9 @@ default until the steps below confirm the assumptions. Code:
 Only bits 9:0 and 15 of 0x1184 reach the comparator logic. Records above 1023 x 1000 points may mis-count columns.
 
 ## Sweep of the mapping (unit round 2)
+
+**Verified on the unit (DHO804, 2026-11-13)** for the recorded mapping-sweep readbacks and verdicts.
+Comparator interpretations are **assumed**.
 
 Round 2 (private RE notes `docs/logs/oos_unitlab_20261113.md`): slot 0 and the frame count are right (171/s against
 171/s), but every frame fails on a clean signal while the software passes; it passes only at X 1 div and Y 3 div. So
@@ -92,6 +98,8 @@ Procedure (probe-comp on CH1, 1 V/div, hardware mask on, Reset between steps, 20
 
 ## Round 5 and the fix
 
+**Verified on the unit (DHO804, 2026-11-13)** for the round 5 test outcomes below.
+
 Round 5 (`mask.map` sweep): `domain=readout` is right (pregain fails). At 20 and 50 us/div with 10k points the mask
 works exactly at 1, 2 and 4 channels: 0 fails in about 1800 clean frames, every frame fails with the delay shifted by
 2 or 10 us. At 100 and 200 us/div every frame failed with every column layout, and `cols=400`, 452, 1023 and 33220
@@ -109,6 +117,8 @@ the screen (1.6 screens at 10k points from 20 us/div). With a flat signal around
 
 ## Stall guard (round 8)
 
+**Verified on the unit (DHO804, 2026-11-13)** for the round 8 stall and recovery observations.
+
 At 200 µs/div with 100k and Auto depth the unit stopped the acquisition: every arm ended with "no acquisition
 (0x4080 bit30 not set)". The acquisition thread now counts arms that find no acquisition while the mask or zone unit
 runs. After two in a row it drops the unit for the current settings (time base, depth, channel set, `mask.map`) and
@@ -117,6 +127,8 @@ publishes the reason in `Shared::unit_blocked`. The UI then runs the software te
 stall is open.
 
 ## Strobe sweep (round 8)
+
+**Verified on the unit (DHO804, 2026-11-13)** for the reported strobe sweep.
 
 Assumed: the column strobe comes from a read-back state machine (0x4030 bit 20), not from the ADC stream. A 10-bit
 counter of strobes ends the window. With fewer than 1000 x count strobes per record the window never ends and the

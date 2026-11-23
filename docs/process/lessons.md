@@ -54,6 +54,8 @@ pull request that fixes a mistake: what happened, then the rule.
   before taking the pending slot.
 - A panel timeout left a stale DRM cookie, which cut short the next flip's EBUSY grace period. Read pending
   events before checking the timeout and discard the cookie before retrying an expired flip.
+- Removing the pacing timestamp helper left a Linux-only DRM re-export unused. Run the target Clippy check after
+  removing a platform-specific consumer.
 
 - A cancellation test counted reads on its source thread's counters and losses on the pipe. Use the pipe's
   injected instance for both sides of the conservation check, even when dispatch runs on another thread.

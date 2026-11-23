@@ -1,5 +1,8 @@
 # Cold start: why 0x1210 (ADC clock counter) reads 0
 
+Register sequences transcribed from the driver are **decoded from stock**. Predicted clock and
+acquisition register effects are **assumed**.
+
 Statements marked "verified on the unit" were seen there. Everything else is assumed or not yet verified on hardware, as
 stated. Steps and tables refer to `cold-boot.md`.
 

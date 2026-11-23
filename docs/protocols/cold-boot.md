@@ -1,5 +1,8 @@
 # Cold boot: from start-up to the first acquisition
 
+Acquisition and trigger register values transcribed from the stock reconstruction are **decoded from
+stock**. Guessed effects and untraced OOS variants are **assumed**.
+
 Status: the OOS cold boot of section 4 is verified on the unit (`hal::dho::boot`, `oos-fpgad cold-boot`): it runs from a power
 cycle to live frames without the stock OS ever running. Where a detail has not been run, the text says so.
 

@@ -46,9 +46,8 @@ Batch mode also uses route D:
 - When the pipe is not accepting, every frame of a batch is decoded into the queue.
 - When no read-out buffer is free (`take_buffer` None), the other frames are dropped and only the newest is queued.
 
-Both give batch-mode pictures of a different composition. `acq.pipeline` defaults to `batch`
-(`drawpipe::mode_from`), matching the generic image. `standard` or `frames` explicitly selects route D for comparison
-until the M12 decision.
+Both gave batch-mode pictures of a different composition. Route D could also be selected explicitly for the
+M12 comparison at this revision.
 
 Kernels in `draw_frame` (`drawpipe.rs:38`), weight 24:
 - `fastdraw::deposit` / `deposit_codes`: one min/max span per screen column.
@@ -401,8 +400,7 @@ Existing fixes:
 | near-only trigger gate, AC level | kept |
 | live compression, RAW_PERIOD read | kept for measurement, not drawn |
 
-Current default: Batch on main and in generic images. The M12 comparison in the migration plan chooses the
-surviving path; Standard remains until that evidence and selection. Z input keeps its current drawing.
+Batch is the live acquisition pipeline. The record route still handles Z input.
 The minimum-persistence cap remains part of the drawing design approved on 2026-11-14.
 
 Not in scope: XY and LA (canvas), the auto timeout.
@@ -426,8 +424,8 @@ Not in scope: XY and LA (canvas), the auto timeout.
 
 ## M12a host draw-route evidence (2026-11-18, #157)
 
-Standard remains the unit-comparison baseline. The owner confirmed Batch as the code and image default on
-2026-11-18; the M12 path selection and M12b remain open. Host equality does not establish the target weight/freeze
+Standard was the unit-comparison baseline. The owner confirmed Batch as the code and image default on
+2026-11-18. This section records the pre-removal host comparison. Host equality does not establish the target weight/freeze
 contract or explain the historical DHO924S 18.2 fps result in ADR 0035. No production behavior changes in
 this evidence step.
 

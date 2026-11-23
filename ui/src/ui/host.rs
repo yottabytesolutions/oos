@@ -177,21 +177,6 @@ mod tests {
     use crate::ui::{sysinfo::Row, Ui};
     use crate::wave::Source;
 
-    #[test]
-    fn pipeline_configuration_reaches_the_model() {
-        for (conf, batch) in [
-            ("", true),
-            ("acq.pipeline = standard\n", false),
-            ("acq.pipeline = frames\n", false),
-            ("acq.pipeline = bogus\n", true),
-        ] {
-            let switches = crate::sysconf::Switches::parse(&|_| None, conf, "", Default::default());
-            let host = Host { switches, ..Host::fixture() };
-            let ui = Ui::new(Source::Demo { t: 0.0 }, host);
-            assert_eq!(ui.m.draw_batch, batch, "{}", conf);
-        }
-    }
-
     fn idn(host: Host) -> String {
         let mut ui = Ui::new(Source::Demo { t: 0.0 }, host);
         let cv = crate::gfx::Canvas::new(crate::ui::PANEL_W, crate::ui::PANEL_H);
@@ -305,7 +290,6 @@ mod tests {
         assert!(Host::fixture().time_budgets());
         assert!(host.runtime().clocks.is_none());
         assert_eq!(host.unix_now(), 1_762_862_400.0);
-        assert_eq!(host.switches().pipeline, crate::drawpipe::Mode::Batch);
         assert_eq!(host.switches().cores, Default::default());
         assert!(host.text("/etc/oos-build").is_none());
         assert!(host.disk("/").is_none());
@@ -378,7 +362,6 @@ mod tests {
         let vars = [
             ("OOS_DEMO_LOOP", "15"),
             ("OOS_COMPRESS", "1"),
-            ("OOS_PIPELINE", "batch"),
             ("OOS_INTERP", "fast"),
             ("OOS_PLACE", "1"),
             ("OOS_IPV6", "1"),
@@ -408,7 +391,7 @@ mod auto_timeout {
     use super::Host;
     use crate::board::scripted::{self, Batch, BatchKind, BatchSource};
     use crate::board::{Frame, HwShared};
-    use crate::drawpipe::{self, DecodeInto, Mode, Pipe};
+    use crate::drawpipe::{self, DecodeInto, Pipe};
     use crate::model::{RunState, TrigMode, TrigStatus};
     use crate::ui::Ui;
     use crate::wave::{Phosphor, Source};
@@ -561,12 +544,11 @@ mod auto_timeout {
     }
 
     // M1 has no Ui pipe injection yet. Merge the fixture-owned pipe explicitly, then consume its newest frame in
-    // frames mode. Compare the sum of worker and newest-frame maps with the ordinary all-frames route.
+    // the record route. Compare the worker map with the decoded-record fallback.
     fn backlog_batch(frames: usize) {
         let (mut ui, shared) = hardware();
         let (mut reference, reference_shared) = hardware();
-        let mut sw = ui.switches().clone();
-        sw.pipeline = Mode::Batch;
+        let sw = ui.switches().clone();
         let mut source = scripted::source(BatchKind::Raw, 123);
         let batch = source.next_batch(&ui.m, &sw, frames, None).unwrap();
         for i in 0..frames {

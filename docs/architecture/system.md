@@ -286,16 +286,17 @@ acquisition identity as `source.serial`.
 
 The startup switches select about 48.7, 32.5 or 24.4 pictures/s on the DHO900's 97.4 Hz panel.
 The effective flip period is the divisor times the refresh interval from the DRM mode.
-Vblank events arrive independently of page-flip completions. If the helper is busy at a due vblank, the
-clock retains one due step and starts it when the helper and panel staging slot are free. A newer due
-step can replace it. After 50 ms without a vblank event, the UI uses a timer at the same period. Return
+Vblank events arrive independently of page-flip completions. If the panel or helper is busy at a due vblank,
+the clock retains one due step and starts it as soon as the slot is free. A newer due step can replace it.
+After 50 ms without a vblank event, the UI uses a timer at the same period. Return
 to vblank pacing waits at least a picture period after the last timer step. `pacing.flip_fallback`
 counts each transition to the timer.
-The device publishes the period and the next predicted step deadline for acquisition pacing. `:SYSTem:STATe?`
+The device publishes the period and the next predicted step deadline for acquisition pacing. While a step
+is deferred, the published deadline is the current time. `:SYSTem:STATe?`
 reports the startup switches, `pacing.period_us`, `pacing.pipeline_budget_us` and `fps` measured from step intervals.
-`present.v1` reports the recent displayed rate in `flip.hz`, the number of superseded helper-deferred
-steps in `helper.skipped`, and completion-to-flip p50/p90/p99 in microseconds in `done_flip`.
-`flip.late` counts pictures that took more than one refresh interval from completion to flip.
+`present.v1` reports the completed panel flip rate in `flip.hz`. It counts superseded helper-deferred
+steps in `helper.skipped`. See the [frame counter reference](frame-counters.md#presentv1) for
+`seal_flip`, `done_flip` and `flip.late` observation points.
 With private picture counts enabled, the `fresh.v1` counters and elapsed nanoseconds give the observed fresh rate
 over a query window.
 

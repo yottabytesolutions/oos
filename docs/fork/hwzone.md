@@ -1,5 +1,9 @@
 # Hardware zone trigger
 
+The zone register map, strobe hypotheses and proposed register combinations are **assumed**. The
+observed round 3 verdicts were **verified on the unit (DHO804, 2026-11-13)**. The round 20 readbacks
+below are an undated unit account.
+
 The zone trigger in the FPGA. Opt-in: `zone.hw = on` in system.conf, read once at start, off by default. Code:
 `hal/src/dho/zone.rs`, `hal/src/dho/zonegeom.rs`, `seq::State::zone_steps`, `ui/src/ui/hwzone.rs`. Register facts:
 below; the confirmed part is in [../hardware/fpga.md](../hardware/fpga.md) "Zone unit".

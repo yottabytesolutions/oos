@@ -64,16 +64,6 @@ pub(super) const DISPLAY: &[Key] = keys! { m, _i, v;
             };
         }
     );
-    "draw_path" => custom(
-        Some(if m.draw_batch { "batch" } else { "standard" }.to_string()),
-        {
-            m.draw_batch = match v.trim() {
-                "batch" => true,
-                "standard" => false,
-                _ => return Err(format!("{:?}: standard or batch", v)),
-            };
-        }
-    );
     "hdmi" => named(m.hdmi, p_enum(v, &HDMI_MODES)?);
     "hdmi_view" => custom(
         Some(m.hdmi_view.to_string()),

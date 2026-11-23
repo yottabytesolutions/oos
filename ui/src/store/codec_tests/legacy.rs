@@ -289,7 +289,6 @@ fn decoders_display_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("color_grade", m.color_grade.to_string());
     kv("dots", name(m.dots));
     kv("bar", if m.bar_compact { "compact" } else { "cards" }.to_string());
-    kv("draw_path", if m.draw_batch { "batch" } else { "standard" }.to_string());
     kv("hdmi", name(m.hdmi));
     kv("hdmi_view", m.hdmi_view.to_string());
     kv("view", name(m.view));

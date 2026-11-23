@@ -49,7 +49,7 @@ pub fn last_k() -> u32 {
 
 /// `env` if set, else the `acq.compress` line of `conf`; off unless `on`.
 pub fn enabled_from(env: Option<&str>, conf: &str) -> bool {
-    crate::drawpipe::conf_value(env, conf, "acq.compress").as_deref() == Some("on")
+    crate::sysconf::conf_value(env, conf, "acq.compress").as_deref() == Some("on")
 }
 
 /// Whether the UI leaves the newest record unmeasured: running (not Single), and the record is of live-compression

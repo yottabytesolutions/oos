@@ -28,6 +28,10 @@ after that. A reading the decode refuses, a reading of another channel, or no re
 
 ## Register facts
 
+The bit interpretations marked assumed below are **assumed**. The derived voltage and lane
+behavior was **verified on the unit (DHO804, 2026-11-13)** in the stated round 2 and round 5 setups.
+The individual register readbacks marked measured have no separate dated trace here.
+
 | register | content | evidence |
 |---|---|---|
 | 0x2244 [0] | restart: written 1, then 0 together with the new fields | assumed; the restart meaning is inferred |

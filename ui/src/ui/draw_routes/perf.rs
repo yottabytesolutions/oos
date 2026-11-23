@@ -23,10 +23,11 @@ struct Input {
 }
 
 impl Build {
-    pub(super) fn new(batch: bool, channels: usize, tdiv: f32, frames: usize) -> Self {
-        let route = Route::new(BatchKind::Codes, batch, channels, tdiv);
+    pub(super) fn new(records: bool, channels: usize, tdiv: f32, frames: usize) -> Self {
+        let mut route = Route::new(BatchKind::Codes, channels, tdiv);
+        route.records = records;
         let (input, frames, plan) = scripted::draw_route_batch(&route.ui.m, route.ui.switches(), frames);
-        println!("ROUTE_PLAN batch={batch} channels={channels} tdiv={tdiv} frames={frames} {plan}");
+        println!("ROUTE_PLAN records={records} channels={channels} tdiv={tdiv} frames={frames} {plan}");
         let (fb, decode, codes) = (input.frame_bytes(), input.decode(), input.codes());
         let input = Input { bytes: Some(Box::new(input.into_bytes())), decode, codes, fb, frames, first: 1 };
         Self { route, input, frames }
@@ -96,9 +97,9 @@ impl Case {
         Self { channels, tdiv, requested, frames, weight_per_record, expectation }
     }
 
-    fn build(&self, batch: bool, label: &str) -> Build {
-        let build = Build::new(batch, self.channels, self.tdiv, self.requested);
-        assert_eq!(build.frames, self.frames, "{label}: planned frames (batch={batch})");
+    fn build(&self, records: bool, label: &str) -> Build {
+        let build = Build::new(records, self.channels, self.tdiv, self.requested);
+        assert_eq!(build.frames, self.frames, "{label}: planned frames (records={records})");
         build
     }
 }
@@ -139,17 +140,17 @@ fn perf_guard_draw_routes() {
     for case in CASES {
         let Case { channels, tdiv, requested, frames, weight_per_record, expectation } = case;
         let label = format!("channels={channels} tdiv={tdiv} requested={requested}");
-        let (standard, size) = {
+        let (records, size) = {
             let _scope = Scope::new();
-            let mut build = case.build(false, &label);
+            let mut build = case.build(true, &label);
             build.run();
             let ui = &build.route.ui;
-            assert!(!ui.ph.is_wide(), "{label}: Standard counts must be narrow");
+            assert!(!ui.ph.is_wide(), "{label}: Records counts must be narrow");
             (picture(ui), (ui.ph.w, ui.ph.h))
         };
 
         let _scope = Scope::new();
-        let mut build = case.build(true, &label);
+        let mut build = case.build(false, &label);
         let steps = sample_batch_route(&mut build, channels, tdiv);
         let ui = &build.route.ui;
         assert!(!ui.ph.is_wide(), "{label}: Batch counts must be narrow");
@@ -157,11 +158,11 @@ fn perf_guard_draw_routes() {
         let batch = picture(ui);
         let route = match expectation {
             Expectation::Exact => {
-                compare(&standard, &batch, &label);
+                compare(&records, &batch, &label);
                 Dense
             }
             Expectation::Coverage => {
-                coverage::compare(&standard, &batch, size.0, channels, &label);
+                coverage::compare(&records, &batch, size.0, channels, &label);
                 Upsampled
             }
         };
@@ -200,8 +201,8 @@ fn sample_batch_route(build: &mut Build, channels: usize, tdiv: f32) -> usize {
         times[0], times[50], times[99], allocations[0], allocations[100]
     );
     if channels == 4 && tdiv == 10e-6 && frames == 48 {
-        println!("DRAW_ROUTE_PHASES batch=true {}", change::timing(&build.route.ui).diagnostics_text());
-        println!("DRAW_ROUTE_COST batch=true before={cost_before} after={}", crate::claim_timing::summary());
+        println!("DRAW_ROUTE_PHASES records=false {}", change::timing(&build.route.ui).diagnostics_text());
+        println!("DRAW_ROUTE_COST records=false before={cost_before} after={}", crate::claim_timing::summary());
     }
     WARMUP + crate::perfguard::ROUNDS
 }
@@ -211,7 +212,7 @@ fn sample_batch_route(build: &mut Build, channels: usize, tdiv: f32) -> usize {
 fn perf_guard_draw_route_deposit_profile() {
     assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"));
     let _scope = Scope::new();
-    let mut route = Route::new(BatchKind::Codes, false, 4, 10e-6);
+    let mut route = Route::new(BatchKind::Codes, 4, 10e-6);
     let (input, _, plan) = scripted::draw_route_batch(&route.ui.m, route.ui.switches(), 48);
     let frames: Vec<_> = (0..48).map(|i| Arc::new(input.frame(i, 0))).collect();
     let mut pixels = Phosphor::new(route.ui.ph.w, route.ui.ph.h);
@@ -228,7 +229,7 @@ fn perf_guard_draw_route_deposit_profile() {
         },
         || {
             route.ui.ph.clear();
-            route.ui.fast_draw_all(frames.clone());
+            route.ui.draw_queued_prefix(frames.clone());
         },
     );
     assert!(pixels.maps() == route.ui.ph.maps(), "the per-frame pixel kernel and step span accumulation agree");
@@ -239,9 +240,9 @@ fn perf_guard_draw_route_deposit_profile() {
 fn draw_routes_one_frame_and_full_steps_match_with_buffer_reuse() {
     for channels in [1, 2, 4] {
         for frames in [1, 48] {
-            let run = |batch| {
+            let run = |records_route| {
                 let _scope = Scope::new();
-                let mut build = Build::new(batch, channels, 10e-6, frames);
+                let mut build = Build::new(records_route, channels, 10e-6, frames);
                 for step in 1..=2 {
                     build.run();
                     assert_eq!(build.route.ui.wfm_total, (step * frames) as u64);
@@ -256,15 +257,13 @@ fn draw_routes_one_frame_and_full_steps_match_with_buffer_reuse() {
 }
 
 #[test]
-fn state_reports_the_effective_pipeline_and_draw_route() {
+fn state_reports_the_effective_draw_route() {
     let _scope = Scope::new();
-    let mut route = Route::new(BatchKind::Codes, true, 4, 1e-6);
-    for (batch, pipeline, draw) in [(false, "Frames", "standard"), (true, "Batch", "batch")] {
-        route.ui.m.draw_batch = batch;
-        change::settle(&mut route.ui);
-        let text = crate::cmd::stat_text(&route.ui);
-        assert!(text.contains(&format!("pipeline {pipeline} route={draw}")), "{text}");
-    }
+    let mut route = Route::new(BatchKind::Codes, 4, 1e-6);
+    change::settle(&mut route.ui);
+    let text = crate::cmd::stat_text(&route.ui);
+    assert!(text.contains("route=batch"), "{text}");
+    assert!(!text.contains(" pipeline "), "{text}");
     route.ui.m.zoom = true;
     assert!(crate::cmd::stat_text(&route.ui).contains("route=batch"));
     route.ui.m.z_src = Some(1);
@@ -276,7 +275,7 @@ fn state_reports_the_effective_pipeline_and_draw_route() {
 #[test]
 fn picture_record_ring_samples_live_and_stopped_empty_steps() {
     let _scope = Scope::new();
-    let mut route = Route::new(BatchKind::Codes, true, 1, 10e-6);
+    let mut route = Route::new(BatchKind::Codes, 1, 10e-6);
     route.step(3);
     route.ui.step(1.0 / 30.0);
     let text = change::timing(&route.ui).diagnostics_text();
@@ -288,9 +287,10 @@ fn picture_record_ring_samples_live_and_stopped_empty_steps() {
 
 #[test]
 fn quiescent_live_routes_conserve_read_deposited_and_shown_records() {
-    for batch in [false, true] {
+    for records_route in [true, false] {
         let _scope = Scope::new();
-        let mut route = Route::new(BatchKind::Codes, batch, 4, 10e-6);
+        let mut route = Route::new(BatchKind::Codes, 4, 10e-6);
+        route.records = records_route;
         let counters = crate::drawpipe::counters();
         for records in [1, 27] {
             // The host fixture supplies completed reads without hardware IO.
@@ -309,9 +309,9 @@ fn perf_guard_batch_picture_four_channels() {
     assert_eq!(std::env::var("OOS_PERF_TESTS").as_deref(), Ok("1"));
     for tdiv in [1e-6, 10e-6] {
         let mut pictures = Vec::new();
-        for batch in [false, true] {
+        for records_route in [true, false] {
             let _scope = Scope::new();
-            let mut build = Build::new(batch, 4, tdiv, 48);
+            let mut build = Build::new(records_route, 4, tdiv, 48);
             for _ in 0..8 {
                 build.run();
             }
@@ -323,11 +323,11 @@ fn perf_guard_batch_picture_four_channels() {
             }
             times.sort_unstable();
             println!(
-                "BATCH_PICTURE channels=4 tdiv={tdiv} batch={batch} frames=48 best_ns={} p50_ns={} p90_ns={} p99_ns={}",
+                "BATCH_PICTURE channels=4 tdiv={tdiv} records={records_route} frames=48 best_ns={} p50_ns={} p90_ns={} p99_ns={}",
                 times[0], times[50], times[90], times[99]
             );
             println!(
-                "BATCH_PICTURE_PHASES batch={batch} tdiv={tdiv} {}",
+                "BATCH_PICTURE_PHASES records={records_route} tdiv={tdiv} {}",
                 change::timing(&build.route.ui).diagnostics_text()
             );
             pictures.push(picture(&build.route.ui));
@@ -338,9 +338,9 @@ fn perf_guard_batch_picture_four_channels() {
 
 #[test]
 fn deposit_waveform_tap_counts_cheap_statistics_once() {
-    let run = |batch| {
+    let run = |records_route| {
         let _scope = Scope::new();
-        let mut build = Build::new(batch, 2, 10e-6, 48);
+        let mut build = Build::new(records_route, 2, 10e-6, 48);
         build.route.ui.m.meas = crate::framestats::CHEAP.iter().map(|&kind| (kind, WaveId::Ch(0))).collect();
         build.run();
         build.route.ui.mstat.fill(MStat::default());
@@ -352,9 +352,9 @@ fn deposit_waveform_tap_counts_cheap_statistics_once() {
         assert_eq!(build.route.ui.measurement_statistics_snapshot_for_test(), counted);
         build.route.ui.mstat
     };
-    let (standard, deposit) = (run(false), run(true));
-    assert!(!standard.is_empty());
-    for (a, b) in standard.iter().zip(&deposit) {
+    let (records, deposit) = (run(true), run(false));
+    assert!(!records.is_empty());
+    for (a, b) in records.iter().zip(&deposit) {
         assert_eq!(a.n, b.n, "the pool and waveform reader must count each record once");
         assert_eq!(b.n, 144);
         assert!(a.sum.is_finite() && b.sum.is_finite());

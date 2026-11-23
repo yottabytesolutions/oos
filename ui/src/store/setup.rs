@@ -58,6 +58,12 @@ pub fn parse_sweep(value: &str) -> Result<TrigMode, String> {
     p_enum(value, &TRIG_MODES)
 }
 
+const RETIRED_SETUP_KEYS: &[&str] = &["draw_path"];
+
+pub(crate) fn is_retired_setup_key(key: &str) -> bool {
+    RETIRED_SETUP_KEYS.contains(&key)
+}
+
 enum Section {
     Plain(&'static [Key]),
     Indexed { prefix: &'static str, count: usize, separator: &'static str, keys: &'static [Key] },
@@ -88,8 +94,13 @@ const SECTIONS: &[Section] = &[
     Plain(instruments::INSTRUMENTS),
     Indexed { prefix: "zone", count: 2, separator: "", keys: misc::ZONES },
     Plain(misc::MISC),
-    Plain(misc::LEGACY),
 ];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Input {
+    File,
+    Scpi,
+}
 
 fn emit(
     keys: &[Key],
@@ -164,14 +175,16 @@ fn set_deskew(m: &mut Model, reference: bool, suffix: &str, v: &str) -> Result<(
     (keys[0].apply)(m, i, v)
 }
 
-fn set_slot(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
+fn set_slot(m: &mut Model, k: &str, v: &str, input: Input) -> Result<bool, String> {
     if let Some((n, field)) = k.strip_prefix('d').and_then(|r| r.split_once('.')) {
         if let Ok(n) = n.parse::<usize>() {
             let n = n.checked_sub(1).filter(|&n| n < DECODERS).ok_or("unknown decoder")?;
             let mut t = m.dec_view(n);
-            set(&mut t, field, v)?;
-            m.dec_store(n, t.dec_cfg());
-            return Ok(true);
+            let applied = set_from(&mut t, field, v, input)?;
+            if input == Input::File || applied {
+                m.dec_store(n, t.dec_cfg());
+            }
+            return Ok(applied);
         }
     }
     if let Some((n, field)) = k.strip_prefix('m').and_then(|r| r.split_once('.')) {
@@ -186,44 +199,55 @@ fn set_slot(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
     }
     if let Some((c, field)) = k.strip_prefix("ch").and_then(|r| r.split_once('.')) {
         let c = c.parse::<usize>().ok().filter(|c| (1..=NCH).contains(c)).ok_or("unknown channel")? - 1;
-        if !apply(channel::CHANNEL, m, c, field, v)? {
-            apply(channel::LABEL, m, c, field, v)?;
-        }
-        return Ok(true);
+        return Ok(apply(channel::CHANNEL, m, c, field, v)?
+            || apply(channel::LABEL, m, c, field, v)?
+            || (input == Input::File && apply(channel::LEGACY, m, c, field, v)?));
     }
     Ok(false)
 }
 
 pub fn set(m: &mut Model, k: &str, v: &str) -> Result<(), String> {
+    if is_retired_setup_key(k) {
+        return Ok(());
+    }
+    set_from(m, k, v, Input::File).map(|_| ())
+}
+
+/// Apply a current setup key and report whether it was recognized by SCPI.
+pub(crate) fn set_known(m: &mut Model, k: &str, v: &str) -> Result<bool, String> {
+    set_from(m, k, v, Input::Scpi)
+}
+
+fn set_from(m: &mut Model, k: &str, v: &str, input: Input) -> Result<bool, String> {
     if let Some((reference, suffix)) =
         k.strip_prefix("deskew_ch").map(|s| (false, s)).or_else(|| k.strip_prefix("deskew_ref").map(|s| (true, s)))
     {
-        return set_deskew(m, reference, suffix, v);
+        return set_deskew(m, reference, suffix, v).map(|()| true);
     }
-    if set_slot(m, k, v)? {
-        return Ok(());
+    if set_slot(m, k, v, input)? {
+        return Ok(true);
     }
     if let Some(suffix) = k.strip_prefix("math_expr") {
         let n = suffix.parse::<usize>().map_err(|_| "math_expr: no number")?;
         m.math_expr.get(n.wrapping_sub(1)).ok_or("unknown math channel")?;
-        return (math::EXPRESSIONS[0].apply)(m, n.wrapping_sub(1), v);
+        return (math::EXPRESSIONS[0].apply)(m, n.wrapping_sub(1), v).map(|()| true);
     }
     if let Some(i) =
         k.strip_prefix("view").and_then(|i| i.parse::<usize>().ok()).filter(|i| (1..=crate::ui::VIEWS_MAX).contains(i))
     {
-        return (display::VIEWS[0].apply)(m, i - 1, v);
+        return (display::VIEWS[0].apply)(m, i - 1, v).map(|()| true);
     }
     if k == "zone1" || k == "zone2" {
-        return (misc::ZONES[0].apply)(m, usize::from(k == "zone2"), v);
+        return (misc::ZONES[0].apply)(m, usize::from(k == "zone2"), v).map(|()| true);
     }
     for section in SECTIONS {
         if let Plain(keys) = section {
             if apply(keys, m, 0, k, v)? {
-                break;
+                return Ok(true);
             }
         }
     }
-    Ok(())
+    Ok(input == Input::File && apply(misc::LEGACY, m, 0, k, v)?)
 }
 
 fn opt_wave_dash(wave: Option<WaveId>) -> String {

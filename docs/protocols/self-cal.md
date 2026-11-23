@@ -1,5 +1,9 @@
 # Self-calibration
 
+Acquisition and measurement register sequences from the calibration driver are **decoded from stock**
+where indicated. Undated observations and inferred register effects are **assumed** outside the reported
+cases.
+
 The code is `hal::dho::selfcal`, `hal::dho::calfile`, `hal::dho::adc::measure`, the commands `oos-fpgad selfcal ...` and the page
 System > Self-cal of `oos-ui`.
 

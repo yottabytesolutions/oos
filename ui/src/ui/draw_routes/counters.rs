@@ -6,7 +6,7 @@ use perf::Build;
 fn fixture(disabled: bool, channels: usize, tdiv: f32) -> (Scope, Build) {
     let scope =
         Scope::with_counters(drawpipe::Counters { diagnostics_disabled: disabled.into(), ..Default::default() });
-    let build = Build::new(true, channels, tdiv, 0);
+    let build = Build::new(false, channels, tdiv, 0);
     (scope, build)
 }
 
@@ -40,7 +40,7 @@ fn perf_guard_pipeline_counters() {
             let _scope = Scope::new();
             let counters = drawpipe::counters();
             // Both sides reuse the same workers, buffers and maps; allocation placement must not decide the staged guard.
-            let build = std::cell::RefCell::new(Build::new(true, channels, tdiv, 0));
+            let build = std::cell::RefCell::new(Build::new(false, channels, tdiv, 0));
             let baseline = || {
                 counters.diagnostics_disabled.store(true, std::sync::atomic::Ordering::Relaxed);
                 build.borrow_mut().run();

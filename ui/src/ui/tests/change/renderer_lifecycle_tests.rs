@@ -14,7 +14,7 @@ fn check(mask: u32) -> u32 {
     ui.m.run = RunState::Run;
     change::acquisition::script_prepare_route(&mut ui, false);
     ui.step(0.04);
-    let pipe = crate::drawpipe::pipe(crate::drawpipe::Access::Existing).unwrap();
+    let pipe = crate::drawpipe::pipe().unwrap();
     let old = change::acquisition::identity(&ui);
 
     let initial = pipe.grant(old, 142, WORK_BUDGET);
@@ -57,7 +57,6 @@ fn configure_normal_channels(ui: &mut Ui, mask: u32) {
         ("acq", "Normal"),
         ("mdepth", "0"),
         ("cores", "true"),
-        ("draw_path", "batch"),
         ("dots", "Auto"),
         ("persist", "0"),
         ("meas", ""),

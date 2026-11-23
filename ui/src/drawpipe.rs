@@ -4,13 +4,11 @@
 pub(crate) mod admission;
 pub(crate) mod budget;
 pub(crate) mod clock;
-mod config;
+mod decoder;
+mod frame;
 pub(crate) mod funding;
 pub(crate) mod metrics;
 pub(crate) mod route;
-pub use config::{conf_value, mode_from, Mode};
-mod decoder;
-mod frame;
 #[cfg(test)]
 pub use frame::draw_frame;
 pub(crate) use frame::draw_frame_reusing;
@@ -232,6 +230,7 @@ struct View {
 #[derive(Default)]
 struct ViewState {
     view: Option<Arc<View>>,
+    spare: Option<Arc<View>>,
     #[cfg(test)]
     stamp: u64,
     identity: Option<oos_core::change::Identity>,
@@ -415,25 +414,29 @@ impl Pipe {
 /// Workers where the cores are all alike (the host): two.
 const WORKERS: usize = 2;
 
-/// The pipe in `batch` mode (started on first use, one per process), else None.
-pub enum Access<'a> {
-    Existing,
-    Start(&'a crate::sysconf::Switches),
-}
-impl<'a> From<&'a crate::sysconf::Switches> for Access<'a> {
-    fn from(sw: &'a crate::sysconf::Switches) -> Self {
-        Self::Start(sw)
-    }
-}
-
-pub fn pipe<'a>(access: impl Into<Access<'a>>) -> Option<&'static Pipe> {
+fn pipe_slot() -> &'static OnceLock<Pipe> {
     #[cfg(test)]
     if let Some(state) = test_scope::state() {
-        return state.pipe(access.into());
+        return &state.pipe;
     }
     static P: OnceLock<Pipe> = OnceLock::new();
-    let Access::Start(sw) = access.into() else { return P.get() };
-    (sw.pipeline == Mode::Batch).then(|| P.get_or_init(|| funding::application(sw, counters())))
+    &P
+}
+
+/// Return the current batch pipeline without starting workers.
+pub fn pipe() -> Option<&'static Pipe> {
+    pipe_slot().get()
+}
+
+/// Start the batch pipeline on first use.
+pub fn start_pipe(sw: &crate::sysconf::Switches) -> &'static Pipe {
+    pipe_slot().get_or_init(|| {
+        #[cfg(test)]
+        if let Some(state) = test_scope::state() {
+            return funding::application(sw, state.counters);
+        }
+        funding::application(sw, counters())
+    })
 }
 
 #[cfg(test)]

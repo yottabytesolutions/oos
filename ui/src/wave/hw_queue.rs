@@ -36,7 +36,7 @@ impl Source {
         None
     }
 
-    /// Draw the full queued prefix. The newest stays for the records stage's full analysis and history.
+    /// Drain a decoded batch fallback up to its newest record, which still needs full analysis and history.
     pub fn drain_newest(&mut self) -> Vec<std::sync::Arc<crate::board::Frame>> {
         if let Source::Hw { shared, .. } = self {
             let mut g = crate::perfguard::deep::ui_lock(shared);
@@ -49,7 +49,7 @@ impl Source {
                 (before - g.queue.len()) as u64,
             );
             // Leave interleaved fallbacks for ordered reader intake.
-            if g.queue.len() > 1 && drawpipe::pipe(drawpipe::Access::Existing).is_some_and(|p| p.has_waveform(id)) {
+            if g.queue.len() > 1 && drawpipe::pipe().is_some_and(|p| p.has_waveform(id)) {
                 return Vec::new();
             }
             let prefix = g.queue.len().saturating_sub(1);
@@ -129,7 +129,7 @@ impl Source {
 pub(super) fn hold(shared: &crate::board::HwShared, hold: bool, req: u64) -> bool {
     let mut g = crate::perfguard::deep::ui_lock(shared);
     if g.hold != hold {
-        if let Some(pipe) = drawpipe::pipe(drawpipe::Access::Existing) {
+        if let Some(pipe) = drawpipe::pipe() {
             pipe.hold_taps(hold);
         }
     }

@@ -53,7 +53,6 @@ fn acquire_rows_keep_kinds_labels_and_complete_option_domains() {
             (AcqSegIvl, Choice, "Seg. interval", SEG_IVLS.iter().map(|&x| seg_ivl_name(x)).collect()),
             (AcqSegTable, Action, "Segment times", vec![]),
             (AcqCores, Choice, "ADC cores", strings(&["Raw", "Matched"])),
-            (AcqDrawPath, Choice, "Draw path", strings(&["Standard", "Batch"])),
             (AcqAlias, Choice, "Aliasing", vec![]),
             (Open(MenuId::Horizontal), Action, "Horizontal", vec![]),
         ],
@@ -149,13 +148,10 @@ fn acquire_interval_values_and_committed_indices_follow_current_settings() {
 fn acquire_toggle_values_and_committed_indices_follow_current_settings() {
     let mut u = demo();
     for on in [false, true] {
-        (u.m.avg_hw, u.m.seg_hw, u.m.cores, u.m.draw_batch) = (on, on, on, on);
-        for (item, values) in [
-            (Item::AcqAvgHw, ["Off", "On"]),
-            (Item::AcqSegHw, ["Off", "On"]),
-            (Item::AcqCores, ["Raw", "Matched"]),
-            (Item::AcqDrawPath, ["Standard", "Batch"]),
-        ] {
+        (u.m.avg_hw, u.m.seg_hw, u.m.cores) = (on, on, on);
+        for (item, values) in
+            [(Item::AcqAvgHw, ["Off", "On"]), (Item::AcqSegHw, ["Off", "On"]), (Item::AcqCores, ["Raw", "Matched"])]
+        {
             assert_eq!(u.value(item), values[usize::from(on)]);
             assert_eq!(active_choice::index(&u, item), Some(usize::from(on)));
         }
@@ -236,7 +232,7 @@ fn check_acquire_visibility(u: &Ui, hardware: bool, average: bool, segments: boo
     if u.seg_hw_on() {
         expected.extend([AcqSegIvl, AcqSegTable]);
     }
-    expected.extend([AcqCores, AcqDrawPath]);
+    expected.push(AcqCores);
     if let Some(frequency) = u.alias_above() {
         expected.push(AcqAlias);
         assert_eq!(u.value(AcqAlias), format!("above {}, Peak shows it", si_short(frequency, "Hz")));

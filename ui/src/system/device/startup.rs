@@ -25,7 +25,6 @@ pub(super) fn prepare(
         ui.toast("Safe start: default settings");
     }
     ui.load_system(sysconf::default_path());
-    ui.m.draw_batch = ui.switches().pipeline == drawpipe::Mode::Batch;
     ui.set_ssh_dir(ssh::dir());
     ui.info = std::fs::read_to_string("/proc/sys/kernel/osrelease")
         .map(|s| format!("Linux {}", s.trim()))

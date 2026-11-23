@@ -148,13 +148,12 @@ pub fn stat_text(ui: &Ui) -> String {
     let gpu = format!(" parts meas {:.1} analyse {:.1} pane {:.1} max {:.1} ms{}", p[0], p[1], p[2], p[3], gpu);
     let (acq, used, dropped) = crate::drawpipe::counters().read();
     let measured = crate::drawpipe::counters().measured.load(std::sync::atomic::Ordering::Relaxed);
-    let (pipeline, route) = crate::ui::draw_status(ui);
+    let route = crate::ui::draw_status(ui);
     let perf = ui.switches().perf;
     let period = crate::pacing::picture_period();
     let gpu = format!(
-        "{} pipeline {:?} route={} interp {:?} {} pacing.clock={} pacing.flip_divisor={} pacing.period_us={} pacing.pipeline_budget_us={} acquired {} used {} dropped {} measured {} compress k {}{}",
+        "{} route={} interp {:?} {} pacing.clock={} pacing.flip_divisor={} pacing.period_us={} pacing.pipeline_budget_us={} acquired {} used {} dropped {} measured {} compress k {}{}",
         gpu,
-        pipeline,
         route,
         ui.switches().interp,
         ui.switches().source,

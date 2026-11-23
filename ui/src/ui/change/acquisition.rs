@@ -6,24 +6,6 @@ use super::*;
 use crate::perfguard::deep::ui_lock as lock;
 use oos_core::change::{Identity, Requester};
 
-/// Startup switches with the hardware draw route selected by the supplied model.
-pub(crate) fn draw_switches(ui: &Ui, model: &Model) -> crate::sysconf::Switches {
-    let mut sw = ui.switches().clone();
-    if ui.src.is_hw() {
-        sw.pipeline = if model.draw_batch { crate::drawpipe::Mode::Batch } else { crate::drawpipe::Mode::Frames };
-    }
-    sw
-}
-
-pub(crate) fn accepted_draw_switches(ui: &Ui) -> crate::sysconf::Switches {
-    ui.host
-        .runtime()
-        .change
-        .shadow
-        .as_ref()
-        .map_or_else(|| ui.switches().clone(), |shadow| draw_switches(ui, shadow.accepted()))
-}
-
 pub(crate) fn identity(ui: &Ui) -> Identity {
     let observer = &ui.host.runtime().change;
     observer
@@ -41,18 +23,16 @@ pub(in crate::ui) fn publish(ui: &mut Ui) {
     if let Some(clocks) = &ui.host.runtime().clocks {
         clocks.update(ui.src.is_hw() && model.run == RunState::Run);
     }
-    let sw = &draw_switches(ui, model);
-    let batch = sw.pipeline == crate::drawpipe::Mode::Batch;
-    let access = if ui.src.is_hw() && model.run == RunState::Run && batch {
-        crate::drawpipe::Access::from(sw)
+    let sw = ui.switches();
+    let pipe = if ui.src.is_hw() && model.run == RunState::Run {
+        Some(crate::drawpipe::start_pipe(sw))
     } else {
-        crate::drawpipe::Access::Existing
+        crate::drawpipe::pipe()
     };
-    if let Some(pipe) = crate::drawpipe::pipe(access) {
+    if let Some(pipe) = pipe {
         if ui.src.is_hw()
             && (model.run == RunState::Run || ui.stop_final.is_some())
             && needs.route()
-            && batch
             && ui.host.runtime().change.prepared.as_ref().is_some_and(|p| p.workers)
         {
             let zoom = model.zoom.then(|| step_draw::zoom_view(ui));
@@ -193,30 +173,4 @@ pub(in crate::ui) fn cancel_measurement(ui: &mut Ui) {
 
 pub(in crate::ui) fn autoset_fresh(ui: &Ui) -> Option<bool> {
     ui.last[0].as_ref().filter(|r| r.raw.is_some()).map(|r| stage_record(ui, Requester::Autoset, r))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::drawpipe::{self, test_scope::Scope, Access};
-
-    #[test]
-    fn publication_and_status_use_the_accepted_draw_route_when_live_settings_differ() {
-        for batch in [false, true] {
-            let _scope = Scope::new();
-            let mut ui = Ui::for_tests(Source::Hw { shared: Default::default(), seen: 0 });
-            ui.m.draw_batch = batch;
-            legacy::intake_settings(&mut ui);
-            assert_eq!(ui.host.runtime().change.shadow.as_ref().unwrap().accepted().draw_batch, batch);
-            ui.m.draw_batch = !batch;
-            publish(&mut ui);
-            assert_eq!(drawpipe::pipe(Access::Existing).is_some(), batch);
-            let expected = if batch { " pipeline Batch " } else { " pipeline Frames " };
-            assert!(crate::cmd::stat_text(&ui).contains(expected));
-            legacy::intake_settings(&mut ui);
-            publish(&mut ui);
-            let expected = if batch { " pipeline Frames " } else { " pipeline Batch " };
-            assert!(crate::cmd::stat_text(&ui).contains(expected));
-        }
-    }
 }

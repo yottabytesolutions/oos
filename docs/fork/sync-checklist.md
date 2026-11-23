@@ -1,5 +1,8 @@
 # Upstream sync checklist
 
+The register plan compares intended software writes. Hardware effects inferred from fixture changes are
+**assumed**.
+
 Every merge of an upstream release into `dho804`. Policy and history: private RE notes `docs/oos-fork.md`, "Upstream
 sync". Nothing here touches the unit.
 

@@ -1,5 +1,8 @@
 # AFE per-setting writes (V/div, offset, coupling, bandwidth, invert)
 
+Register values in the stock setup are **decoded from stock**. Hardware effects beyond the dated
+measurements, and reconstructed OOS write sequences without a trace, are **assumed**.
+
 Complements `afe-spi.md` (bus, AFE write, init, efuse). The code is `hal::dho::afe`, the read path `hal::dho::wpu`.
 
 Status: OOS drives the AFEs as described here, and the self-calibration ran through this path on the unit

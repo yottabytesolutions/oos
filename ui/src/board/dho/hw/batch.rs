@@ -28,7 +28,7 @@ pub(super) use tap::storage;
 mod tests;
 
 pub(super) fn deposit_plan(s: &Settings, p: &hz::Params, id: Identity, route: bool) -> (Option<&'static Pipe>, u32) {
-    let Some(pipe) = crate::drawpipe::pipe(crate::drawpipe::Access::Existing) else { return (None, s.frames) };
+    let Some(pipe) = crate::drawpipe::pipe() else { return (None, s.frames) };
     let live = (p.memsel <= crate::compress::MAX_DEPTH).then(|| (p.rate, oos_hal::dho::seq::compress_k(s, p)));
     if let Some(limit) = (route && pipe.accepting()).then(|| pipe.read_limit(id, live)).flatten() {
         if !pipe.staged_taps() || tap::admit(pipe, s, p, id) {

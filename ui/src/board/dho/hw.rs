@@ -28,6 +28,7 @@ mod acq;
 mod comparator;
 mod decode;
 mod plan;
+mod read_plan;
 mod roll;
 #[cfg(any(target_os = "linux", test))]
 mod selfcal;

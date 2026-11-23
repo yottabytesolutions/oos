@@ -106,7 +106,8 @@ fn live_compression_plan_by_time_base() {
         assert_eq!(
             fb,
             2 * p.ratio as usize
-                * oos_hal::dho::seq::compressed_len(&Settings { compress: k, ..Settings::default() }, &p) as usize
+                * oos_hal::dho::seq::compressed_len(&Settings { compress: k, window: None, ..Settings::default() }, &p)
+                    as usize
         );
         assert!(frames >= raw_frames, "{} s/div: {} vs {} frames", tdiv, frames, raw_frames);
         assert!(raw_newest(&Settings { compress: k, ..Settings::default() }, &p));

@@ -80,7 +80,7 @@ fn assert_read_geometry(s: &Settings, planned: hz::Params, factor: u32, mode: u3
     assert_eq!(last(0x10e4), Some(p.memsel));
     assert_eq!((last(0x4050), last(0x4054)), (Some(p.memsel / 2), Some(p.memsel / 2)));
     assert_eq!(last(0x10e0), Some(hz::mem_size(i128::from(p.memsel * p.ratio)) as u32));
-    let read = state.read_steps(s, &p, 3);
+    let read = state.read_steps(s, &p, 3).unwrap();
     assert!(read.iter().any(|step| matches!(step, Step::Wr((0x11f0, n)) if *n == p.memsel)));
     assert!(read.iter().any(|step| matches!(step, Step::Wr((0x1170, 0x4000_0001)))));
     let frame = (2 * p.memsel * p.ratio) as usize + if s.header { 16 } else { 0 };

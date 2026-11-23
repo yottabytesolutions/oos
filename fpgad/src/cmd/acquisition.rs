@@ -13,9 +13,28 @@ struct Parser {
     no_read: bool,
     raw_too: bool,
     chan: seq::Chan,
-    n: u32,
-    at: i64,
+    n: Option<u32>,
+    at: Option<i64>,
     all: bool,
+    capture: Option<Capture>,
+}
+
+struct Capture {
+    peak: bool,
+    factor: u32,
+}
+
+impl Capture {
+    fn parse(value: Option<&String>) -> Result<Self, String> {
+        let usage = "--capture peak:D|decimate:D";
+        let (mode, factor) = value.and_then(|value| value.split_once(':')).ok_or(usage)?;
+        let peak = match mode {
+            "peak" => true,
+            "decimate" => false,
+            _ => return Err(usage.into()),
+        };
+        Ok(Self { peak, factor: factor.parse().map_err(|_| usage)? })
+    }
 }
 
 pub(super) fn parse(args: &[String]) -> Result<Opt, String> {
@@ -27,9 +46,10 @@ pub(super) fn parse(args: &[String]) -> Result<Opt, String> {
         no_read: false,
         raw_too: false,
         chan: seq::Chan { scale: 1.0, offset: 0.0, bw: afe::bw::OFF, ..Settings::default().ch[0] },
-        n: 4000,
-        at: -2000,
+        n: None,
+        at: None,
         all: false,
+        capture: None,
     };
     let mut i = 0;
     while i < args.len() {
@@ -69,14 +89,15 @@ impl Parser {
             "--blocks" => self.s.blocks = int(v)? as u8,
             "--frames" => self.s.frames = int(v)?,
             "--compress" => self.s.compress = int(v)?,
+            "--capture" => self.capture = Some(Capture::parse(v)?),
             // hardware averaging, not verified on the unit
             "--average" => self.s.mode = oos_hal::dho::acq::Mode::Average { count: int(v)? },
             "--la-thr" => {
                 let t = num(v)?;
                 self.s.la = Some(oos_hal::dho::la::Set { thr: [t, t], ..self.s.la.unwrap_or_default() });
             }
-            "--n" => self.n = int(v)?,
-            "--at" => self.at = num(v)? as i64,
+            "--n" => self.n = Some(int(v)?),
+            "--at" => self.at = Some(num(v)? as i64),
             "--out" => self.out = v.ok_or("missing value")?.clone(),
             "--bw" => {
                 self.chan.bw = match v.map(|x| x.as_str()) {
@@ -123,7 +144,14 @@ impl Parser {
 
     fn finish(mut self) -> Result<Opt, String> {
         self.s.ch = [self.chan; 4];
-        self.s.window = if self.all { None } else { Some((self.n, self.at)) };
+        let whole_record = self.all || (self.capture.is_some() && self.n.is_none() && self.at.is_none());
+        self.s.window = (!whole_record).then(|| (self.n.unwrap_or(4000), self.at.unwrap_or(-2000)));
+        if let Some(Capture { peak, factor }) = self.capture {
+            if self.s.reduce_capture(peak, factor, true).is_none() {
+                let mode = if peak { "peak" } else { "decimate" };
+                return Err(format!("incompatible settings for --capture {mode}:{factor}"));
+            }
+        }
         if !(1..=15).contains(&self.app_mask) {
             return Err("--app-mask 1..0xf".into());
         }
@@ -156,5 +184,35 @@ mod tests {
         assert_eq!(o.s.ch[1].scale, 0.5);
         assert!(o.s.window.is_none());
         assert!(parse(&["--bogus".to_string()]).is_err());
+    }
+
+    #[test]
+    fn capture_flag_selects_the_existing_reduced_mode() {
+        for capture in ["peak:2", "decimate:4"] {
+            let o = parse(&["--capture", capture, "--frames", "3", "--tdiv", "1e-6"].map(String::from)).unwrap();
+            assert!(o.s.window.is_none());
+            assert_eq!(o.s.frames, 3);
+            let oos_hal::dho::acq::Mode::Reduced(mode) = o.s.mode else {
+                panic!("expected reduced capture");
+            };
+            assert_eq!(mode.to_string(), capture);
+        }
+    }
+
+    #[test]
+    fn capture_flag_rejects_unsupported_combinations() {
+        for args in [
+            &["--capture"][..],
+            &["--capture", "raw:2"],
+            &["--capture", "peak:3"],
+            &["--capture", "peak:2", "--n", "1000"],
+            &["--capture", "peak:2", "--compress", "4"],
+            &["--capture", "peak:2", "--average", "4"],
+            &["--capture", "peak:2", "--mask", "2", "--src", "2"],
+            &["--capture", "peak:8", "--mask", "15"],
+        ] {
+            let args: Vec<String> = args.iter().map(|arg| (*arg).into()).collect();
+            assert!(parse(&args).is_err(), "{args:?}");
+        }
     }
 }

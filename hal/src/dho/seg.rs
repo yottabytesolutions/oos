@@ -168,7 +168,8 @@ pub fn read<B: Bus, R: std::io::Read>(
     first: u32,
     count: u32,
 ) -> Result<(), String> {
-    seq::execute_bus(&st.read_steps_at(s, p, first, count), bar, c2h, dma, |_| {})
+    let steps = st.read_steps_at(s, p, first, count).map_err(|error| error.to_string())?;
+    seq::execute_bus(&steps, bar, c2h, dma, |_| {})
 }
 
 /// A model of the record engine and the play path for host runs of the whole sequence: what the steps of
@@ -185,6 +186,8 @@ pub mod sim {
     use super::*;
     use std::cell::RefCell;
     use std::rc::Rc;
+
+    mod playback;
 
     /// The engine. Triggers come every `period_fs` from `t0_fs`; `per_poll` frames are recorded per read of 0x4080.
     pub struct Engine {
@@ -296,35 +299,7 @@ pub mod sim {
             let c = self.reg(0x400c);
             let (first, last) = (self.reg(0x4010), self.reg(0x4018));
             if c & 0x4000_0000 != 0 {
-                // play: the frames first..=last into the stream, header on when 0x1010 bit31 is clear
-                let words = (self.reg(0x11f0) * self.ratio) as usize;
-                for k in first..=last {
-                    if self.reg(0x1010) & 1 << 31 == 0 {
-                        let h = (self.header_fs(k) / HEADER_TICK_FS) as u64 & ((1 << 48) - 1);
-                        for w in [0xfa05, 0, 0x7b, 0, k as u16, (h >> 32) as u16, (h >> 16) as u16, h as u16] {
-                            self.stream.extend(u16::to_le_bytes(w));
-                        }
-                    }
-                    if self.reg(0x1004) & 8 != 0 {
-                        for w in self.avg_words(k, words) {
-                            self.stream.extend(w.to_le_bytes());
-                        }
-                    } else if self.reg(0x1170) & 1 << 31 != 0 {
-                        // FPGA compression (0x1170 bit 31, k in bits 27:0): `words` min/max points of the frame's
-                        // `words` x k samples in the layout `pairs::LAYOUT` (ratio 1)
-                        let c = (self.reg(0x1170) & 0x0fff_ffff).max(1) as usize;
-                        let raw: Vec<u16> = (0..words * c).map(|i| Engine::word(k, i)).collect();
-                        for i in 0..words {
-                            let w = crate::dho::pairs::point(&raw, c, crate::dho::pairs::LAYOUT, i).unwrap_or(0);
-                            self.stream.extend(w.to_le_bytes());
-                        }
-                    } else {
-                        for i in 0..words {
-                            self.stream.extend(Engine::word(k, i).to_le_bytes());
-                        }
-                    }
-                }
-                self.last_played = Some(last);
+                self.play(first, last);
             } else if c & 0x2200_0000 == 0x2200_0000 {
                 self.rec = Some((first, last, 0));
                 self.trig_base = self.triggers;

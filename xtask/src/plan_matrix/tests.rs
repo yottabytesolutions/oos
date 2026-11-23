@@ -52,8 +52,8 @@ fn shell_and_host_use_the_shared_cases_in_order() {
     })
     .unwrap();
     let cases = cases();
-    assert_eq!(cases.len(), 65);
-    assert_eq!(cases.iter().collect::<std::collections::BTreeSet<_>>().len(), 65);
+    assert_eq!(cases.len(), 73);
+    assert_eq!(cases.iter().collect::<std::collections::BTreeSet<_>>().len(), cases.len());
     for (definition, expected) in
         [(definition, expected.as_str()), ("--frames 16\n", "### --frames 16\n<plan><--frames><16>\n")]
     {
@@ -75,7 +75,7 @@ fn preserves_output_and_rejects_failed_plans_even_when_they_print_pass() {
     assert!(
         matrix.starts_with("### --mask 1 --app-mask 1 --src 1 --tdiv 1e-9\n  wr  0x2000 0x00000001\n# diagnostic\n")
     );
-    assert_eq!(matrix.matches("### ").count(), 65);
+    assert_eq!(matrix.matches("### ").count(), cases().len());
     let failed = generate(|_| Ok(run::Output { ok: false, stdout: "PASS\n".into(), stderr: "bad plan\n".into() }));
     let error = failed.unwrap_err();
     assert!(error.contains("--mask 1") && error.contains("PASS") && error.contains("bad plan"));

@@ -56,6 +56,11 @@ impl<T: PacingPolicy> AcqLoop<T> {
             self.batch.armed.as_ref(),
             (request.pair(), request.route, deposit),
         );
+        let capture = Capture { settings: &b, params, request: &request, uncapped };
+        if let Err(error) = seq::validate_readout(&b, params) {
+            self.batch.failed(&io.batch_io(), &capture, &self.out, error.to_string());
+            return;
+        }
         self.clear_average(io, request.avg_clear);
         let plan = ArmPlan::new(&b, request.identity, request.route, deposit, grant.serial());
         let out = &self.out;
@@ -71,7 +76,6 @@ impl<T: PacingPolicy> AcqLoop<T> {
             self.replay.fresh = last_read && self.replay.last_batch.is_some();
             return;
         };
-        let capture = Capture { settings: &b, params, request: &request, uncapped };
         self.capture(io, capture, (&plan, deposit), (ahead, tap, timing, last_read));
     }
 

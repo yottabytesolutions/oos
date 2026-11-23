@@ -30,10 +30,11 @@ pub(super) fn steps_at(
     p: &hz::Params,
     shadows: &mut scu::Shadows,
     (first, count): (u32, u32),
-) -> Vec<Step> {
+) -> Result<Vec<Step>, ReadoutError> {
     let nf = if s.playback.is_play4() { count.max(1) } else { 1 };
-    let mut st = Vec::new();
     let (n, start) = window(s, p);
+    let compression = checked_compression(s, p, n, start)?;
+    let mut st = Vec::new();
     let win = scu::Window {
         n: n * p.ratio,
         start: start * p.ratio,
@@ -43,8 +44,11 @@ pub(super) fn steps_at(
         avg: matches!(s.mode, acq::Mode::Average { .. }),
     };
     st.push(Step::Note(format!("read-out: {} points from memory point {} (trigger at {})", n, start, p.pre)));
-    let mut ro =
-        if s.playback.is_play4() { play4(s, p, &win, shadows, (first, nf)) } else { scu::readout(&win, shadows) };
+    let mut ro = if s.playback.is_play4() {
+        play4(&win, shadows, (first, nf), compression)
+    } else {
+        scu::readout(&win, shadows)
+    };
     if s.header {
         // frame header on: the FPGA puts a 16-byte header in front of the frame
         for w in ro.iter_mut().filter(|w| w.0 == 0x1010) {
@@ -54,22 +58,21 @@ pub(super) fn steps_at(
     }
     st.extend(ro.into_iter().map(Step::Wr));
     st.push(Step::Peek(&[0x4034, 0x4080]));
-    st.push(Step::Read { frames: nf as usize, frame: frame_bytes(s, p) });
-    st
+    let points = compression.map_or(n, |(_, len)| len);
+    st.push(Step::Read { frames: nf as usize, frame: bytes(s.header, p.ratio, points) });
+    Ok(st)
 }
 
 fn play4(
-    s: &Settings,
-    p: &hz::Params,
     win: &scu::Window,
     shadows: &mut scu::Shadows,
     (first, count): (u32, u32),
+    compression: Option<(u32, u32)>,
 ) -> Vec<crate::dho::Write> {
     let mut writes = scu::passthrough();
     let mut read = scu::readout_play4(win, shadows, first, count);
-    if s.compress > 1 {
-        let word = compress_word(compress_k(s, p));
-        let len = compressed_len(s, p);
+    if let Some((k, len)) = compression {
+        let word = compress_word(k);
         for write in writes.iter_mut().filter(|write| write.0 == 0x1170) {
             write.1 = word;
         }
@@ -133,18 +136,21 @@ pub fn read_len(frames: usize, frame: usize) -> usize {
 
 /// Bytes of one frame in the read: the window of all interleaved channels (+ the 16-byte header in header mode).
 pub fn frame_bytes(s: &Settings, p: &hz::Params) -> usize {
-    let n = if s.compress > 1 && s.playback.is_play4() { compressed_len(s, p) } else { window(s, p).0 };
-    2 * (p.ratio * n) as usize + if s.header { 16 } else { 0 }
+    let n = if is_compressed(s) { compressed_len(s, p) } else { window(s, p).0 };
+    bytes(s.header, p.ratio, n)
+}
+
+fn bytes(header: bool, ratio: u32, points: u32) -> usize {
+    2 * ratio as usize * points as usize + if header { 16 } else { 0 }
 }
 
 /// Largest compression factor: 0x1170 holds k in bits 13:0, a larger value wraps (netlist simulation, private RE notes
 /// docs/re/netlist/blocks/datapath.md).
 pub const COMPRESS_K_MAX: u32 = 16383;
 
-/// The compression factor `s.compress` as it is written: 1..=`COMPRESS_K_MAX`, and at most memsel / 8, so a read has at
-/// least 8 points.
+/// The written compression factor, bounded by the register field and the number of eight-point groups in the window.
 pub fn compress_k(s: &Settings, p: &hz::Params) -> u32 {
-    s.compress.clamp(1, COMPRESS_K_MAX).min((p.memsel / 8).max(1))
+    window_compression(s.compress, window(s, p).0).0
 }
 
 /// The 0x1170 word for factor `k`: k > 1 enables the min/max path with k in bits 13:0; k <= 1 is the pass-through
@@ -157,13 +163,74 @@ pub fn compress_word(k: u32) -> u32 {
 }
 
 /// Points per channel after the FPGA compression (`compress_k`): the most whole multiples of 8 points (so whole min/max
-/// pairs) whose samples lie inside the record, points x k <= memsel. The FPGA delivers exactly 0x11f0 points and waits
+/// pairs) whose samples lie inside the window, points x k <= n. The FPGA delivers exactly 0x11f0 points and waits
 /// for samples until it has them: asking for more than the window holds stalls the read. The stock rounding up to 8
 /// asked for 3912 points at k = 256 at 1 M (1 001 472 samples) and the c2h read timed out on the unit, while k = 128
 /// (7816 points, 1 000 448 samples) still fitted the 0x248 samples the window reads beyond the record (unitlab round 2).
 pub fn compressed_len(s: &Settings, p: &hz::Params) -> u32 {
-    let k = compress_k(s, p);
-    (p.memsel / k / 8 * 8).max(8)
+    window_compression(s.compress, window(s, p).0).1
+}
+
+fn window_compression(requested: u32, n: u32) -> (u32, u32) {
+    let k = requested.clamp(1, COMPRESS_K_MAX).min((n / 8).max(1));
+    (k, (n / k / 8 * 8).max(8))
+}
+
+/// Settings that cannot be issued as a compressed read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadoutError {
+    /// Logic analyser words double the programmed window length and cannot share FPGA compression.
+    /// The effective start or size of an explicit window is not eight-point aligned.
+    UnalignedWindow { start: u32, points: u32 },
+    /// The effective window exceeds the stored record.
+    WindowOutsideRecord { start: u32, points: u32, memsel: u32 },
+    /// The window cannot produce the minimum transfer length at this factor.
+    InsufficientPoints { points: u32, factor: u32, len: u32 },
+}
+
+impl std::fmt::Display for ReadoutError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match *self {
+            Self::UnalignedWindow { start, points } => {
+                write!(f, "compressed read window start {start} and length {points} must be multiples of 8")
+            }
+            Self::WindowOutsideRecord { start, points, memsel } => {
+                write!(f, "compressed read window of {points} points at {start} exceeds record length {memsel}")
+            }
+            Self::InsufficientPoints { points, factor, len } => {
+                write!(f, "compressed read window of {points} points cannot supply {len} points at factor {factor}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ReadoutError {}
+
+/// Checks compression compatibility and type-4 geometry before constructing a sequence.
+pub fn validate_readout(s: &Settings, p: &hz::Params) -> Result<(), ReadoutError> {
+    let (n, start) = window(s, p);
+    checked_compression(s, p, n, start).map(|_| ())
+}
+
+fn is_compressed(s: &Settings) -> bool {
+    s.compress > 1 && s.playback.is_play4()
+}
+
+fn checked_compression(s: &Settings, p: &hz::Params, n: u32, start: u32) -> Result<Option<(u32, u32)>, ReadoutError> {
+    if !is_compressed(s) {
+        return Ok(None);
+    }
+    let (k, len) = window_compression(s.compress, n);
+    if len < 8 || len > n / k {
+        return Err(ReadoutError::InsufficientPoints { points: n, factor: k, len });
+    }
+    if s.window.is_some() && (!start.is_multiple_of(8) || !n.is_multiple_of(8)) {
+        return Err(ReadoutError::UnalignedWindow { start, points: n });
+    }
+    if u64::from(start) + u64::from(n) > u64::from(p.memsel) {
+        return Err(ReadoutError::WindowOutsideRecord { start, points: n, memsel: p.memsel });
+    }
+    Ok(Some((k, len)))
 }
 
 /// Drops the stream padding behind every frame (`frame_stride`) in place: the frames end up back to back.
@@ -191,7 +258,7 @@ pub fn window(s: &Settings, p: &hz::Params) -> (u32, u32) {
     match s.window {
         Some((n, at)) => {
             let n = n.min(p.memsel);
-            (n, (p.pre as i64 + at).clamp(0, (p.memsel - n) as i64) as u32)
+            (n, i64::from(p.pre).saturating_add(at).clamp(0, i64::from(p.memsel - n)) as u32)
         }
         None => (p.memsel, 0),
     }

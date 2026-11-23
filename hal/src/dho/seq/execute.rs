@@ -6,7 +6,7 @@
 use super::arm::batch_arm;
 use super::time::{self, Clock};
 use super::wait::{fill_count, poll, poll_first, record_time, BatchWait};
-use super::{frames, raw_settings, read_len, unpad_in, Settings, State, Step, NEW_SETTINGS};
+use super::{frames, raw_settings, read_len, unpad_in, validate_readout, Settings, State, Step, NEW_SETTINGS};
 use crate::dho::hz;
 use std::time::{Duration, Instant};
 
@@ -167,6 +167,7 @@ fn acquire_batch_phases<B: crate::dho::bus::Bus, R: std::io::Read>(
     clock: &impl Clock,
     mut observed: Option<(impl FnMut(BatchPhase), impl Fn() -> bool, impl FnMut(u32) -> bool)>,
 ) -> Result<u32, String> {
+    validate_readout(s, p).map_err(|error| error.to_string())?;
     let arm = batch_arm(st, s, p, armed);
     let observed_fill = observed.is_some();
     if let Some((observe, _, _)) = observed.as_mut() {
@@ -189,7 +190,7 @@ fn acquire_batch_phases<B: crate::dho::bus::Bus, R: std::io::Read>(
             return Err(NEW_SETTINGS.into());
         }
     }
-    let steps = st.read_steps(s, p, count);
+    let steps = st.read_steps(s, p, count).map_err(|error| error.to_string())?;
     read_batch(&steps, bar, c2h, dma, &mut log, clock, observed.map(|(observe, _, _)| observe))?;
     Ok(count)
 }
@@ -357,15 +358,8 @@ pub fn read_raw_again_with_clock(
     index: u32,
     mut log: impl FnMut(String),
 ) -> Result<(), String> {
-    execute_bus_with_clock(
-        &st.read_steps_at(&raw_settings(s), p, index, 1),
-        io.bar,
-        io.stream,
-        io.dma,
-        &mut log,
-        &|| false,
-        io.clock,
-    )
+    let steps = st.reread_steps(&raw_settings(s), p, index).map_err(|error| error.to_string())?;
+    execute_bus_with_clock(&steps, io.bar, io.stream, io.dma, &mut log, &|| false, io.clock)
 }
 
 /// Reads LA words using the supplied clock, restoring the analog stream after a failed read.

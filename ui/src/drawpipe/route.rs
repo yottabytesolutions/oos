@@ -167,6 +167,7 @@ const LABELS: [&str; 10] =
 pub(crate) struct RouteCounters {
     records: [AtomicU64; LABELS.len()],
     wide_search: AtomicU64,
+    pub(crate) fallbacks: super::metrics::fallback::Counters,
 }
 
 impl RouteCounters {

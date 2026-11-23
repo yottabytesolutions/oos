@@ -433,6 +433,7 @@ fn warmed_pool_placement_reuses_rows_envelopes_and_search_storage() {
                     batch.clone(),
                     view.clone(),
                     Prepared {
+                        fallbacks: Default::default(),
                         index,
                         decoded_dots: false,
                         plan: None,

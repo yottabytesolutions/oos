@@ -47,9 +47,13 @@ impl Replay {
         Some(Self { pipe, batch, view, painter, range, route })
     }
 
-    fn verify_route(mut self, fixture: &Fixture) {
+    fn paint(&mut self) -> u64 {
         let id = self.batch.header.identity();
-        self.painter.batch(None, &self.pipe.slot, &self.batch, &self.view, id);
+        self.painter.batch(None, &self.pipe.slot, &self.batch, &self.view, id).map_or(0, |deposit| deposit.records)
+    }
+
+    fn verify_route(mut self, fixture: &Fixture) {
+        self.paint();
         drop(self.batch);
         let observed = self.route.recv().expect("the last batch owner reports the selected route");
         fixture.assert_route(&observed.0, &observed.1);
@@ -129,6 +133,31 @@ fn raw_batch_stage_benchmark() {
     options.pin();
     println!();
     for_each_fixture(&mut |fixture| run_fixture(fixture, &options));
+}
+
+#[test]
+#[ignore = "set OOS_FIXTURES to a group of captured DMA batches"]
+fn captured_fallback_counts() {
+    use std::collections::BTreeMap;
+
+    let mut records = 0;
+    let mut totals = BTreeMap::new();
+    for_each_fixture(&mut |fixture| {
+        let mut replay = Replay::new(fixture).expect("capture has the worker view");
+        let painted = replay.paint();
+        assert_eq!(painted as usize, replay.range.len(), "{}", fixture.name());
+        records += painted;
+        for (cause, count) in replay.batch.counters.routes.fallbacks.entries() {
+            if count > 0 {
+                *totals.entry(cause).or_insert(0) += count;
+            }
+        }
+    });
+    print!("fallback.v1 records={records}");
+    for (cause, count) in totals {
+        print!(" {cause}={count}");
+    }
+    println!();
 }
 
 #[test]

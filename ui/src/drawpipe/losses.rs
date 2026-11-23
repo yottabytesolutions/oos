@@ -177,10 +177,12 @@ impl Counters {
     pub(crate) fn pipeline_text(&self, budget: std::time::Duration, step_missed: u64) -> String {
         let full = self.losses.unexpected_full.load(Ordering::Relaxed);
         let busy = self.losses.unexpected_busy.load(Ordering::Relaxed);
-        format!(
+        let mut text = format!(
             " intake.unexpected_full={full} admission.unexpected_busy={busy}{} step.missed={step_missed}",
             self.metrics.text(&self.routes, budget),
-        )
+        );
+        self.routes.fallbacks.write(&mut text);
+        text
     }
 
     fn source_losses(&self) -> [u64; Lost::ALL.len()] {

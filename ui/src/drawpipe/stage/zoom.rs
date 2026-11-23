@@ -52,6 +52,7 @@ pub(super) fn place(batch: &Arc<Batch>, view: &Arc<View>, prepared: &mut Prepare
         zoom.plan = Some(detail);
         return;
     }
+    Cause::ZoomDecoded.mark();
     let frame = decoded_newest_at(batch, prepared.index).unwrap_or_else(|| {
         decode(scratch);
         scratch
@@ -81,6 +82,7 @@ fn fold_at(
             return measured;
         }
     }
+    Cause::ZoomMeasurementDecode.mark();
     decode(scratch);
     crate::framestats::fold_frame_with(scratch, model, folds, Some(ti))
 }
@@ -94,8 +96,7 @@ fn place_codes(
     refine_time: &mut Duration,
     (previous_main, previous_detail): (Option<kernel::RawTrace>, Option<kernel::RawTrace>),
 ) -> Option<(standard::FastFrame, standard::FastFrame, CodeLayout, f64)> {
-    let layout = batch.codes.as_ref()?(index, bytes, frame)?;
-    let lanes = route::layout(batch, &layout)?;
+    let (_, layout, lanes) = feed::placement_words(batch, index, bytes, frame)?;
     batch.header.tag(frame);
     let (projections, _) = route::projection(view, frame.dt);
     let (main, detail) = projections.into_parts();
@@ -109,7 +110,7 @@ fn place_codes(
             (channels, lanes),
             (previous_main, previous_detail),
             refine_time,
-        )?
+        )
     } else {
         standard::zoom_code_plans(
             &view.m,
@@ -119,7 +120,7 @@ fn place_codes(
             buffers,
             previous_detail,
             refine_time,
-        )?
-    };
+        )
+    }?;
     Some((main, detail, layout, ti))
 }

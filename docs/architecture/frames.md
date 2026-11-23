@@ -265,7 +265,7 @@ hardware evidence.
 
 ### Counters
 
-**Implemented for the five versioned groups.** See the [counter reference](frame-counters.md) for
+**Implemented for the six versioned groups.** See the [counter reference](frame-counters.md) for
 every field and its observation point. The [state query](../spec/state-query.md) also describes
 the legacy picture and record accounting fields.
 

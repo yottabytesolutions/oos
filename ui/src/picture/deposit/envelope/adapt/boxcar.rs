@@ -6,6 +6,7 @@
 //! by a sample. A truncated window divides by its actual count and an empty window is a gap.
 
 use super::super::ColumnEdges;
+use crate::drawpipe::metrics::fallback::Cause;
 use crate::fastdraw::{self, code_rows, Codes, Map, Samples, Spans};
 use std::ops::Range;
 
@@ -163,6 +164,7 @@ impl<const N: usize, F: Fn(usize) -> u16> Filtered<'_, N, F> {
         out: &mut Spans,
     ) {
         let Some(rows) = cache.get(&self.calibration, &self.map, height) else {
+            Cause::BoxcarRowTable.mark();
             return fastdraw::spans_into(width, height, self, &self.map, out);
         };
         let center = f64::from(self.calibration.volts(32768)) * f64::from(self.map.y_per_volt) + f64::from(self.map.y0);
@@ -211,6 +213,7 @@ impl<const N: usize, F: Fn(usize) -> u16> Filtered<'_, N, F> {
         let biased = row.saturating_add(1 << 31);
         let rounded = biased >> 32;
         if (0..=32768).contains(&rounded) && (biased as u32).wrapping_add(margin) <= margin.saturating_mul(2) {
+            Cause::BoxcarRounding.mark();
             return Some(code_rows::project(self.at(i), &self.map));
         }
         Some(rounded.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32)
@@ -237,6 +240,7 @@ impl<const N: usize, F: Fn(usize) -> u16> Samples for Filtered<'_, N, F> {
         if lo.is_finite() && lo == hi {
             return volts as f32;
         }
+        Cause::BoxcarVoltageSum.mark();
         let (sum, count) = point
             .words
             .clone()

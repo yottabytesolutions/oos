@@ -4,6 +4,7 @@
 
 use super::count::{Count, CountFormat};
 use super::kernel::{self, FrameTiming, Placed, Projection, RawTrace, SamplesRef, TrigSnapshot, Vertical};
+use crate::drawpipe::metrics::fallback::{self, Cause};
 use crate::drawpipe::route::{self, hardware_position, Route};
 use crate::drawpipe::stage::fixture_stage;
 use crate::model::*;
@@ -213,33 +214,37 @@ pub(crate) fn fast_plan(
     f: &std::sync::Arc<crate::board::Frame>,
     fold: [bool; NCH],
 ) -> FastFrame {
-    let window = m.time_per_div() as f64 * HDIV as f64;
-    let x_per_sample = f.dt / m.time_per_div() as f64 * w as f64 / HDIV as f64;
-    let proj = projection(m, w, h, x_per_sample);
-    let route = route::route(f, &proj, m.acq, false);
-    if route == Route::Boxcar && !proj.dots {
-        return batch_plan_timed(m, f, BatchPlacement { projection: proj, route, words: None }, None, None);
-    }
-    if x_per_sample > 0.5 || f.envelope || f.roll || f.scan || m.acq == AcqMode::HiRes {
-        // Preserve the 3600-point sparse record and its trigger/interpolation policy until that source migrates.
-        let rec = crate::board::to_record(f, m, 3600, window, m.delay as f64 - window / 2.0);
-        let fold = std::array::from_fn(|c| {
-            (fold[c] && m.ch[c].on).then(|| crate::fastdraw::Fold::of(rec.ch[c].as_slice(), 0..rec.ch[c].len()))
-        });
-        return FastFrame::record(rec, proj, fold);
-    }
-    let meta = frame_timing(m, f);
-    if hardware_position(m, f).is_some() {
-        return batch_plan_timed(m, f, BatchPlacement { projection: proj, route, words: None }, None, None);
-    }
-    let placed = kernel::place(
-        std::array::from_fn(|c| SamplesRef::Volts(&f.ch[c])),
-        &meta,
-        &proj,
-        crate::board::sw_trig_level(m, f),
-        fold,
-    );
-    FastFrame::placed(placed, &meta)
+    fallback::direct(|| {
+        let window = m.time_per_div() as f64 * HDIV as f64;
+        let x_per_sample = f.dt / m.time_per_div() as f64 * w as f64 / HDIV as f64;
+        let proj = projection(m, w, h, x_per_sample);
+        let route = route::route(f, &proj, m.acq, false);
+        Cause::DecodedDots.when(route == Route::Dots);
+        if route == Route::Boxcar && !proj.dots {
+            return batch_plan_timed(m, f, BatchPlacement { projection: proj, route, words: None }, None, None);
+        }
+        if x_per_sample > 0.5 || f.envelope || f.roll || f.scan || m.acq == AcqMode::HiRes {
+            // Preserve the 3600-point sparse record and its trigger/interpolation policy until that source migrates.
+            Cause::DirectRecord.mark();
+            let rec = crate::board::to_record(f, m, 3600, window, m.delay as f64 - window / 2.0);
+            let fold = std::array::from_fn(|c| {
+                (fold[c] && m.ch[c].on).then(|| crate::fastdraw::Fold::of(rec.ch[c].as_slice(), 0..rec.ch[c].len()))
+            });
+            return FastFrame::record(rec, proj, fold);
+        }
+        let meta = frame_timing(m, f);
+        if hardware_position(m, f).is_some() {
+            return batch_plan_timed(m, f, BatchPlacement { projection: proj, route, words: None }, None, None);
+        }
+        let placed = kernel::place(
+            std::array::from_fn(|c| SamplesRef::Volts(&f.ch[c])),
+            &meta,
+            &proj,
+            crate::board::sw_trig_level(m, f),
+            fold,
+        );
+        FastFrame::placed(placed, &meta)
+    })
 }
 
 /// Channel `c` of a placed frame into a band of its collected differences (`fastdraw::diff_span`): the columns
@@ -409,6 +414,11 @@ fn refine_batch(
     col: usize,
 ) -> crate::trignear::SearchResult {
     use crate::fastdraw::Samples;
+    match source {
+        SamplesRef::Codes(_) => Cause::TriggerFromCodes,
+        SamplesRef::Volts(_) => Cause::TriggerFromVolts,
+    }
+    .mark();
     let level = crate::board::sw_trig_level_of(m, source.len(), |i| source.at(i));
     let half = (time_per_div * HDIV as f64 / 2.0 / f.dt) as usize;
     // AC and LF reject hide the comparator's signal. At full rate, the edge is already in the sample or pair.

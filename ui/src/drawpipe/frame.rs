@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+use super::metrics::fallback::{self as metrics, Cause};
 use super::{reuse, route};
 use crate::model::{Model, HDIV, NCH};
 use crate::{board::Frame, sparse::Interp, wave::Phosphor};
@@ -30,9 +31,15 @@ pub(crate) fn draw_frame_reusing(
     let projection = crate::picture::deposit::standard::projection(m, w, h, spacing);
     let route = route::route(f, &projection, m.acq, false);
     if route.screen_raster(projection.dots, f) || crate::deepmeas::deep_pairs(f) || crate::deepmeas::deep_raw_frame(f) {
-        return fallback(ph, m, f, interp, saved);
+        return metrics::direct(|| {
+            Cause::DirectRecord.mark();
+            fallback(ph, m, f, interp, saved)
+        });
     }
-    let placed = crate::picture::deposit::standard::batch_plan(m, (w, h), f, None, None);
+    let placed = metrics::direct(|| {
+        Cause::DecodedDots.when(route == route::Route::Dots);
+        crate::picture::deposit::standard::batch_plan(m, (w, h), f, None, None)
+    });
     let Some((projection, trace)) = placed.plan.raw() else {
         unreachable!("dense placement returns column spans or dots");
     };

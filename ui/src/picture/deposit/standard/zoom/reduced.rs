@@ -15,6 +15,7 @@ pub(crate) fn zoom_reduced_plans(
     let shifts = model.deskew_ch;
     let shifted = model.ch.iter().zip(shifts).any(|(ch, shift)| ch.on && shift != 0.0);
     if !main.code_geometry() || !zoom.code_geometry() || (!frame.envelope && main.dots && shifted) {
+        Cause::ZoomReducedGeometry.mark();
         return None;
     }
     let meta = frame_timing(model, frame);

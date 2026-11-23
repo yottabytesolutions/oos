@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::feed::batch_view;
+use super::metrics::fallback::{self, Cause};
 use super::*;
 use crate::claim_timing::Sampler;
 use crate::picture::deposit::count::CountFormat;
@@ -64,6 +65,7 @@ mod zoom;
 
 struct Prepared {
     index: usize,
+    fallbacks: std::sync::atomic::AtomicU64,
     decoded_dots: bool,
     plan: Option<standard::FastFrame>,
     codes: Option<CodeLayout>,
@@ -164,12 +166,18 @@ fn placement_frame<'frame, 'bytes>(
     let layout = words.as_ref().filter(|_| code_geometry).map(|(_, layout, _)| layout);
     let selected = route::route(f, &projection, v.m.acq, layout.is_some()).for_dma(&projection, layout);
     let raster = selected.screen_raster(projection.dots, f);
+    Cause::InvalidGeometry.when(words.is_some() && !code_geometry);
     let kept = words.filter(|_| code_geometry && !raster);
     let interpolation = code_geometry
         && selected == Route::Upsampled
         && !projection.dots
         && !f.envelope
-        && layout.is_some_and(|raw| raw.reduced_capture() || raw.points(bytes) >= 16);
+        && layout.is_some_and(|raw| {
+            let supported = raw.reduced_capture() || raw.points(bytes) >= 16;
+            Cause::ShortInterpolation.when(!supported);
+            supported
+        });
+    Cause::InterpolationTriggerFrame.when(interpolation);
     let placement =
         standard::BatchPlacement { projection, route: selected, words: if interpolation { words } else { kept } };
     if let Some((bytes, raw, _)) = kept {
@@ -178,6 +186,7 @@ fn placement_frame<'frame, 'bytes>(
             p.measured = fold_codes(scratch, &v.m, (bytes, raw), &mut p.folds, decode);
         }
         if selected == Route::Boxcar && !route::hardware_trigger(&v.m) && !v.m.trig_on_la() {
+            Cause::BoxcarTriggerLane.mark();
             fixture_stage!(TriggerSource, {
                 let source = &mut scratch.ch[v.m.trig_src];
                 let codes = raw.channel(bytes, v.m.trig_src);

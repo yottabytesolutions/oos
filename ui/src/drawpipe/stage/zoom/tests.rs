@@ -41,6 +41,7 @@ fn batch(m: &Model) -> (Arc<Batch>, Frame) {
 
 fn prepared() -> Prepared {
     Prepared {
+        fallbacks: Default::default(),
         index: 0,
         decoded_dots: false,
         plan: None,

@@ -34,6 +34,7 @@ pub(super) fn fold_codes(
     } {
         return measured;
     }
+    Cause::MeasurementDecode.mark();
     decode(scratch);
     fold_decoded(scratch, m, folds)
 }

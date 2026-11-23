@@ -4,6 +4,7 @@
 
 use super::count::{Count, CountFormat};
 use super::envelope;
+use crate::drawpipe::metrics::fallback::Cause;
 use crate::drawpipe::route::Route;
 use crate::fastdraw::{self, Fold, Map, Samples, Spans};
 use oos_core::model::{HDIV, NCH, VDIV};
@@ -186,6 +187,7 @@ pub(crate) fn place(
     let col = (1.0 / proj.x_per_sample).floor().clamp(1.0, 256.0) as usize;
     let t = meta.trigger;
     let (ti, outcome) = refine(meta, col, || {
+        Cause::TriggerFromVolts.mark();
         fastdraw::edge_smooth(
             &samples[t.source],
             meta.pre,
@@ -221,6 +223,7 @@ pub(crate) fn place_at(
             for (c, span) in spans.iter_mut().enumerate() {
                 if let Some(map) = raw_map(proj, c, ti).filter(|_| samples[c].len() > 0) {
                     let out = span.get_or_insert_with(Spans::default);
+                    Cause::DecodedLines.when(matches!(samples[c], SamplesRef::Volts(_)));
                     match samples[c] {
                         SamplesRef::Codes(codes) => fastdraw::with_scratch(|scratch| {
                             scratch.envelope.code_spans(c, (proj.cols, proj.rows), &codes, &map, out);

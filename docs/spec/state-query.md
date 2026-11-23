@@ -1,6 +1,6 @@
 # :SYSTem:STATe? response schema
 
-See the [frame counter reference](../architecture/frame-counters.md) for the five versioned frame pipeline groups.
+See the [frame counter reference](../architecture/frame-counters.md) for the six versioned frame pipeline groups.
 
 Source baseline: merged `overhaul` c59b71d5, 2026-11-16. Extracted from source, not
 verified on hardware in this task. This is the current diagnostic wire format

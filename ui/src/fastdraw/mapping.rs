@@ -65,7 +65,10 @@ pub(crate) fn spans_mapped(
 }
 
 pub(crate) fn code_spans_into(w: usize, h: usize, codes: &Codes<'_>, map: &Map, cache: &mut RowCache, out: &mut Spans) {
-    let Some(rows) = cache.get(codes, map, h) else { return spans_into(w, h, codes, map, out) };
+    let Some(rows) = cache.get(codes, map, h) else {
+        crate::drawpipe::metrics::fallback::Cause::ScalarRowTable.mark();
+        return spans_into(w, h, codes, map, out);
+    };
     spans_with(w, h, codes.n, map, out, |a, b| {
         let (low, high) = codes.code_extremes(a, b);
         let previous = a.checked_sub(1).map_or(low, |i| codes.at_code(i));

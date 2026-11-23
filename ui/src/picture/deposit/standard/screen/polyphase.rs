@@ -3,6 +3,7 @@
 use super::{fixture_stage, kernel, Projection, NCH, POINTS};
 use crate::fastdraw::zoom::{Filter, Window};
 use crate::fastdraw::{clip_rows, Codes, Map, Spans};
+use crate::picture::deposit::interpolation::{dot, fill_sample_runs, Taps};
 use std::{cell::RefCell, sync::OnceLock};
 
 const TAPS: usize = 16;
@@ -13,8 +14,9 @@ const COEFFICIENT_UNIT: i32 = 1 << COEFFICIENT_BITS;
 const POSITION_BITS: u32 = 36;
 const POSITION_UNIT: i64 = 1 << POSITION_BITS;
 const ROW_BITS: u32 = 12;
+const ROW_SHIFT: i32 = (COEFFICIENT_BITS + 27 - ROW_BITS) as i32;
+const ROW_LIMIT: i32 = 1 << 29;
 
-type Taps = [i16; TAPS];
 type Phases = [Taps; PHASES + 1];
 
 fn kernel(edge: usize) -> &'static Phases {
@@ -71,10 +73,16 @@ struct Edge {
 }
 
 impl Edge {
-    fn row(self, first: usize, values: &[i32]) -> Option<i32> {
-        let i = self.index.checked_sub(first)?;
-        let (&a, &b) = values.get(i.checked_sub(1)?).zip(values.get(i))?;
-        Some(a + ((i64::from(b - a) * i64::from(self.mix)) >> 16) as i32)
+    fn crossing(self, first: usize, values: &[i32]) -> (usize, (i32, i32)) {
+        let i = self.index.saturating_sub(first).min(values.len());
+        let extent = if i > 0 && i < values.len() {
+            let (a, b) = (values[i - 1], values[i]);
+            let row = a + ((i64::from(b - a) * i64::from(self.mix)) >> 16) as i32;
+            (row, row)
+        } else {
+            (i32::MAX, i32::MIN)
+        };
+        (i, extent)
     }
 }
 
@@ -179,18 +187,58 @@ impl RowScale {
 
     #[inline]
     fn row(&self, code: i32) -> i32 {
-        // Q14 code times Q27 slope, rounded to Q12 rows. Leave headroom for edge interpolation.
+        // Q14 code times Q27 slope, shifted to Q12 rows. Leave headroom for edge interpolation.
         let scaled = self.gain.saturating_mul(i64::from(code));
-        let row = (scaled >> (COEFFICIENT_BITS + 27 - ROW_BITS)).saturating_add(self.center);
-        row.clamp(-(1 << 29), 1 << 29) as i32
+        let row = (scaled >> ROW_SHIFT).saturating_add(self.center);
+        row.clamp(-i64::from(ROW_LIMIT), i64::from(ROW_LIMIT)) as i32
+    }
+
+    #[inline]
+    fn fill(&self, out: &mut [i32], code: impl Fn(usize) -> i32) {
+        #[cfg(not(target_arch = "aarch64"))]
+        let first = 0;
+        #[cfg(target_arch = "aarch64")]
+        let (first, out) = if let Ok(gain) = i32::try_from(self.gain) {
+            let (groups, tail) = out.as_chunks_mut::<4>();
+            for (i, group) in groups.iter_mut().enumerate() {
+                let values = std::array::from_fn(|k| code(4 * i + k));
+                self.project_four(values, gain, group);
+            }
+            (groups.len() * 4, tail)
+        } else {
+            (0, out)
+        };
+        for (k, row) in out.iter_mut().enumerate() {
+            *row = self.row(code(first + k));
+        }
+    }
+
+    #[inline]
+    #[cfg(target_arch = "aarch64")]
+    fn project_four(&self, values: [i32; 4], gain: i32, out: &mut [i32; 4]) {
+        use core::arch::aarch64::*;
+        // SAFETY: NEON is baseline on aarch64. The input and output arrays each hold a full vector.
+        // A product of two i32 values fits in i64. Saturating the narrowing before clipping
+        // preserves the scalar clip because its limits are inside the i32 range.
+        unsafe {
+            let values = vld1q_s32(values.as_ptr());
+            let gain = vdupq_n_s32(gain);
+            let center = vdupq_n_s64(self.center);
+            let low = vmull_s32(vget_low_s32(values), vget_low_s32(gain));
+            let high = vmull_high_s32(values, gain);
+            let shift = |v| vqaddq_s64(vshrq_n_s64::<ROW_SHIFT>(v), center);
+            let row = vqmovn_high_s64(vqmovn_s64(shift(low)), shift(high));
+            let row = vmaxq_s32(vdupq_n_s32(-ROW_LIMIT), vminq_s32(row, vdupq_n_s32(ROW_LIMIT)));
+            vst1q_s32(out.as_mut_ptr(), row);
+        }
     }
 }
 
 fn interpolate(s: &mut Scratch, codes: &Codes<'_>, (origin, stride): (i64, i64), lanczos: bool, scale: &RowScale) {
     let first = visible_start(origin, stride);
     let last = position((codes.n - 1) as f64);
-    s.vertices.clear();
     if stride <= 0 || first == POINTS || origin.saturating_add(stride.saturating_mul(first as i64)) > last {
+        s.vertices.clear();
         return;
     }
     let start = origin + stride * first as i64;
@@ -207,23 +255,28 @@ fn interpolate(s: &mut Scratch, codes: &Codes<'_>, (origin, stride): (i64, i64),
     if lanczos {
         s.samples.extend([0; 8]);
         let kernels = visible_kernels(lo, hi, codes.n);
-        s.vertices.extend((0..end).map(|k| {
-            let x = start + stride * k as i64;
-            let i = (x >> POSITION_BITS) as usize;
-            let phase = rounded_phase(x, PHASE_BITS);
+        fill_sample_runs::<POSITION_BITS>(&mut s.vertices, (start, stride, end), |i, x, out| {
             let edge = if i + 8 >= codes.n { 8 + i + 8 - codes.n } else { 7usize.saturating_sub(i) };
-            let samples = s.samples[i - a..][..TAPS].first_chunk::<TAPS>().expect("the sample window is padded");
-            scale.row(dot(samples, &kernels[edge][phase]))
-        }));
+            let samples = s.samples[i - a..].first_chunk().expect("the sample window is padded");
+            let phases = &kernels[edge];
+            scale.fill(out, |k| {
+                let phase = rounded_phase(x + stride * k as i64, PHASE_BITS);
+                dot(samples, &phases[phase])
+            });
+        });
     } else {
-        s.vertices.extend((0..end).map(|k| {
+        // At the final sample the two-tap kernel repeats that sample.
+        let tail = *s.samples.last().expect("the visible window contains a sample");
+        s.samples.push(tail);
+        s.vertices.resize(end, 0);
+        scale.fill(&mut s.vertices, |k| {
             let x = start + stride * k as i64;
             let i = (x >> POSITION_BITS) as usize - a;
-            let left = i32::from(s.samples[i]);
-            let right = i32::from(s.samples.get(i + 1).copied().unwrap_or(s.samples[i]));
+            let &[left, right] = s.samples[i..].first_chunk().expect("the linear sample window is padded");
+            let (left, right) = (i32::from(left), i32::from(right));
             let fraction = rounded_phase(x, COEFFICIENT_BITS) as i32;
-            scale.row(left * COEFFICIENT_UNIT + (right - left) * fraction)
-        }));
+            left * COEFFICIENT_UNIT + (right - left) * fraction
+        });
     }
 }
 
@@ -233,44 +286,20 @@ fn rounded_phase(x: i64, bits: u32) -> usize {
     (((x & (POSITION_UNIT - 1)) + (1 << (shift - 1))) >> shift) as usize
 }
 
-#[inline]
-#[cfg(target_arch = "aarch64")]
-fn dot(samples: &Taps, weights: &Taps) -> i32 {
-    use core::arch::aarch64::*;
-    // SAFETY: aarch64 has NEON and each array contains two full eight-element vectors.
-    unsafe {
-        let a = vld1q_s16(samples.as_ptr());
-        let b = vld1q_s16(weights.as_ptr());
-        let c = vld1q_s16(samples.as_ptr().add(8));
-        let d = vld1q_s16(weights.as_ptr().add(8));
-        let ab = vmlal_high_s16(vmull_s16(vget_low_s16(a), vget_low_s16(b)), a, b);
-        let cd = vmlal_high_s16(vmull_s16(vget_low_s16(c), vget_low_s16(d)), c, d);
-        vaddvq_s32(vaddq_s32(ab, cd))
-    }
-}
-
-#[inline]
-#[cfg(not(target_arch = "aarch64"))]
-fn dot(samples: &Taps, weights: &Taps) -> i32 {
-    let products: [i32; TAPS] = std::array::from_fn(|i| i32::from(samples[i]) * i32::from(weights[i]));
-    products.into_iter().sum()
-}
-
 fn spans_into(edges: &[Edge], first: usize, rows: &[i32], height: usize, out: &mut Spans) {
     out.c0 = 0;
     out.rows.clear();
     if rows.len() < 2 {
         return;
     }
-    let index = |edge: Edge| edge.index.saturating_sub(first).min(rows.len());
+    let mut crossings = edges.iter().map(|edge| edge.crossing(first, rows));
+    let Some(mut left) = crossings.next() else { return };
     let round = |row: i32| (row + (1 << (ROW_BITS - 1))) >> ROW_BITS;
-    out.rows.extend(edges.windows(2).map(|e| {
-        let (left, right) = (e[0], e[1]);
-        let vertices = rows[index(left)..index(right)].iter().copied();
-        let (low, high) = vertices
-            .chain(left.row(first, rows))
-            .chain(right.row(first, rows))
-            .fold((i32::MAX, i32::MIN), |(low, high), row| (low.min(row), high.max(row)));
+    out.rows.extend(crossings.map(|right| {
+        let (start, (a, b)) = std::mem::replace(&mut left, right);
+        let (end, (c, d)) = right;
+        let (low, high) =
+            rows[start..end].iter().fold((a.min(c), b.max(d)), |(lo, hi), &row| (lo.min(row), hi.max(row)));
         if low <= high {
             clip_rows(round(low), round(high), height as i32)
         } else {
@@ -280,108 +309,7 @@ fn spans_into(edges: &[Edge], first: usize, rows: &[i32], height: usize, out: &m
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{fastdraw::CorrectedCodes, model::Model, picture::deposit::standard};
+mod tests;
 
-    #[test]
-    fn corrected_samples_use_calibrated_row_gain() {
-        let codes = Codes {
-            bytes: &[],
-            words: None,
-            stride: 1,
-            word: 0,
-            n: 0,
-            affine: (0.0, 0.0),
-            corrected: Some(CorrectedCodes { offsets: [0; 8], scale: 7500.0 / 16384.0, offset: 0.25 }),
-            volt: |_, _| 0.0,
-        };
-        let map = Map { ti: 0.0, x_per_sample: 1.0, x0: 0.0, y_per_volt: 64.0, y0: 128.0 };
-        let row = RowScale::new(&codes, &map);
-        assert_eq!(row.row(8192 * COEFFICIENT_UNIT), 144 << ROW_BITS);
-    }
-
-    #[test]
-    fn fixed_spans_track_the_exact_screen_grid_within_one_row() {
-        let m = Model::default();
-        let mut scratch = Scratch::default();
-        let mut spans = Spans::default();
-        for width in [271, 970, 1920] {
-            for per in [0.017, 0.043, 0.29, 0.5, 0.71, 1.49] {
-                let projection = standard::projection(&m, width, 448, width as f64 / (POINTS as f64 * per));
-                let window = projection.time_per_div * f64::from(crate::model::HDIV);
-                let dt = window / POINTS as f64;
-                let first_time = -window / 2.0;
-                let sample_dt = dt / per;
-                let volts = |code: u16, _: (f32, f32)| (f32::from(code) - 32768.0) / 16384.0;
-                scratch.edges(&projection, first_time, dt);
-                for frequency in [0.021, 0.125, 0.297, 0.4] {
-                    let words = band_limited_words((per * POINTS as f64) as usize + 32, frequency);
-                    let decoded: Vec<_> = words.iter().map(|&word| volts(word, (0.0, 0.0))).collect();
-                    let codes = Codes {
-                        bytes: &[],
-                        words: Some(&words),
-                        stride: 1,
-                        word: 0,
-                        n: words.len(),
-                        affine: (1.0 / 16384.0, 0.0),
-                        corrected: None,
-                        volt: volts,
-                    };
-                    for start in [-9.71, 0.0, 12.433, 29.79] {
-                        let ti = start - first_time / sample_dt;
-                        let row = RowScale::new(&codes, &kernel::raw_map(&projection, 0, ti).unwrap());
-                        let geometry = (position(start), position(per));
-                        let lanczos = per < 0.5;
-                        interpolate(&mut scratch, &codes, geometry, lanczos, &row);
-                        spans_into(
-                            &scratch.edges,
-                            visible_start(geometry.0, geometry.1),
-                            &scratch.vertices,
-                            projection.rows,
-                            &mut spans,
-                        );
-                        let points: Vec<_> = (0..POINTS)
-                            .map(|k| {
-                                let x = ti + (first_time + k as f64 * dt) / sample_dt;
-                                if lanczos {
-                                    oos_dsp::interp::lanczos8(&decoded, x)
-                                } else {
-                                    oos_dsp::interp::linear(&decoded, x)
-                                }
-                                .unwrap_or(f32::NAN)
-                            })
-                            .collect();
-                        let expected = crate::drawpipe::stage::fixture_bench::legacy_hull(
-                            &projection,
-                            0,
-                            (first_time, dt),
-                            &points,
-                        );
-                        assert_hulls(&spans.rows, &expected, (width, per, frequency, start));
-                    }
-                }
-            }
-        }
-    }
-
-    fn band_limited_words(len: usize, frequency: f64) -> Vec<u16> {
-        (0..len)
-            .map(|i| {
-                let phase = std::f64::consts::TAU * frequency * i as f64;
-                (32768.0 + 15500.0 * phase.sin() + 9000.0 * (phase / 3.0 + 1.2).sin()) as u16
-            })
-            .collect()
-    }
-
-    fn assert_hulls(actual: &[(i16, i16)], expected: &[(i16, i16)], case: impl std::fmt::Debug) {
-        assert_eq!(actual.len(), expected.len());
-        for (column, (&(a, b), &(c, d))) in actual.iter().zip(expected).enumerate() {
-            if a <= b && c <= d {
-                assert!(a.abs_diff(c) <= 1 && b.abs_diff(d) <= 1, "{case:?} col={column}: {a}..{b} vs {c}..{d}");
-            } else {
-                assert_eq!(a <= b, c <= d, "{case:?} col={column}: {a}..{b} vs {c}..{d}");
-            }
-        }
-    }
-}
+#[cfg(test)]
+mod bench;

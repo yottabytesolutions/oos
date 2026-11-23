@@ -113,3 +113,45 @@ fn exact_spans(
         },
     );
 }
+
+#[test]
+fn sample_runs_keep_every_zoom_knot_including_clipped_taps_and_the_last_knot() {
+    let layout = CodeLayout::uncorrected(1, [Some(0), None, None, None], [(1.0, 0.0); 4], |code, _| f32::from(code));
+    let bytes: Vec<u8> = (0..83).flat_map(|i| ((13237 * i + 15289) as u16).to_le_bytes()).collect();
+    let mut filter = Filter::default();
+    for len in [3, 16, 83] {
+        let codes = layout.channel(&bytes[..len * 2], 0);
+        let unit = SAMPLE_ONE as f64;
+        for (start, step, last) in
+            [(0.0, 0.29, 1.0), (0.17, 0.017, 2.0), (1.0, 0.043, 2.0), (0.1, 0.29, (len - 1) as f64)]
+        {
+            let (start, step, last) = ((start * unit) as i64, (step * unit) as i64, (last * unit) as i64);
+            let count = ((last - start) / step) as usize + 4;
+            filter.interpolate(&codes, (start, step, last), count);
+            for (i, &actual) in filter.points.iter().enumerate() {
+                assert_eq!(actual, reference_knot(&codes, (start + step * i as i64).min(last)), "len={len} knot={i}");
+            }
+            assert_eq!(filter.points.len(), count);
+        }
+    }
+}
+
+fn reference_knot(codes: &Codes<'_>, x: i64) -> i32 {
+    let i = (x >> SAMPLE_BITS) as usize;
+    let shift = SAMPLE_BITS - PHASE_BITS;
+    let phase = (((x & (SAMPLE_ONE - 1)) + (1 << (shift - 1))) >> shift) as usize;
+    let weights = taps(phase);
+    let samples = std::array::from_fn(|tap| {
+        (i + tap)
+            .checked_sub(LEFT)
+            .filter(|&index| index < codes.n)
+            .map_or(0, |index| (codes.at_code(index) ^ 0x8000) as i16)
+    });
+    let sum = crate::picture::deposit::interpolation::scalar_dot(&samples, &weights);
+    let valid = LEFT.saturating_sub(i)..(codes.n + LEFT - i).min(TAPS);
+    if valid.len() == TAPS {
+        sum
+    } else {
+        normalise(sum, &weights[valid])
+    }
+}

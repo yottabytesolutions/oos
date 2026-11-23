@@ -17,8 +17,6 @@ pub(super) struct Columns {
     shared_codes: Arc<SharedCodes>,
     tasks: Vec<Option<Box<Task>>>,
     completed: usize,
-    #[cfg(test)]
-    dispatch_allocations: usize,
 }
 
 struct Dispatch<'a> {
@@ -35,10 +33,6 @@ impl Painter {
         let mut dispatch =
             Dispatch { pool: &mut self.pool, jobs: &mut self.jobs, worker_time: Duration::ZERO, wall: Duration::ZERO };
         let started = Instant::now();
-        #[cfg(test)]
-        {
-            self.columns.dispatch_allocations = 0;
-        }
         let mut refine = Duration::ZERO;
         for (index, slot) in (first..first + count).zip(&mut arena[..count]) {
             let mut p = Prepared::reuse(slot, v, index);
@@ -64,15 +58,7 @@ impl Painter {
 
 impl Columns {
     pub(super) fn new(workers: usize) -> Self {
-        Self {
-            workers,
-            decoded: None,
-            shared_codes: Arc::default(),
-            tasks: Vec::new(),
-            completed: 0,
-            #[cfg(test)]
-            dispatch_allocations: 0,
-        }
+        Self { workers, decoded: None, shared_codes: Arc::default(), tasks: Vec::new(), completed: 0 }
     }
 
     #[cfg(any(target_os = "linux", test))]
@@ -235,15 +221,7 @@ impl Columns {
             task.source = Some(source.clone());
             dispatch.jobs.push(Job::Columns(task));
         }
-        #[cfg(not(test))]
         let timing = dispatch.pool.map(dispatch.jobs, time_shards);
-        #[cfg(test)]
-        let timing = {
-            let (allocations, timing) =
-                crate::system::test_allocator::count_own(|| dispatch.pool.map(dispatch.jobs, time_shards));
-            self.dispatch_allocations += allocations;
-            timing
-        };
         if time_shards {
             dispatch.wall += timing.wall;
             dispatch.worker_time += timing.worker_time;
@@ -268,11 +246,6 @@ impl Columns {
     #[cfg(test)]
     pub(super) fn task_allocations(&self) -> impl Iterator<Item = usize> + '_ {
         self.results().map(|task| task.allocations)
-    }
-
-    #[cfg(test)]
-    pub(super) fn dispatch_allocations(&self) -> usize {
-        self.dispatch_allocations
     }
 }
 

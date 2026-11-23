@@ -41,16 +41,16 @@ fn zoom_tiles_reuse_the_four_workers_scratch() {
     let mut painter = Painter::new(4, 0);
     painter.pool = Pool::new(4, 0, run_counted);
     let mut deposit = pipe.slot.acquire_picture(v.gen, v.picture_sizes(), None, [true; NCH]).unwrap();
-    let mut paint = || {
+    let mut paint = |painter: &mut Painter| {
         let count = painter.place_slice(&b, &v, 0);
         painter.draw_tiles(&b, &mut deposit, count);
         deposit.reset(None);
     };
     for _ in 0..WARMUP {
-        paint();
+        paint(&mut painter);
     }
-    let (allocations, ()) = crate::system::test_allocator::count_own(paint);
-    assert_eq!(allocations, 0);
+    let (allocations, ()) = crate::system::test_allocator::count_own(|| paint(&mut painter));
+    assert_eq!(allocations, 0, "coordinator placement and tiles");
 }
 
 fn run_counted(scratch: &mut Frame, job: &mut Job) {

@@ -60,6 +60,10 @@ pull request that fixes a mistake: what happened, then the rule.
 - A cancellation test counted reads on its source thread's counters and losses on the pipe. Use the pipe's
   injected instance for both sides of the conservation check, even when dispatch runs on another thread.
 
+- A zero-allocation check assumed eight warm-up passes set up the reply channel's waiter storage. With replies
+  already queued, `recv` skipped that setup, and the first waiting receive allocated inside the measured pass.
+  Count allocations inside `recv` separately from the pass under test.
+
 - A phosphor clear test seeded visible counts through the raw map and skipped touched-row tracking. Use
   `edit_channel` or `edit_wide_channel` to seed counts that will be cleared.
 - A reset fixture filled an old intake capacity while deliberately holding its consumer. When the hand-off shrinks,

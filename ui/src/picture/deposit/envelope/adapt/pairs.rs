@@ -145,13 +145,10 @@ pub(crate) fn screen_envelope_columns(
     out.clear();
     out.resize((2 * pairs.end).min(n) - 2 * pairs.start, f32::NAN);
     for (j, pair) in pairs.zip(out.chunks_mut(2)) {
-        let xm = ti + (first + (2 * j) as f64 * dt + 0.5 * dt) / sample_dt;
-        if xm < -per || xm >= values.len() as f64 + per {
+        let Some(range) = screen_pair_range(2 * j, (sample_dt, per), (dt, first), ti, values.len()) else {
             continue;
-        }
-        let a = (xm - per).max(0.0) as usize;
-        let b = ((xm + per).ceil() as usize).min(values.len());
-        let span = &values[a.min(b)..b];
+        };
+        let span = &values[range];
         let (mut lo, mut hi) = crate::fastdraw::min_max(span);
         if lo == f32::NEG_INFINITY || hi == f32::INFINITY {
             (lo, hi) = span
@@ -166,4 +163,22 @@ pub(crate) fn screen_envelope_columns(
             }
         }
     }
+}
+
+/// Sample indices for one overlapping screen window, starting at the even output point.
+#[inline]
+pub(crate) fn screen_pair_range(
+    point: usize,
+    (sample_dt, per): (f64, f64),
+    (dt, first): (f64, f64),
+    ti: f64,
+    len: usize,
+) -> Option<Range<usize>> {
+    let center = ti + (first + point as f64 * dt + 0.5 * dt) / sample_dt;
+    if center < -per || center >= len as f64 + per {
+        return None;
+    }
+    let start = (center - per).max(0.0) as usize;
+    let end = ((center + per).ceil() as usize).min(len);
+    Some(start.min(end)..end)
 }

@@ -15,6 +15,10 @@ pub(crate) enum Stage {
     CodeToRow,
     FusedReduceMap,
     Resample,
+    AverageCodeLayout,
+    AverageCodeTrigger,
+    AverageLinear,
+    AverageLanczos,
     Accumulate,
     Split,
     Writes,
@@ -24,7 +28,7 @@ pub(crate) enum Stage {
 }
 
 impl Stage {
-    pub(super) const ALL: [Self; 17] = [
+    pub(super) const ALL: [Self; 21] = [
         Self::Core,
         Self::Decode,
         Self::Geometry,
@@ -36,6 +40,10 @@ impl Stage {
         Self::CodeToRow,
         Self::FusedReduceMap,
         Self::Resample,
+        Self::AverageCodeLayout,
+        Self::AverageCodeTrigger,
+        Self::AverageLinear,
+        Self::AverageLanczos,
         Self::Accumulate,
         Self::Split,
         Self::Writes,
@@ -43,7 +51,7 @@ impl Stage {
         Self::Place,
         Self::Remainder,
     ];
-    pub(super) const PLACEMENT: [Self; 13] = [
+    pub(super) const PLACEMENT: [Self; 17] = [
         Self::Core,
         Self::Decode,
         Self::Geometry,
@@ -55,6 +63,10 @@ impl Stage {
         Self::CodeToRow,
         Self::FusedReduceMap,
         Self::Resample,
+        Self::AverageCodeLayout,
+        Self::AverageCodeTrigger,
+        Self::AverageLinear,
+        Self::AverageLanczos,
         Self::Accumulate,
         Self::Split,
     ];
@@ -72,6 +84,10 @@ impl Stage {
             Self::CodeToRow => "code_to_row",
             Self::FusedReduceMap => "fused_reduce_map",
             Self::Resample => "resample",
+            Self::AverageCodeLayout => "average_code_layout",
+            Self::AverageCodeTrigger => "average_code_trigger",
+            Self::AverageLinear => "average_linear_grid",
+            Self::AverageLanczos => "average_lanczos_grid",
             Self::Accumulate => "average_accumulate",
             Self::Split => "split_columns",
             Self::Writes => "tile_writes",
@@ -80,6 +96,10 @@ impl Stage {
             Self::Remainder => "place_remainder",
         }
     }
+
+    fn average_codes(self) -> bool {
+        matches!(self, Self::AverageCodeLayout | Self::AverageCodeTrigger | Self::AverageLinear | Self::AverageLanczos)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -87,22 +107,27 @@ pub(super) struct Options {
     stage: Option<Stage>,
     repeats: usize,
     cpu: Option<usize>,
+    average: bool,
 }
 
 impl Options {
     pub(super) fn from_env() -> Self {
-        let stage = std::env::var("OOS_BENCH_STAGE")
-            .ok()
-            .map(|name| Stage::ALL.into_iter().find(|stage| stage.name() == name).expect("known OOS_BENCH_STAGE"));
+        let average = std::env::var_os("OOS_BENCH_AVERAGE_16").is_some();
+        let stage = std::env::var("OOS_BENCH_STAGE").ok().map(|name| {
+            Stage::ALL
+                .into_iter()
+                .find(|stage| stage.name() == name && (average || !stage.average_codes()))
+                .expect("known OOS_BENCH_STAGE for this mode")
+        });
         let repeats = std::env::var("OOS_BENCH_REPEATS").map_or(1, |n| n.parse().expect("integer OOS_BENCH_REPEATS"));
         assert!((1..=1_000_000).contains(&repeats));
         assert!(repeats == 1 || stage != Some(Stage::Remainder), "place_remainder requires a cold pass");
         let cpu = std::env::var("OOS_BENCH_CPU").ok().map(|n| n.parse().expect("integer OOS_BENCH_CPU"));
-        Self { stage, repeats, cpu }
+        Self { stage, repeats, cpu, average }
     }
 
     pub(super) fn for_test(stage: Stage, repeats: usize) -> Self {
-        Self { stage: Some(stage), repeats, cpu: None }
+        Self { stage: Some(stage), repeats, cpu: None, average: stage.average_codes() }
     }
 
     pub(super) fn pin(&self) {
@@ -122,14 +147,14 @@ impl Options {
         self.repeats == 1 || self.stage == Some(stage)
     }
 
-    fn stages(&self) -> impl Iterator<Item = Stage> + '_ {
-        Stage::ALL.into_iter().filter(|&stage| self.stage.is_none_or(|only| only == stage))
+    fn stages(self) -> impl Iterator<Item = Stage> {
+        Stage::ALL.into_iter().filter(move |&stage| {
+            (self.average || !stage.average_codes()) && self.stage.is_none_or(|only| only == stage)
+        })
     }
 
     pub(super) fn passes(self) -> impl Iterator<Item = Self> {
-        let mut stages = Stage::ALL.into_iter().filter(move |&stage| {
-            self.repeats > 1 && stage != Stage::Remainder && self.stage.is_none_or(|only| only == stage)
-        });
+        let mut stages = self.stages().filter(move |&stage| self.repeats > 1 && stage != Stage::Remainder);
         (self.repeats == 1)
             .then_some(self)
             .into_iter()

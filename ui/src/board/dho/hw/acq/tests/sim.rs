@@ -216,13 +216,14 @@ impl Read for SimStream {
         let mark_entire_record = matches!(self.run, Run::Pictures(_));
         if self.edge_at.is_some() || mark_first_sample || mark_entire_record {
             let engine = self.stream.0.borrow();
-            let words = engine.regs[&0x11f0] as usize;
+            let ratio = engine.ratio as usize;
+            let words = engine.regs[&0x11f0] as usize * ratio;
             let prior = engine.triggers - u64::from(engine.recorded);
             for record in bytes[..count].chunks_exact_mut(words * 2) {
                 if let Some(pre) = self.edge_at.filter(|_| record[..2] == sim::Engine::word(1, 0).to_le_bytes()) {
                     // Preserve sample zero's record number and give frame one a rising edge at pre.
                     for (i, word) in record.as_chunks_mut::<2>().0.iter_mut().enumerate().skip(1) {
-                        let code: u16 = if i < pre { 25_000 } else { 40_000 };
+                        let code: u16 = if i / ratio < pre { 25_000 } else { 40_000 };
                         *word = code.to_le_bytes();
                     }
                 }
@@ -449,7 +450,8 @@ pub(super) fn fixture(
     intake: Option<Intake>,
 ) -> Fixture {
     let per_poll = if matches!(run, Run::StopDuring) { 0 } else { records };
-    let (engine, bus, stream) = sim::engine(sim::Engine::new(10_000_000_000, 1_000_000_000, per_poll, 1));
+    let ratio = oos_hal::dho::hz::ratio(settings.mask);
+    let (engine, bus, stream) = sim::engine(sim::Engine::new(10_000_000_000, 1_000_000_000, per_poll, ratio));
     let trace = Rc::new(RefCell::new(Trace::default()));
     let signals = Rc::new(StopSignals::default());
     let state = seq::State::handover(settings.mask, None);

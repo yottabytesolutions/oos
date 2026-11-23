@@ -134,6 +134,48 @@ fn live_compression_plan_by_time_base() {
     assert_eq!(s.compress, 1);
 }
 
+#[test]
+fn software_average_plans_raw_reads_with_live_compression_enabled() {
+    use oos_hal::dho::{acq::Mode, seq};
+
+    let switches = crate::sysconf::Switches { compress: true, ..Default::default() };
+    for (channels, tdiv, normal_k, raw_frames) in
+        [(1, 1e-6, 3, 142), (1, 10e-6, 15, 20), (4, 1e-6, 1, 142), (4, 10e-6, 7, 14)]
+    {
+        let mut m = Model {
+            tscale: tscales().iter().position(|&t| t == tdiv).unwrap(),
+            dots: DotsMode::Off,
+            ..Default::default()
+        };
+        for (index, ch) in m.ch.iter_mut().enumerate() {
+            ch.on = index < channels;
+        }
+        let plan = |m: &Model| {
+            let s = settings(m, false, &switches);
+            let p = hz::prep(s.mask, seq::tdiv_fs(s.tdiv), s.depth, 0);
+            (batch_plan(&s, &p, switches.board.zone_batch), p)
+        };
+        let (normal, params) = plan(&m);
+        assert_eq!(seq::compress_k(&normal, &params), normal_k);
+
+        m.acq = AcqMode::Average;
+        m.avg_hw = false;
+        let (raw, params) = plan(&m);
+        assert_eq!(raw.mode, Mode::Normal);
+        assert_eq!(seq::compress_k(&raw, &params), 1);
+        assert!(!raw_newest(&raw, &params));
+        let bytes = seq::frame_bytes(&raw, &params);
+        assert_eq!(raw.frames, raw_frames, "{channels} ch at {tdiv} s/div, {bytes} bytes/record");
+        assert!(bytes * raw.frames as usize <= 4_000_000);
+
+        m.avg_hw = true;
+        m.avg_count = 16;
+        let (hardware, params) = plan(&m);
+        assert_eq!(hardware.mode, Mode::Average { count: 16 });
+        assert_eq!(seq::compress_k(&hardware, &params), 1);
+    }
+}
+
 // Break it catches: with compression the unit default, a mode that must see every sample (or the records as raw
 // samples) getting min/max pairs. Every row must leave the frames raw; the base set-up must compress, so the table
 // tests something. STOP: the record left on screen is a raw final frame (`ui::tests::

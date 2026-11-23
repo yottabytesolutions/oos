@@ -44,6 +44,78 @@ fn fixture(pipe: &Pipe, first: usize, len: usize) -> Arc<Batch> {
     batch
 }
 
+fn raw_fixture(pipe: &Pipe, lanes: usize, len: usize) -> Arc<Batch> {
+    const SAMPLES: usize = 256;
+    let stride = lanes.next_power_of_two();
+    let mut layout = CodeLayout::uncorrected(
+        stride,
+        std::array::from_fn(|c| (c < lanes).then_some(c)),
+        [(VOLTS_PER_COUNT, 0.0); NCH],
+        |word, (scale, offset)| f32::from((word ^ 0x8000) as i16) * scale - offset,
+    );
+    let corrections = std::array::from_fn(|c| crate::fastdraw::CorrectedCodes {
+        offsets: [25, -13, 4, 5, -30, 10, 4, -5],
+        scale: 1.0 + c as f64,
+        offset: c as f64 / 4.0,
+    });
+    layout.corrected = Some(corrections);
+    let read: CodesInto = Arc::new(move |_, _, f| {
+        f.dt = 2e-9;
+        f.pre = SAMPLES / 2;
+        f.ch.iter_mut().for_each(Vec::clear);
+        Some(layout)
+    });
+    let decode: DecodeInto = Arc::new(move |bytes, f| {
+        f.dt = 2e-9;
+        f.pre = SAMPLES / 2;
+        for (c, (out, cal)) in f.ch.iter_mut().zip(corrections).enumerate() {
+            out.clear();
+            if c < lanes {
+                out.extend(
+                    bytes
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .skip(c)
+                        .step_by(stride)
+                        .enumerate()
+                        .map(|(i, &word)| cal.volts(cal.code(i, u16::from_le_bytes(word)))),
+                );
+            }
+        }
+    });
+    let frame_bytes = SAMPLES * stride * 2;
+    let mut bytes = Vec::with_capacity(frame_bytes * len);
+    for record in 0..len {
+        for i in 0..SAMPLES {
+            for (c, cal) in corrections.iter().enumerate().take(stride) {
+                let x = (i as f64 - SAMPLES as f64 / 2.0 - record as f64 / len as f64) * (0.14 + 0.04 * c as f64);
+                let word = 32768 + (5300.0 * x.sin()) as i32 + cal.offsets[i % 8];
+                bytes.extend((word as u16).to_le_bytes());
+            }
+        }
+    }
+    let mut newest = Frame::default();
+    decode(&bytes[(len - 1) * frame_bytes..], &mut newest);
+    let mut batch = pipe.feed_batch(Box::new(Bytes(bytes)), frame_bytes, 0..len, (0, None), decode, Some(read));
+    Arc::get_mut(&mut batch).unwrap().newest = Some(Arc::new(newest));
+    batch
+}
+
+#[test]
+fn dma_grid_matches_the_volts_oracle_with_one_to_four_lanes() {
+    for (tdiv, delay) in [(5e-9, 0.0), (50e-9, -100e-9), (500e-9, 0.0), (1e-6, 150e-9)] {
+        for lanes in 1..=4 {
+            let pipe = Pipe::start(0, 0, Box::leak(Box::default()));
+            let m = Model { delay, ..model(tdiv, true, false) };
+            pipe.publish_view(&m, 128, 64, Interp::Exact, Default::default());
+            let view = oos_hal::sync::lock(&pipe.view).view.clone().unwrap();
+            let batch = raw_fixture(&pipe, lanes, 17);
+            verify_codes(&format!("{tdiv} s/div, {lanes} lanes"), &batch, &view, 0..17);
+        }
+    }
+}
+
 fn original(previous: Option<&Record>, mut record: Record, n: u32) -> Record {
     if let Some(previous) = previous {
         let a = 1.0 / n as f32;
@@ -58,6 +130,88 @@ fn original(previous: Option<&Record>, mut record: Record, n: u32) -> Record {
         }
     }
     record
+}
+
+pub(in crate::drawpipe::stage) fn verify_codes(name: &str, batch: &Arc<Batch>, view: &View, range: Range<usize>) {
+    let mut scratch = Scratch::default();
+    let mut decoded = Frame::default();
+    let mut meta = Frame::default();
+    let mut reference = Default::default();
+    let model = Model { acq: AcqMode::Average, avg_hw: false, ..view.m.clone() };
+    let grid = hw_grid(&model);
+    let screen_dt = grid.1 / grid.0 as f64;
+    let mut stats = [0.0f32; 2];
+    let mut scales = [0.0; NCH];
+    for index in range.clone() {
+        let bytes = chunk(batch, index);
+        let layout = batch.codes.as_ref().unwrap()(index, bytes, &mut meta).unwrap();
+        scales = std::array::from_fn(|c| {
+            let codes = layout.channel(bytes, c);
+            codes.corrected.map_or(codes.affine.0, |cal| (cal.scale / 7500.0) as f32).abs()
+        });
+        let record = decoded_newest_at(batch, index).unwrap_or_else(|| {
+            batch.decode.decode(index, bytes, &mut decoded);
+            &decoded
+        });
+        let (want, found) = crate::board::record::record_trigger(record, &model, grid.0, grid.1, grid.2);
+        let (_, _, got, triggered) = codes::read(&mut scratch, batch, &model, grid, screen_dt, index)
+            .unwrap_or_else(|cause| panic!("{name} record {index} used fallback bit {}", cause.bit()));
+        assert_eq!((got.to_bits(), triggered), (want.to_bits(), found), "{name} record {index}");
+        assert!(!crate::board::record::resample_channels(record, &model, grid, want, &mut reference));
+        stats[0] = stats[0].max(adc_error(&scratch.screen, &reference, scales));
+    }
+    for count in [2, 4, 16, 1024] {
+        stats[1] = stats[1].max(compare_fold(batch, view, &model, range.clone(), count, scales));
+    }
+    // The Q14 coefficients introduce a small additional Lanczos error. The linear fold
+    // also allows several f32 roundings from joining and reseeding around a nonzero offset.
+    let tolerance = if meta.dt > 2.0 * screen_dt { [8.0, 8.0] } else { [0.125, 0.5] };
+    println!("{name}: {} records, 0 fractional samples, grid/fold ADC errors {stats:?}", range.len());
+    assert!(stats.into_iter().zip(tolerance).all(|(error, limit)| error <= limit), "{name}: limits {tolerance:?}");
+}
+
+fn compare_fold(
+    batch: &Arc<Batch>,
+    view: &View,
+    model: &Model,
+    range: Range<usize>,
+    count: u32,
+    scales: [f32; NCH],
+) -> f32 {
+    let m = Model { avg_count: count, ..model.clone() };
+    let view = Arc::new(View { gen: view.gen, m, interp: view.interp, w: view.w, h: view.h, zoom: view.zoom });
+    let mut expected = None;
+    for index in range {
+        let frame = decoded_newest_at(batch, index).map_or_else(
+            || {
+                let mut frame = Frame::default();
+                batch.decode.decode(index, chunk(batch, index), &mut frame);
+                Arc::new(frame)
+            },
+            |frame| Arc::new(frame.clone()),
+        );
+        expected = Some(original(expected.as_ref(), hw_record(&view.m, frame), count));
+    }
+    let (output, _) = average_batch(&mut Painter::new(4, 0), batch, &view);
+    let output = output.unwrap();
+    let mut actual = Default::default();
+    output.apply(None, &mut actual);
+    output.shown();
+    adc_error(&actual, &expected.unwrap().ch, scales)
+}
+
+fn adc_error(actual: &[Vec<f32>; NCH], expected: &[Vec<f32>; NCH], scales: [f32; NCH]) -> f32 {
+    let mut error = 0.0f32;
+    for ((actual, expected), scale) in actual.iter().zip(expected).zip(scales) {
+        assert_eq!(actual.len(), expected.len());
+        for (&y, &x) in actual.iter().zip(expected) {
+            assert_eq!(y.is_nan(), x.is_nan());
+            if x.is_finite() {
+                error = error.max((y - x).abs() / scale);
+            }
+        }
+    }
+    error
 }
 
 #[test]
@@ -134,7 +288,7 @@ fn warmed_average_reuses_worker_and_output_buffers() {
     let m = Model { acq: AcqMode::Average, avg_count: 16, ..model(100e-9, true, false) };
     pipe.publish_view(&m, 128, 64, Interp::Exact, Default::default());
     let view = oos_hal::sync::lock(&pipe.view).view.clone().unwrap();
-    let b = fixture(&pipe, 0, 48);
+    let b = raw_fixture(&pipe, 4, 48);
     let mut painter = Painter::new(4, 0);
     painter.pool = Pool::new(4, 0, counted_job);
     let mut screen = Default::default();
@@ -177,6 +331,7 @@ fn average_folds_the_dma_decode_when_the_newest_tap_is_a_separate_replay() {
     let mut record = output.record(&replay);
     output.apply(None, &mut record.ch);
     assert_eq!(record.ch[0][1800], 0.25);
+    assert_eq!(batch.counters.routes.fallbacks.entries().find(|(name, _)| *name == "no_words").unwrap().1, 1);
     let raw = record.raw.as_ref().unwrap();
     assert!(Arc::ptr_eq(&raw.frame, &replay));
     assert_eq!((raw.i0, raw.i1, raw.t0), crate::board::record::raw_window(560.0, record.t0, hw_grid(&m).1, 1e-9, 1120));

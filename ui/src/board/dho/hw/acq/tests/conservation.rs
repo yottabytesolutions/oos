@@ -37,6 +37,55 @@ fn assert_conservation(fields: &Fields, pictured: u64) {
     assert!(recovered <= fields["shown"] && fields["shown"] <= fields["read"] + pictured, "{fields:?}");
 }
 
+#[test]
+fn software_average_raw_readout_reaches_a_picture_or_reports_its_fallback() {
+    for (channels, tdiv) in [(1, 1e-6), (1, 10e-6), (4, 1e-6), (4, 10e-6)] {
+        assert_average_raw_readout(channels, tdiv);
+    }
+}
+
+fn assert_average_raw_readout(channels: usize, tdiv: f64) {
+    let scope = Scope::new();
+    let intake = scope.gated_worker();
+    let out = HwShared::default();
+    let src = crate::wave::Source::Hw { shared: out.clone(), seen: 0 };
+    let switches = Switches { compress: true, ..Default::default() };
+    let mut ui = Ui::new(src, crate::ui::host::Host::headless().with_switches(switches));
+    ui.m = picture::model(tdiv);
+    ui.m.acq = crate::model::AcqMode::Average;
+    ui.m.avg_hw = false;
+    ui.m.avg_count = 16;
+    for (index, ch) in ui.m.ch.iter_mut().enumerate() {
+        ch.on = index < channels;
+    }
+    ui.step(0.0);
+    let want = lock(&out).want.clone().unwrap();
+    assert_eq!(want.compress, 1);
+    let run = Run::Pictures(picture::StopAt::Between);
+    let (mut io, _) = sim::fixture(&want, out.clone(), (run, 4, false), Some(intake));
+    let (mut source, _) = source(&out, &io);
+    capture(&mut source, &mut io);
+    assert!(!lock(&out).record_flow.serial);
+    let batch = io.clock.take_submission();
+    if channels == 4 && tdiv == 1e-6 {
+        assert!(batch, "the raw 4-channel sample grid fits the Average worker");
+    }
+    ui.step(1.0 / 30.0);
+    let fields = record_fields(&mut ui);
+    assert_eq!(fields["read"], 4);
+    assert_eq!(fields["shown"], 4);
+    assert_conservation(&fields, 4);
+    let text = drawpipe::counters().pipeline_text(Duration::ZERO, 0);
+    let fallback = if batch { 0 } else { 4 };
+    assert!(text.contains(&format!(" average_pairs={fallback} ")), "{text}");
+    #[cfg(feature = "private-picture-counts")]
+    if batch {
+        let pictures = drawpipe::counters().timing.picture_counts().text();
+        assert!(pictures.contains(" fresh=1 "), "{pictures}");
+        assert!(pictures.contains(" first_records=4 "), "{pictures}");
+    }
+}
+
 fn recovered(draw: impl FnOnce() -> Ui, read: u64, deposited: u64, loss: (&str, u64)) -> Fields {
     let _scope = Scope::new();
     let mut ui = draw();

@@ -32,6 +32,11 @@ pub(crate) use wide::{WideSearch, WideShard};
 pub(crate) type SearchResult = (Option<f64>, Option<Edge>);
 pub(crate) type WideRefine<'a> = dyn FnMut(WideSearch, &dyn Fn(f64) -> bool) -> SearchResult + 'a;
 
+/// Calibrated bounds that also enclose the shared one-sample smoothing pass.
+pub(crate) fn code_trigger_bounds(codes: &Codes<'_>) -> Option<(f32, f32)> {
+    pruned::bounds_for_single_sample_smoothing(codes)
+}
+
 pub(crate) trait TriggerSamples: Samples {
     fn trigger_codes(&self) -> Option<&Codes<'_>> {
         None

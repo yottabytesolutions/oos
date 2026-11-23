@@ -4,6 +4,8 @@ use super::*;
 use crate::drawpipe::average::{self, Fold};
 use std::ops::Range;
 
+mod codes;
+
 #[derive(Default)]
 pub(super) struct Scratch {
     pub(super) frame: Frame,
@@ -48,23 +50,41 @@ impl Partial {
         (grid, screen_dt): ((usize, f64, f64), f64),
         index: usize,
     ) -> Option<(f64, bool)> {
-        let frame = decoded_newest_at(b, index).unwrap_or_else(|| {
-            fixture_stage!(Decode, b.decode.decode(index, chunk(b, index), &mut scratch.frame));
-            &scratch.frame
-        });
-        if !average::accepts_samples(screen_dt, frame.dt, frame.envelope) {
-            return None;
-        }
-        let (points, window, first) = grid;
-        let (ti, triggered) =
-            fixture_stage!(Trigger, crate::board::record::record_trigger(frame, m, points, window, first));
-        crate::board::record::resample_channels(frame, m, grid, ti, &mut scratch.screen);
+        let (dt, pre, ti, triggered) = match codes::read(scratch, b, m, grid, screen_dt, index) {
+            Ok(trigger) => trigger,
+            Err(cause) => {
+                b.counters.routes.fallbacks.add(cause.bit());
+                decoded_screen(scratch, b, m, grid, screen_dt, index)?
+            }
+        };
         fixture_stage!(Accumulate, self.fold.push(&scratch.screen, m.avg_count));
         let tap_ti = newest_at(b, index)
-            .filter(|tap| (tap.dt, tap.pre) != (frame.dt, frame.pre))
-            .map_or(ti, |tap| tap.pre as f64 + (ti - frame.pre as f64) * frame.dt / tap.dt);
+            .filter(|tap| (tap.dt, tap.pre) != (dt, pre))
+            .map_or(ti, |tap| tap.pre as f64 + (ti - pre as f64) * dt / tap.dt);
         Some((tap_ti, triggered))
     }
+}
+
+fn decoded_screen(
+    scratch: &mut Scratch,
+    b: &Batch,
+    m: &Model,
+    grid: (usize, f64, f64),
+    screen_dt: f64,
+    index: usize,
+) -> Option<(f64, usize, f64, bool)> {
+    let frame = decoded_newest_at(b, index).unwrap_or_else(|| {
+        fixture_stage!(Decode, b.decode.decode(index, chunk(b, index), &mut scratch.frame));
+        &scratch.frame
+    });
+    if !average::accepts_samples(screen_dt, frame.dt, frame.envelope) {
+        return None;
+    }
+    let (points, window, first) = grid;
+    let (ti, triggered) =
+        fixture_stage!(Trigger, crate::board::record::record_trigger(frame, m, points, window, first));
+    crate::board::record::resample_channels(frame, m, grid, ti, &mut scratch.screen);
+    Some((frame.dt, frame.pre, ti, triggered))
 }
 
 pub(super) fn average_batch(
@@ -155,3 +175,5 @@ pub(super) fn publish_average(
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(super) use tests::verify_codes;

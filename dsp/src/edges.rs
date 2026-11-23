@@ -20,12 +20,17 @@ pub fn edges(v: &[f32], level: f32, hyst: f32) -> Vec<Edge> {
 }
 
 /// Visit centred-hysteresis edges in sample order without allocating a list.
-pub fn visit_edges(v: &[f32], level: f32, hyst: f32, mut emit: impl FnMut(Edge)) {
+pub fn visit_edges(v: &[f32], level: f32, hyst: f32, emit: impl FnMut(Edge)) {
+    visit_edges_of(v.iter().copied(), level, hyst, emit);
+}
+
+/// The same comparator over samples produced on demand.
+pub fn visit_edges_of(samples: impl Iterator<Item = f32>, level: f32, hyst: f32, mut emit: impl FnMut(Edge)) {
     let (lo, hi) = (level - hyst / 2.0, level + hyst / 2.0);
     let mut state: Option<bool> = None;
     let mut last_cross: Option<f64> = None;
     let mut prev: Option<(usize, f32)> = None;
-    for (i, &x) in v.iter().enumerate() {
+    for (i, x) in samples.enumerate() {
         if !x.is_finite() {
             continue;
         }

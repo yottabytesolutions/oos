@@ -8,6 +8,10 @@ use super::Frame;
 use crate::model::*;
 use std::sync::Arc;
 
+mod edge;
+pub(crate) use edge::record_trigger_codes;
+use edge::{event_bounds, event_near};
+
 pub(crate) const HW_POINTS: usize = 3600;
 
 pub(crate) fn hw_grid(m: &Model) -> (usize, f64, f64) {
@@ -135,16 +139,7 @@ fn trigger_point_with(
     }
     // the software trigger looks only around the hardware trigger point: searching whole 100 k-point frames for
     // every record cost most of the frame time; the video trigger counts fields and keeps the whole frame
-    let screen = (window / f.dt).ceil() as usize;
-    // the hardware trigger already put the event near `pre`: look a tenth of a screen around it, plus the time the
-    // trigger condition needs before its decision (pulse widths, timeouts, Nth-edge idle time)
-    let near = (screen / 10).max(2000);
-    let span = (m.trig_span() / f.dt).ceil().max(0.0) as usize;
-    let (lo, hi) = if m.trig_type == TrigType::Video {
-        (0, len)
-    } else {
-        (f.pre.saturating_sub(near + span), (f.pre + near).min(len))
-    };
+    let ((lo, hi), search) = event_bounds(f, m, window, len);
     let e: [f32; 0] = [];
     let refs: [&[f32]; NCH] =
         std::array::from_fn(|c| if f.ch[c].len() < hi || lo >= hi { &e[..] } else { &f.ch[c][lo..hi] });
@@ -171,53 +166,10 @@ fn trigger_point_with(
         // a pattern over D lines: as above; the frame counts as triggered when the pattern occurs in it
         f.la.as_ref().filter(|l| crate::ui::la::pattern_at(&l.words, &m.pat_la, 0).is_some()).map(|_| f.pre as f64)
     } else if usable {
-        event_near(f, m, (lo, near, screen / 2), (window, t_first, len), &inp)
+        event_near(f, m, (lo, search), (window, t_first, len), &inp)
     } else {
         None
     }
-}
-
-fn event_near(
-    f: &Frame,
-    m: &Model,
-    (lo, near, half_screen): (usize, usize, usize),
-    (window, first, len): (f64, f64, usize),
-    input: &oos_dsp::trigger::Input<'_>,
-) -> Option<f64> {
-    let fits = trigger_fits(f.dt, (window, first, len));
-    let distance = |t: f64| (t - f.pre as f64).abs();
-    if m.trig_type != TrigType::Edge {
-        let all = crate::trig::find_all(m, input);
-        return all
-            .iter()
-            .map(|t| t + lo as f64)
-            .filter(|&t| fits(t))
-            .min_by(|&a, &b| distance(a).total_cmp(&distance(b)))
-            .or_else(|| (!all.is_empty()).then_some(f.pre as f64));
-    }
-    let source = m.trig_src;
-    let nearest = |samples: &[f32], base: usize| {
-        let mut found = None;
-        let mut any = false;
-        oos_dsp::edges::visit_edges(samples, m.trig_level, input.hyst[source], |edge| {
-            if m.slope == Slope::Either || edge.rising == (m.slope == Slope::Rise) {
-                any = true;
-                let time = base as f64 + edge.t;
-                if fits(time) && found.is_none_or(|old| distance(time).total_cmp(&distance(old)).is_lt()) {
-                    found = Some(time);
-                }
-            }
-        });
-        (found, any)
-    };
-    let (found, any) = nearest(input.ch[source], lo);
-    if found.is_some() || near >= half_screen {
-        return found.or(any.then_some(f.pre as f64));
-    }
-    let first = f.pre.saturating_sub(half_screen);
-    let end = (f.pre + half_screen).min(len);
-    let (wide, any_wide) = nearest(f.ch[source].get(first..end).unwrap_or_default(), first);
-    wide.or((any || any_wide).then_some(f.pre as f64))
 }
 
 /// Turns the latest frame into a screen record: software trigger (oos-dsp) closest to the hardware trigger point,

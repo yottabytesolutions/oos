@@ -1,8 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
+use std::sync::mpsc::{sync_channel, SyncSender};
+use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
+
+mod reply;
+use reply::{Reply, ReplySender};
 
 pub(crate) struct Timing {
     pub(crate) wall: Duration,
@@ -27,7 +31,7 @@ pub(crate) struct Pool<J, S> {
 
 struct Worker<J> {
     send: SyncSender<(Vec<J>, bool)>,
-    reply: Receiver<(Vec<J>, Duration)>,
+    reply: Arc<Reply<(Vec<J>, Duration)>>,
     join: JoinHandle<()>,
 }
 
@@ -36,15 +40,14 @@ impl<J: Send + 'static, S: Default + Send + 'static> Pool<J, S> {
         let mut pool = Self { workers: Vec::new(), shards: Vec::new(), run, scratch: S::default() };
         for k in 1..workers {
             let (tx, rx) = sync_channel::<(Vec<J>, bool)>(1);
-            let (reply, done) = sync_channel(1);
+            let done = Arc::new(Reply::new());
+            let reply = ReplySender::new(done.clone());
             match std::thread::Builder::new().name(format!("deposit{k}")).spawn(move || {
                 crate::placement::to_little_cores(little);
                 let mut scratch = S::default();
                 while let Ok((mut jobs, timed)) = rx.recv() {
                     let elapsed = run_shard(&mut jobs, &mut scratch, run, timed);
-                    if reply.send((jobs, elapsed)).is_err() {
-                        break;
-                    }
+                    reply.send((jobs, elapsed));
                 }
             }) {
                 Ok(join) => {

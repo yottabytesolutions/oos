@@ -156,9 +156,7 @@ fn warmed_deep_column_placement_allocates_nothing() {
         for _ in 0..4 {
             let (allocations, count) = count_own(|| place(&mut painter));
             assert_eq!(count, 1);
-            // A sync_channel allocates its waiter storage the first time it blocks. Which
-            // invocation first blocks depends on scheduling, so count transport separately.
-            assert_eq!(allocations - painter.columns.dispatch_allocations(), 0, "{shape:?} coordinator");
+            assert_eq!(allocations, 0, "{shape:?} coordinator");
             assert_eq!(painter.columns.task_allocations().collect::<Vec<_>>(), [0; 4], "{shape:?} workers");
         }
     }
@@ -255,7 +253,7 @@ fn check_pair_trigger(offset: usize, expected_wide: u64) {
     // Trigger and envelope dispatch share the same warmed jobs, including the worker sample buffers.
     let (allocations, count) = count_own(|| painter.place_slice(&input.batch, &input.view, 0));
     assert_eq!(count, 1);
-    assert_eq!(allocations - painter.columns.dispatch_allocations(), 0);
+    assert_eq!(allocations, 0);
     assert_eq!(painter.columns.task_allocations().collect::<Vec<_>>(), [0; 4]);
 }
 

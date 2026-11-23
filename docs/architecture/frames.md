@@ -147,11 +147,23 @@ and [owner composition](../../ui/src/drawpipe/stage/owner/compose.rs).
 can use the zoom route. Other eligible hardware triggers use the captured trigger position with zoom
 off. Shifted enabled channels in newly eligible mode and trigger combinations can require the record
 route. Single, segments, Bus, Video All Fields, software mask or zones, XY, Z input, roll and scan stay
-on record or stream paths. Software Average on a plain sample grid folds contiguous record ranges in
-the batch pool and sends one screen average with the newest raw waveform tap. The fold uses the same
-DMA samples as placement. Both software routes seed a fresh average when the time grid, trigger
+on record or stream paths. Software Average folds raw DMA records at every sample density supported by
+the batch route for its edge-triggered views. It averages Normal acquisitions on the screen grid.
+For each record, refine the fractional trigger and linearly interpolate the two adjacent corrected
+samples at each grid position. Sparse settings that require reconstruction retain their Lanczos
+interpolation. Fold the points in capture order with the exponential moving average, using weight
+`1 / N` for each new input. At two or more samples per grid point, this replaces the blend of
+per-record envelope extremes. HiRes continues to use a boxcar.
+
+Workers fold contiguous record ranges and send one 3600-point average with the newest raw waveform
+tap. The linear pass reads at most two source words per point and its scratch scales with the grid,
+independently of the raw record length. The worker cost feeds measured admission. Average batches
+have hardware and tap capacity bounds and use no difference planes.
+Both software routes seed a fresh average when the time grid, trigger
 alignment, record depth or enabled channels change. Vertical scale and offset changes preserve the
-voltage seed. The records path still handles hardware Average and software Average on min/max pairs. See
+voltage seed. The records path still handles hardware Average and software Average on min/max pairs.
+The software Average fallback counters report the primary cause for each record consumed by the UI.
+Zoom in the worker route views the accepted average grid. See
 [`Ui::fast_ok`](../../ui/src/ui.rs) and [hardware trigger selection](../../ui/src/drawpipe/route.rs).
 Taps feed record consumers. Display overlays are composed separately from the deposit planes.
 

@@ -87,8 +87,7 @@ printf ':RUN\n' | nc -w 2 "$SCPI_HOST" 5555
 
 To profile the software Average worker with an existing plain fixture, run with
 `--average-16 --group short-1ch-5ns`. The report includes `average_accumulate` along with decode,
-trigger and resample. Choose a group that uses fewer than two native samples per screen point and
-has no captured min/max pairs.
+trigger and resample. Use fixtures captured as raw samples at either sparse or dense time bases.
 
 The report pools cold per-record timings across fixtures and rounds and gives the range of each stage's
 round medians. It counts non-null samples once per record per round, and counts a round when it has at least

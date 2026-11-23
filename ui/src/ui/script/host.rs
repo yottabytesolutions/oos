@@ -5,7 +5,7 @@
 pub mod hot_paths;
 pub mod soak;
 
-use super::batch::BatchScript;
+use super::batch::{BatchScript, RecordDelivery};
 use crate::board::scripted::BatchKind;
 use crate::{cmd, gfx::Canvas, gpu, model, ui::Ui, GpuLayers};
 
@@ -49,17 +49,23 @@ fn run_headless(args: &[String]) -> Result<(), String> {
     oos_hal::model::init(oos_hal::model::Platform::build(None, None, Some("DHO924S")));
     let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 }, crate::ui::host::Host::headless());
     configure(&mut ui, &path, args)?;
-    let batch = batch.map(|(kind, zoom_records)| BatchScript::new(&mut ui, kind).with_zoom_records(zoom_records));
+    let batch = batch.map(|(kind, delivery)| BatchScript::new(&mut ui, kind).with_record_delivery(delivery));
     run_script(&mut ui, &path, None, batch, true)
 }
 
-fn scripted_batch(args: &[String]) -> Result<Option<(BatchKind, bool)>, String> {
+fn scripted_batch(args: &[String]) -> Result<Option<(BatchKind, RecordDelivery)>, String> {
     if !args.iter().any(|a| a == "--scripted-batch") {
         return Ok(None);
     }
     let value = crate::arg(args, "--scripted-batch").ok_or("--scripted-batch KIND required")?;
-    let (kind, zoom_records) = value.strip_suffix("-zoom-records").map_or((value.as_str(), false), |kind| (kind, true));
-    Ok(Some((BatchKind::parse(kind)?, zoom_records)))
+    let (kind, delivery) = if let Some(kind) = value.strip_suffix("-zoom-records") {
+        (kind, RecordDelivery::Zoom)
+    } else if let Some(kind) = value.strip_suffix("-average-records") {
+        (kind, RecordDelivery::Average)
+    } else {
+        (value.as_str(), RecordDelivery::Auto)
+    };
+    Ok(Some((BatchKind::parse(kind)?, delivery)))
 }
 
 fn configure(ui: &mut Ui, path: &str, args: &[String]) -> Result<Option<gpu::Gpu>, String> {

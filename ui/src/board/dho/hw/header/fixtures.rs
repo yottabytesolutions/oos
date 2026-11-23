@@ -16,6 +16,11 @@ pub(crate) use super::format::Fixture;
 use super::format::PictureView;
 
 impl Fixture {
+    pub(crate) fn raw_batch_samples(&self) -> bool {
+        let (settings, params) = self.settings();
+        super::super::decode::pair_step(settings, params) == 1
+    }
+
     /// The worker view of a batch that reached placement with records, or `None` after saying on stderr why not.
     pub(crate) fn placement_view(&self) -> Option<&PictureView> {
         let reason = match (self.view(), self.expected_route()) {

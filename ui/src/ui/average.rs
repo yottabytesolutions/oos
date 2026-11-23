@@ -71,9 +71,6 @@ pub(super) fn blend_record_average(ui: &mut Ui, rec: &mut Record, first: FirstDr
         ui.batch_picture.average.grid = Some(grid);
         return;
     }
-    if ui.src.is_hw() {
-        average::record_fallback(&ui.m, rec);
-    }
     let hw_avg = rec.raw.as_ref().is_some_and(|raw| raw.frame.hw_avg);
     let seed = if hw_avg { None } else { previous(ui, &grid, first) };
     if let Some(prev) = seed {
@@ -89,6 +86,31 @@ pub(super) fn blend_record_average(ui: &mut Ui, rec: &mut Record, first: FirstDr
         }
     }
     ui.batch_picture.average.grid = Some(grid);
+}
+
+pub(super) fn count_record_fallback(ui: &Ui, rec: &Record) {
+    use crate::drawpipe::metrics::fallback::{self, Cause};
+    if !ui.src.is_hw() || !average::software(&ui.m) {
+        return;
+    }
+    let m = &ui.m;
+    let frame = rec.raw.as_ref().map(|raw| &raw.frame);
+    let cause = match () {
+        _ if frame.is_some_and(|frame| frame.roll) => Cause::AverageRoll,
+        _ if frame.is_some_and(|frame| frame.scan) => Cause::AverageScan,
+        _ if m.trig_mode == TrigMode::Single => Cause::AverageSingle,
+        _ if m.segments != 0 => Cause::AverageSegments,
+        _ if m.la_on() || m.trig_on_la() => Cause::AverageLa,
+        _ if m.trig_type != TrigType::Edge => Cause::AverageTrigger,
+        _ if m.mask_on => Cause::AverageMask,
+        _ if m.zones.iter().any(|z| z.usable()) => Cause::AverageZone,
+        _ if ui.xy => Cause::AverageXy,
+        _ if m.z_src.is_some() => Cause::AverageZ,
+        _ if m.ch.iter().zip(m.deskew_ch).any(|(ch, shift)| ch.on && shift != 0.0) => Cause::AverageDeskew,
+        _ if frame.is_some_and(|frame| frame.envelope) => Cause::AveragePairs,
+        _ => Cause::DirectRecord,
+    };
+    fallback::direct(|| cause.mark());
 }
 
 fn remember_average(ui: &mut Ui, rec: &Record) {

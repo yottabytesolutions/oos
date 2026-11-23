@@ -3,9 +3,23 @@
 use super::*;
 
 fn signal(code: u8, frame: &mut Frame) {
+    fill_signal(code, frame, 1);
+}
+
+pub(super) fn dense_signal(code: u8, frame: &mut Frame) {
+    fill_signal(code, frame, 40);
+}
+
+fn fill_signal(code: u8, frame: &mut Frame, repeat: usize) {
     decode(0, frame);
+    if repeat > 1 {
+        frame.dt = 0.5e-9;
+        frame.pre *= repeat;
+        frame.ch[0].resize(frame.ch[0].len() * repeat, 0.0);
+    }
     frame.fixed_ti = Some(frame.pre as f64);
     for (i, sample) in frame.ch[0].iter_mut().enumerate() {
+        let i = i / repeat;
         let phase = (i / 5) % 2;
         let noise = match code {
             0 => 1.0,
@@ -50,8 +64,15 @@ fn check_transfer(ui: &mut Ui, display: &[f32], raw: &[f32]) {
 
 #[test]
 fn noisy_batch_feeds_measurements_statistics_cursor_dvm_and_waveform_from_the_average() {
+    for (tdiv, signal) in [("0.0000001", signal as fn(u8, &mut Frame)), ("0.000001", dense_signal)] {
+        check_noisy_batch_readers(tdiv, signal);
+    }
+}
+
+fn check_noisy_batch_readers(tdiv: &str, signal: fn(u8, &mut Frame)) {
     let _scope = drawpipe::test_scope::Scope::new();
     let mut ui = ui();
+    crate::store::set(&mut ui.m, "tdiv", tdiv).unwrap();
     ui.m.meas = vec![(Meas::Vpp, WaveId::Ch(0))];
     ui.m.meas_full_record = true;
     ui.m.dvm_on = true;
@@ -59,6 +80,8 @@ fn noisy_batch_feeds_measurements_statistics_cursor_dvm_and_waveform_from_the_av
     submit_with(&ui, 0, &[0, 1], signal);
     ui.step(0.04);
     let record = ui.last[0].as_ref().unwrap();
+    assert!(!record.pairs);
+    assert_eq!(record.ch[0].len(), crate::board::record::HW_POINTS);
     let view = record.ch[0].clone();
     let raw = record.raw.as_ref().unwrap().frame.ch[0].clone();
     let vpp = ui.meas(0, Meas::Vpp);

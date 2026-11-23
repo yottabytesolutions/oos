@@ -4,7 +4,7 @@
 
 use crate::board::scripted::{self, Batch, BatchKind, BatchSource, ScriptBytes, ScriptedBatchSource};
 use crate::drawpipe::{self, Counters, RawBatch};
-use crate::model::RunState;
+use crate::model::{Model, RunState};
 use crate::ui::Ui;
 use crate::wave::Source;
 use oos_hal::sync::lock;
@@ -29,10 +29,28 @@ struct Pending {
     workers: bool,
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum RecordDelivery {
+    Auto,
+    Always,
+    Zoom,
+    Average,
+}
+
+impl RecordDelivery {
+    fn uses_records(self, model: &Model) -> bool {
+        match self {
+            Self::Auto => false,
+            Self::Always => true,
+            Self::Zoom => model.zoom,
+            Self::Average => drawpipe::average::software(model),
+        }
+    }
+}
+
 pub struct BatchScript {
     source: ScriptedBatchSource,
-    record_only: bool,
-    zoom_records: bool,
+    delivery: RecordDelivery,
     spare: Option<ScriptBytes>,
     id: usize,
     pending: Option<Pending>,
@@ -49,8 +67,10 @@ impl BatchScript {
 
         Self {
             source: scripted::source(kind, 0x9e3779b97f4a7c15),
-            record_only: matches!(kind, BatchKind::Roll | BatchKind::Scan | BatchKind::HardwareAverage),
-            zoom_records: false,
+            delivery: match kind {
+                BatchKind::Roll | BatchKind::Scan | BatchKind::HardwareAverage => RecordDelivery::Always,
+                _ => RecordDelivery::Auto,
+            },
             spare: None,
             id: 0,
             pending: None,
@@ -59,8 +79,10 @@ impl BatchScript {
         }
     }
 
-    pub(super) fn with_zoom_records(mut self, enabled: bool) -> Self {
-        self.zoom_records = enabled;
+    pub(super) fn with_record_delivery(mut self, delivery: RecordDelivery) -> Self {
+        if matches!(self.delivery, RecordDelivery::Auto) {
+            self.delivery = delivery;
+        }
         self
     }
 
@@ -71,7 +93,7 @@ impl BatchScript {
         if self.pending.is_some() {
             return Err(format!("batch {} still in flight", self.id));
         }
-        let records = self.record_only || (self.zoom_records && ui.m.zoom);
+        let records = self.delivery.uses_records(&ui.m);
         let Some(identity) = running_identity(ui, records) else { return Ok(()) };
         let Source::Hw { shared, .. } = &ui.src else { return Err("scripted source replaced".into()) };
         if !lock(shared).queue.is_empty() {
@@ -86,7 +108,7 @@ impl BatchScript {
         Counters::add(&drawpipe::counters().acquired, frames as u64);
         let mut newest = batch.newest(identity.epoch());
         newest.cfg = identity.gen();
-        let workers = pipe.accepting() && drawpipe::average::geometry_ok(pipe, identity, newest.dt, newest.envelope);
+        let workers = pipe.accepting() && drawpipe::average::input_ok(pipe, identity, newest.envelope);
         self.pending = Some(Pending { before, frames: frames as u64, newest: newest.seq, workers });
         let newest = Arc::new(newest);
         if workers {

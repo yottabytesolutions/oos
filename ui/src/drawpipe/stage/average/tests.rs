@@ -44,8 +44,7 @@ fn fixture(pipe: &Pipe, first: usize, len: usize) -> Arc<Batch> {
     batch
 }
 
-fn raw_fixture(pipe: &Pipe, lanes: usize, len: usize) -> Arc<Batch> {
-    const SAMPLES: usize = 256;
+fn raw_fixture(pipe: &Pipe, lanes: usize, len: usize, (samples, dt): (usize, f64)) -> Arc<Batch> {
     let stride = lanes.next_power_of_two();
     let mut layout = CodeLayout::uncorrected(
         stride,
@@ -60,14 +59,14 @@ fn raw_fixture(pipe: &Pipe, lanes: usize, len: usize) -> Arc<Batch> {
     });
     layout.corrected = Some(corrections);
     let read: CodesInto = Arc::new(move |_, _, f| {
-        f.dt = 2e-9;
-        f.pre = SAMPLES / 2;
+        f.dt = dt;
+        f.pre = samples / 2;
         f.ch.iter_mut().for_each(Vec::clear);
         Some(layout)
     });
     let decode: DecodeInto = Arc::new(move |bytes, f| {
-        f.dt = 2e-9;
-        f.pre = SAMPLES / 2;
+        f.dt = dt;
+        f.pre = samples / 2;
         for (c, (out, cal)) in f.ch.iter_mut().zip(corrections).enumerate() {
             out.clear();
             if c < lanes {
@@ -84,12 +83,12 @@ fn raw_fixture(pipe: &Pipe, lanes: usize, len: usize) -> Arc<Batch> {
             }
         }
     });
-    let frame_bytes = SAMPLES * stride * 2;
+    let frame_bytes = samples * stride * 2;
     let mut bytes = Vec::with_capacity(frame_bytes * len);
     for record in 0..len {
-        for i in 0..SAMPLES {
+        for i in 0..samples {
             for (c, cal) in corrections.iter().enumerate().take(stride) {
-                let x = (i as f64 - SAMPLES as f64 / 2.0 - record as f64 / len as f64) * (0.14 + 0.04 * c as f64);
+                let x = (i as f64 - (samples / 2) as f64 - record as f64 / len as f64) * (0.14 + 0.04 * c as f64);
                 let word = 32768 + (5300.0 * x.sin()) as i32 + cal.offsets[i % 8];
                 bytes.extend((word as u16).to_le_bytes());
             }
@@ -110,7 +109,7 @@ fn dma_grid_matches_the_volts_oracle_with_one_to_four_lanes() {
             let m = Model { delay, ..model(tdiv, true, false) };
             pipe.publish_view(&m, 128, 64, Interp::Exact, Default::default());
             let view = oos_hal::sync::lock(&pipe.view).view.clone().unwrap();
-            let batch = raw_fixture(&pipe, lanes, 17);
+            let batch = raw_fixture(&pipe, lanes, 17, (256, 2e-9));
             verify_codes(&format!("{tdiv} s/div, {lanes} lanes"), &batch, &view, 0..17);
         }
     }
@@ -157,47 +156,17 @@ pub(in crate::drawpipe::stage) fn verify_codes(name: &str, batch: &Arc<Batch>, v
         let (_, _, got, triggered) = codes::read(&mut scratch, batch, &model, grid, screen_dt, index)
             .unwrap_or_else(|cause| panic!("{name} record {index} used fallback bit {}", cause.bit()));
         assert_eq!((got.to_bits(), triggered), (want.to_bits(), found), "{name} record {index}");
-        assert!(!crate::board::record::resample_channels(record, &model, grid, want, &mut reference));
+        dense::reference_channels(record, grid, want, &mut reference);
         stats[0] = stats[0].max(adc_error(&scratch.screen, &reference, scales));
     }
     for count in [2, 4, 16, 1024] {
-        stats[1] = stats[1].max(compare_fold(batch, view, &model, range.clone(), count, scales));
+        stats[1] = stats[1].max(dense::compare_fold(batch, view, &model, range.clone(), count, scales));
     }
     // The Q14 coefficients introduce a small additional Lanczos error. The linear fold
     // also allows several f32 roundings from joining and reseeding around a nonzero offset.
     let tolerance = if meta.dt > 2.0 * screen_dt { [8.0, 8.0] } else { [0.125, 0.5] };
-    println!("{name}: {} records, 0 fractional samples, grid/fold ADC errors {stats:?}", range.len());
+    println!("{name}: {} records, trigger error 0 samples, grid/fold ADC errors {stats:?}", range.len());
     assert!(stats.into_iter().zip(tolerance).all(|(error, limit)| error <= limit), "{name}: limits {tolerance:?}");
-}
-
-fn compare_fold(
-    batch: &Arc<Batch>,
-    view: &View,
-    model: &Model,
-    range: Range<usize>,
-    count: u32,
-    scales: [f32; NCH],
-) -> f32 {
-    let m = Model { avg_count: count, ..model.clone() };
-    let view = Arc::new(View { gen: view.gen, m, interp: view.interp, w: view.w, h: view.h, zoom: view.zoom });
-    let mut expected = None;
-    for index in range {
-        let frame = decoded_newest_at(batch, index).map_or_else(
-            || {
-                let mut frame = Frame::default();
-                batch.decode.decode(index, chunk(batch, index), &mut frame);
-                Arc::new(frame)
-            },
-            |frame| Arc::new(frame.clone()),
-        );
-        expected = Some(original(expected.as_ref(), hw_record(&view.m, frame), count));
-    }
-    let (output, _) = average_batch(&mut Painter::new(4, 0), batch, &view);
-    let output = output.unwrap();
-    let mut actual = Default::default();
-    output.apply(None, &mut actual);
-    output.shown();
-    adc_error(&actual, &expected.unwrap().ch, scales)
 }
 
 fn adc_error(actual: &[Vec<f32>; NCH], expected: &[Vec<f32>; NCH], scales: [f32; NCH]) -> f32 {
@@ -285,10 +254,10 @@ fn counted_job(scratch: &mut Scratch, job: &mut Job) {
 #[test]
 fn warmed_average_reuses_worker_and_output_buffers() {
     let pipe = Pipe::start(0, 0, Box::leak(Box::default()));
-    let m = Model { acq: AcqMode::Average, avg_count: 16, ..model(100e-9, true, false) };
+    let m = Model { acq: AcqMode::Average, avg_count: 16, ..model(1e-6, true, false) };
     pipe.publish_view(&m, 128, 64, Interp::Exact, Default::default());
     let view = oos_hal::sync::lock(&pipe.view).view.clone().unwrap();
-    let b = raw_fixture(&pipe, 4, 48);
+    let b = raw_fixture(&pipe, 4, 48, (8_192, 1.25e-9));
     let mut painter = Painter::new(4, 0);
     painter.pool = Pool::new(4, 0, counted_job);
     let mut screen = Default::default();
@@ -343,11 +312,16 @@ fn average_claim_on_a_pairs_grid_is_a_settings_loss() {
     let pipe = Pipe::start(0, 0, counters);
     let id = oos_core::change::Identity::default();
     let m = Model { acq: AcqMode::Average, ..model(2e-6, true, false) };
-    let batch = fixture(&pipe, 0, 2);
-    let dt = newest(&batch).unwrap().dt;
-    assert!(average::geometry_ok(&pipe, id, dt, false));
+    let mut batch = fixture(&pipe, 0, 2);
+    let batch_mut = Arc::get_mut(&mut batch).unwrap();
+    Arc::get_mut(batch_mut.newest.as_mut().unwrap()).unwrap().envelope = true;
+    batch_mut.decode = crate::drawpipe::decoder::Decoder::Plain(Arc::new(|bytes, frame| {
+        synthetic(frame, usize::from(bytes[0]));
+        frame.envelope = true;
+    }));
+    assert!(average::input_ok(&pipe, id, true));
     pipe.publish_view(&m, 128, 64, Interp::Exact, id);
-    assert!(!average::geometry_ok(&pipe, id, dt, false));
+    assert!(!average::input_ok(&pipe, id, true));
     let view = batch_view(&batch, &oos_hal::sync::lock(&pipe.view), pipe.slot.reset_before()).unwrap();
     Counters::add(&counters.acquired, 2);
 
@@ -361,6 +335,8 @@ fn average_claim_on_a_pairs_grid_is_a_settings_loss() {
     assert!(text.contains("lost.settings=2 "), "{text}");
     assert!(text.contains("lost.error=0 "), "{text}");
 }
+
+mod dense;
 
 #[test]
 fn average_tap_exceeding_its_reservation_is_a_buffer_loss() {

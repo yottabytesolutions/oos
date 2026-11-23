@@ -263,27 +263,10 @@ pub(crate) fn samples_for(pipe: &super::Pipe, id: oos_core::change::Identity) ->
     oos_hal::sync::lock(&pipe.view).average_samples(id)
 }
 
-pub(crate) fn geometry_ok(pipe: &super::Pipe, id: oos_core::change::Identity, dt: f64, pairs: bool) -> bool {
-    let state = oos_hal::sync::lock(&pipe.view);
-    !super::same_pair(state.identity, Some(id))
-        || state.view.as_ref().is_none_or(|v| !software(&v.m) || accepts_grid(&v.m, dt, pairs))
-}
-
-pub(super) fn accepts_grid(m: &crate::model::Model, dt: f64, pairs: bool) -> bool {
-    let (points, window, _) = crate::board::record::hw_grid(m);
-    accepts_samples(window / points as f64, dt, pairs)
-}
-
-pub(super) fn accepts_samples(screen_dt: f64, dt: f64, pairs: bool) -> bool {
-    !pairs && screen_dt / dt < 2.0
-}
-
-pub(crate) fn record_fallback(m: &crate::model::Model, rec: &Record) {
-    use super::metrics::fallback::Cause;
-    if !software(m) {
-        return;
+pub(crate) fn input_ok(pipe: &super::Pipe, id: oos_core::change::Identity, pairs: bool) -> bool {
+    if !pairs {
+        return true;
     }
-    let pairs = rec.raw.as_ref().is_some_and(|raw| !accepts_grid(m, raw.frame.dt, raw.frame.envelope));
-    let cause = if pairs { Cause::AveragePairs } else { Cause::DirectRecord };
-    super::counters().routes.fallbacks.add(cause.bit());
+    let state = oos_hal::sync::lock(&pipe.view);
+    !super::same_pair(state.identity, Some(id)) || state.view.as_ref().is_none_or(|v| !software(&v.m))
 }

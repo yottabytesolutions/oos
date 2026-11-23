@@ -7,7 +7,7 @@ use super::{
 use crate::fastdraw::Codes;
 use std::ops::Range;
 
-/// Average's record grid, with exactly the legacy endpoint and interpolation selection rules.
+/// Point samples for Average's screen grid. Each linear point reads at most two DMA words.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct AverageGrid {
     points: usize,
@@ -26,7 +26,8 @@ impl AverageGrid {
         self.sample_dt > 2.0 * self.dt
     }
 
-    pub(crate) fn supports(self, samples: usize) -> bool {
+    /// Short sinc records can touch both ends in one kernel and use the decoded interpolator.
+    pub(crate) fn supports_lanczos_edges(self, samples: usize) -> bool {
         !self.lanczos() || samples >= TAPS
     }
 

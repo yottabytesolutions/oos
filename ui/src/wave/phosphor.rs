@@ -186,10 +186,24 @@ impl Phosphor {
         z: Option<&[f32]>,
         pairs: bool,
     ) {
+        let channel = &m.ch[c];
+        let vertical = (channel.volts_per_div(), channel.offset);
+        self.draw_ex_vertical((c, vertical), m, view, (rec_t0, dt, v, pairs), (w, z));
+    }
+
+    pub(crate) fn draw_ex_vertical(
+        &mut self,
+        (c, vertical): (usize, (f32, f32)),
+        m: &Model,
+        view: (f32, f32),
+        signal: (f64, f64, &[f32], bool),
+        intensity: (u16, Option<&[f32]>),
+    ) {
         let (pw, ph) = (self.w, self.h);
+        let dots = m.dots_at(signal.1 / f64::from(view.0) * (pw as f32 as f64 / f64::from(HDIV)));
         let rows = match self.wide_active {
-            true => draw_trace(&mut self.wide[c], pw, ph, 0, c, m, view, rec_t0, dt, v, w, z, pairs),
-            false => draw_trace(&mut self.map[c], pw, ph, 0, c, m, view, rec_t0, dt, v, w, z, pairs),
+            true => draw_trace(&mut self.wide[c], (pw, ph), (vertical, dots), view, signal, intensity),
+            false => draw_trace(&mut self.map[c], (pw, ph), (vertical, dots), view, signal, intensity),
         };
         self.mark_rows(c, rows);
     }
@@ -320,42 +334,30 @@ fn map_rows<T: crate::picture::deposit::count::Count>(
     band.into_range()
 }
 
-/// `Phosphor::draw_ex` on one band of one channel's map (`pw` x `ph`, row-major): `band` holds the rows `r_lo` ..
-/// `r_lo + band.len() / pw` (the whole map: `r_lo` 0).
-#[allow(clippy::too_many_arguments)]
+/// Draw on one channel's row-major map.
 fn draw_trace<T: crate::picture::deposit::count::Count>(
-    band: &mut [T],
-    pw: usize,
-    ph: usize,
-    r_lo: usize,
-    c: usize,
-    m: &Model,
+    map: &mut [T],
+    (pw, ph): (usize, usize),
+    (vertical, dots): ((f32, f32), bool),
     view: (f32, f32),
-    rec_t0: f64,
-    dt: f64,
-    v: &[f32],
-    w: u16,
-    z: Option<&[f32]>,
-    pairs: bool,
+    (rec_t0, dt, v, pairs): (f64, f64, &[f32], bool),
+    (w, z): (u16, Option<&[f32]>),
 ) -> std::ops::Range<usize> {
-    let (b0, b1) = (r_lo as i32, (r_lo + band.len() / pw.max(1)).min(ph) as i32);
+    let bottom = (map.len() / pw.max(1)).min(ph) as i32;
     let wi = pw as i32;
     let mut rows = RowBand::empty();
     let put = |cx, r0: i32, r1: i32, weight| {
-        let (first, last) = (r0.max(b0), r1.min(b1 - 1));
+        let (first, last) = (r0.max(0), r1.min(bottom - 1));
         if first > last || weight == 0 {
             return;
         }
         rows.include(first as usize..last as usize + 1);
         for r in first..=last {
-            let idx = ((r - b0) * wi + cx) as usize;
-            band[idx] = band[idx].saturating_add(T::weight(weight));
+            let idx = (r * wi + cx) as usize;
+            map[idx] = map[idx].saturating_add(T::weight(weight));
         }
     };
-    let ch = &m.ch[c];
-    let vertical = (ch.volts_per_div(), ch.offset);
     let view = (view.0 as f64, view.1 as f64);
-    let dots = m.dots_at(dt / view.0 * (pw as f32 as f64 / HDIV as f64));
     trace_columns(pw, ph, vertical, dots, view, rec_t0, dt, v, w, z, pairs, (0, wi), put);
     rows.into_range()
 }

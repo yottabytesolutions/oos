@@ -132,6 +132,10 @@ fn run_fixture(fixture: &Fixture, options: &Options) -> bool {
 }
 
 fn run_average_fixture(fixture: &Fixture, options: &Options) -> bool {
+    if !fixture.raw_batch_samples() {
+        eprintln!("{}: needs a raw DMA batch for Average 16", fixture.name());
+        return false;
+    }
     let Some(mut replay) = Replay::new(fixture) else { return false };
     let v = &replay.view;
     let view = Arc::new(View {
@@ -142,10 +146,6 @@ fn run_average_fixture(fixture: &Fixture, options: &Options) -> bool {
         h: v.h,
         zoom: v.zoom,
     });
-    if !newest(&replay.batch).is_some_and(|f| crate::drawpipe::average::accepts_grid(&view.m, f.dt, f.envelope)) {
-        eprintln!("{}: needs plain screen samples for Average 16", fixture.name());
-        return false;
-    }
     for pass in options.passes() {
         let (samples, reset) = measure(replay.range.clone(), &pass, || {
             let (output, _) = average::average_batch(&mut replay.painter, &replay.batch, &view);
@@ -179,13 +179,11 @@ fn captured_average_matches_the_decoded_grid_and_fold() {
     assert!(std::env::var_os("OOS_FIXTURES").is_some(), "set OOS_FIXTURES");
     let mut checked = 0;
     for_each_fixture(&mut |fixture| {
-        let Some(replay) = Replay::new(fixture) else { return };
-        if !newest(&replay.batch)
-            .is_some_and(|f| crate::drawpipe::average::accepts_grid(&replay.view.m, f.dt, f.envelope))
-        {
-            println!("{}: the legacy Average batch route excludes this pair grid", fixture.name());
+        if !fixture.raw_batch_samples() {
+            println!("{}: the Average batch route requires raw samples", fixture.name());
             return;
         }
+        let Some(replay) = Replay::new(fixture) else { return };
         checked += replay.range.len();
         average::verify_codes(fixture.name(), &replay.batch, &replay.view, replay.range);
     });

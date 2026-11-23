@@ -14,6 +14,7 @@ pub(super) struct PoolPlan {
     channels: u64,
     points: u64,
     columns: u64,
+    average_visible: u64,
 }
 
 #[cfg(any(target_os = "linux", test))]
@@ -34,16 +35,23 @@ impl PoolPlan {
             } else {
                 (view.w + view.zoom.map_or(0, |zoom| zoom.size().0)) as u64
             },
+            average_visible: if average {
+                (rate * f64::from(view.m.time_per_div()) * f64::from(HDIV)).ceil() as u64
+            } else {
+                0
+            },
         }
     }
 
     pub(super) fn seed(self) -> [u64; 2] {
+        if self.route == Route::Average {
+            return self.average_seed();
+        }
         // Starting rates in ns, from the cold single-worker wave F groups. The short-time
         // routes spend more per column, and HiRes/deep placement spends more per input point.
         let (point_ns, column_ns) = match self.route {
             Route::Boxcar => (120, 300),
             Route::Screen => (65, 100),
-            Route::Average => (24, 100),
             Route::Dots => (12, 900),
             Route::Upsampled => (24, 900),
             // The second map reduces only its own window, then publishes one span per column.
@@ -52,6 +60,14 @@ impl PoolPlan {
         };
         let points = self.points.min(625_000);
         [(points * point_ns + self.columns * column_ns) * self.channels, 100_000]
+    }
+
+    fn average_seed(self) -> [u64; 2] {
+        // Cold A53 estimate from the measured linear and Lanczos rows. Interpolation scales
+        // with the output grid. Only the trigger lane can scan the input, within the screen.
+        let visible = self.average_visible.min(self.points);
+        let column_ns = if self.average_visible < self.columns.div_ceil(2) { 67 } else { 50 };
+        [self.columns * column_ns * self.channels + visible * 4, 100_000]
     }
 }
 

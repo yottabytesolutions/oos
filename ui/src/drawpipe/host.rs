@@ -19,11 +19,14 @@ pub fn finish_batch(pipe: &Pipe, id: u64) -> Result<Box<dyn RawBatch>, String> {
 
 #[cfg(test)]
 pub(crate) fn barrier(pipe: &Pipe) {
-    let (tx, rx) = std::sync::mpsc::channel();
     let sender = oos_hal::sync::lock(&pipe.workers).sender.clone();
-    if let Some(sender) = sender {
-        sender.send(super::Message::Barrier(tx)).unwrap();
-    }
+    worker_barrier(&sender.unwrap());
+}
+
+#[cfg(test)]
+pub(super) fn worker_barrier(sender: &std::sync::mpsc::SyncSender<super::Message>) {
+    let (tx, rx) = std::sync::mpsc::channel();
+    sender.send(super::Message::Barrier(tx)).unwrap();
     rx.recv_timeout(crate::ui::lifecycle::test_wait::HANG_GUARD).unwrap();
 }
 

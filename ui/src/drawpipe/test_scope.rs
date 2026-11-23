@@ -61,11 +61,22 @@ impl Scope {
     }
     /// Install the real intake with a receiver the test can drive on its own thread.
     pub(crate) fn install_intake(&self) -> Intake {
-        let pipe = self.state.pipe.get_or_init(|| Pipe::start(0, 0, self.state.counters));
+        self.intake(0)
+    }
+
+    /// Observe the intake before releasing each accepted batch to a real deposit worker.
+    pub(crate) fn gated_worker(&self) -> Intake {
+        self.intake(1)
+    }
+
+    fn intake(&self, count: usize) -> Intake {
+        assert!(self.state.pipe.get().is_none());
+        let pipe = self.state.pipe.get_or_init(|| Pipe::start(count, 0, self.state.counters));
         let (sender, receiver) = mpsc::sync_channel(1);
         let mut workers = oos_hal::sync::lock(&pipe.workers);
-        assert!(workers.sender.replace(sender).is_none());
-        Intake { pipe, receiver }
+        let worker = workers.sender.replace(sender);
+        assert_eq!(worker.is_some(), count != 0);
+        Intake { pipe, receiver, worker }
     }
 
     /// Select one of two live fixtures for paired observations; scopes still drop in reverse creation order.
@@ -86,6 +97,7 @@ impl Drop for Scope {
 pub(crate) struct Intake {
     pipe: &'static Pipe,
     receiver: mpsc::Receiver<Message>,
+    worker: Option<mpsc::SyncSender<Message>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -110,23 +122,36 @@ impl Submission {
 }
 
 impl Intake {
-    /// Drain one accepted batch and release its flight and DMA lease.
+    /// Drain a batch, forwarding it to the worker if one was installed.
     pub(crate) fn take(&self) -> Option<Submission> {
-        let batch = loop {
+        let mut batch = loop {
             match self.receiver.try_recv().ok()? {
                 Message::Batch(batch) => break batch,
                 Message::Wake => {
-                    oos_hal::sync::lock(&self.pipe.workers).wake_pending.store(false, Ordering::Release);
+                    if let Some(worker) = &self.worker {
+                        worker.send(Message::Wake).unwrap();
+                    } else {
+                        oos_hal::sync::lock(&self.pipe.workers).wake_pending.store(false, Ordering::Release);
+                    }
                 }
                 Message::Barrier(_) => panic!("unexpected worker barrier"),
             }
         };
-        oos_hal::sync::lock(&self.pipe.workers).queued.fetch_sub(1, Ordering::AcqRel);
-        let range = batch.next.swap(batch.frames, Ordering::Relaxed)..batch.frames;
+        let range = batch.next.load(Ordering::Relaxed)..batch.frames;
         let bytes = batch.lease.raw.as_ref().unwrap().bytes();
         let first_words =
             range.clone().map(|index| u16::from_le_bytes(bytes[index * batch.fb..][..2].try_into().unwrap())).collect();
-        Some(Submission { range, first_words, newest_seq: batch.newest.as_ref().map(|frame| frame.seq) })
+        let submission = Submission { range, first_words, newest_seq: batch.newest.as_ref().map(|frame| frame.seq) };
+        if let Some(worker) = &self.worker {
+            let batch_mut = std::sync::Arc::get_mut(&mut batch).unwrap();
+            batch_mut.clock = batch_mut.clock.pool_for_test(std::time::Duration::from_millis(1));
+            worker.send(Message::Batch(batch)).unwrap();
+            super::host::worker_barrier(worker);
+        } else {
+            batch.next.store(batch.frames, Ordering::Relaxed);
+            oos_hal::sync::lock(&self.pipe.workers).queued.fetch_sub(1, Ordering::AcqRel);
+        }
+        Some(submission)
     }
 }
 

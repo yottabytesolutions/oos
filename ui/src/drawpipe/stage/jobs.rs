@@ -13,10 +13,13 @@ pub(super) fn run(scratch: &mut Frame, job: &mut Job) {
         Job::Place(b, v, p) => {
             #[cfg(test)]
             let _counters = b.header.trace.as_ref().map(|_| test_scope::WorkerCounters::enter(b.counters));
-            #[cfg(test)]
-            fixture_bench::record(p.index, || place(b, v, p, scratch));
-            #[cfg(not(test))]
-            place(b, v, p, scratch);
+            let (_, marks) = fallback::capture(|| {
+                #[cfg(test)]
+                fixture_bench::record(p.index, || place(b, v, p, scratch));
+                #[cfg(not(test))]
+                place(b, v, p, scratch);
+            });
+            *p.fallbacks.get_mut() = marks;
         }
         Job::Columns(task) => task.run(),
         Job::Tile(b, placed, (count, zoom), band, elapsed) => {
@@ -30,10 +33,17 @@ pub(super) fn run(scratch: &mut Frame, job: &mut Job) {
                 let samples = p.codes.map_or(kernel::SamplesRef::Volts(&[]), |layout| {
                     kernel::SamplesRef::Codes(layout.channel(chunk(b, p.index), band.channel))
                 });
-                #[cfg(test)]
-                fixture_bench::at(p.index, || fixture_stage!(Writes, band.channel, band.paint(samples, &plan.plan)));
-                #[cfg(not(test))]
-                band.paint(samples, &plan.plan);
+                let (_, marks) = fallback::capture(|| {
+                    #[cfg(test)]
+                    fixture_bench::at(p.index, || {
+                        fixture_stage!(Writes, band.channel, band.paint(samples, &plan.plan))
+                    });
+                    #[cfg(not(test))]
+                    band.paint(samples, &plan.plan);
+                });
+                if marks != 0 {
+                    p.fallbacks.fetch_or(marks, Ordering::Relaxed);
+                }
             }
             *elapsed = started.elapsed();
         }

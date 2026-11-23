@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
+use crate::drawpipe::metrics::fallback::Cause;
 use crate::drawpipe::stage::fixture_stage;
 use crate::drawpipe::CodeLayout;
 use crate::fastdraw::Samples;
@@ -195,6 +196,11 @@ impl Scratch {
                     continue;
                 }
             }
+            match sample {
+                SamplesRef::Codes(_) => Cause::PairRowTable,
+                SamplesRef::Volts(_) => Cause::DecodedPairs,
+            }
+            .mark();
             adapt::pairs::spans_with_edges(sample, &self.edges, &map, size, proj.dots, out);
         }
     }
@@ -234,6 +240,7 @@ impl Scratch {
                     }
                 }
                 SamplesRef::Volts(values) => {
+                    Cause::BoxcarDecoded.mark();
                     crate::board::record::resample_channel(
                         values,
                         (sample_dt, false),
@@ -281,6 +288,7 @@ fn place<const N: usize>(
             if let Some((codes, map)) = input {
                 let span = span.get_or_insert_with(Spans::default);
                 if let Edges::Pairs(edges, dots) = &mut edges {
+                    Cause::ScalarPairWords.mark();
                     adapt::pairs::spans_into(&codes, edges, &map, (width, height), *dots, span);
                 } else {
                     fixture_stage!(FusedReduceMap, fastdraw::code_spans_into(width, height, &codes, &map, cache, span));

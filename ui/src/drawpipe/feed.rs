@@ -10,7 +10,7 @@ use std::{ops::Range, time::Instant};
 mod placement;
 mod rejected;
 mod view;
-pub(super) use placement::input as placement_input;
+pub(super) use placement::{input as placement_input, words as placement_words};
 pub(crate) use view::same_pair;
 pub(super) use view::{batch_view, set_view};
 

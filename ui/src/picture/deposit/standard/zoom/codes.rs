@@ -42,6 +42,7 @@ pub(crate) fn zoom_code_plans(
             !low.is_finite() || !high.is_finite()
         })
     {
+        Cause::ZoomRecordUnsupported.mark();
         return None;
     }
     let len = samples.iter().map(Samples::len).max().unwrap_or(0);
@@ -85,13 +86,14 @@ fn zoom_trigger(
 ) -> Option<(f64, kernel::TrigOutcome)> {
     if legacy_trigger {
         // Headered zoom used the record's screen-fit trigger before the layout gained a payload offset.
-        let ti = hardware.or_else(|| {
+        let ti = Cause::ZoomHeaderTriggerMiss.absent(hardware.or_else(|| {
             let (span, first) = window(main);
             let src = (source.n > 1).then_some(&source)?;
             let geometry = (POINTS, span, first);
             let near = crate::deepmeas::deep_raw_frame(frame);
+            Cause::ZoomHeaderTrigger.mark();
             fixture_stage!(Trigger, record::smoothed_edge(frame, m, src, len, geometry, near))
-        })?;
+        }))?;
         return Some((ti, kernel::TrigOutcome::Hardware));
     }
     let route = route::route(frame, &main, m.acq, true);
@@ -122,6 +124,7 @@ fn captured_codes(
                 && windows.iter().all(|&x| x == (first, ti))
                 && shared::append(&mut cache.envelope[0], key, samples, channels)
             {
+                Cause::ZoomSharedExtrema.mark();
                 return;
             }
             for (c, (out, (first, ti))) in channels.iter_mut().zip(windows).enumerate() {
@@ -155,15 +158,18 @@ impl GridCache {
         }
         let key = ScreenGrid { ti, first, dt, sample_dt, n, len: codes.n };
         if dt / sample_dt >= 2.0 {
+            Cause::ZoomLaneExtrema.mark();
             let grid = &mut self.envelope[slot];
             grid.prepare(key);
             fixture_stage!(Resample, grid.append(codes, out));
         } else if sample_dt > 2.0 * dt {
+            Cause::ZoomSinc.mark();
             let grid = &mut self.sinc[slot];
             let needed = grid.prepare((ti + first / sample_dt, dt / sample_dt), n, codes.n);
             decode(codes, needed, n, support);
             fixture_stage!(Resample, append_sinc(grid, support, out));
         } else {
+            Cause::ZoomLinear.mark();
             let grid = &mut self.linear[slot];
             grid.prepare(key);
             fixture_stage!(Resample, grid.append(codes, support, out));

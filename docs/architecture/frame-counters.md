@@ -1,11 +1,11 @@
 # Frame pipeline counters
 
 `:SYSTem:STATe?` appends these versioned groups. The groups appear in the order
-`stage.v1`, `present.v1`, `work.v1`, `route.v1` and `source.v1`. The
+`stage.v1`, `present.v1`, `work.v1`, `route.v1`, `source.v1` and `fallback.v1`. The
 [state-query reference](../spec/state-query.md) covers the other fields.
 
 Stage, work and source observations reset on an acquisition generation or epoch change.
-Route and presentation tallies accumulate for the process. Missing quantile observations
+Route, presentation and fallback tallies accumulate for the process. Missing quantile observations
 print as zero. Zero can also be a measured value.
 
 ## stage.v1
@@ -124,3 +124,35 @@ quantiles use only sampled reads that had accumulated waits.
 See [source metrics](../../ui/src/drawpipe/metrics/source.rs),
 [grant model](../../ui/src/drawpipe/admission/model.rs), [source timing](../../ui/src/board/dho/hw/batch_timing.rs)
 and [HAL batch phases](../../hal/src/dho/seq/execute.rs).
+
+
+## fallback.v1
+
+Each field counts records that entered a particular volts fallback. A record may
+increment several fields. Each field increments at most once per record per draw,
+including when several channels, column jobs, bands or zoom maps enter the same
+branch. Worker totals count records drawn into a deposit, before picture acceptance.
+If preflight repeats placement, only the placement used for painting contributes.
+A redraw through the direct record path has its own count. A retained decoded
+waveform counts when drawing uses it.
+
+| Fields | Observation |
+|---|---|
+| `no_adapter`, `no_words`, `invalid_layout`, `invalid_geometry` | Missing code adapter, adapter declined the record, invalid code layout or invalid ordinary projection. |
+| `short_interpolation`, `interpolation_trigger_frame` | Codes were too short for screen interpolation, or the code interpolator ran with a decoded frame for trigger or record work. |
+| `decoded_lines`, `decoded_pairs`, `scalar_pair_words` | Volts line spans, pair spans from decoded samples, or pair spans from short or unaligned words using volts projection. |
+| `envelope_row_table`, `scalar_row_table`, `pair_row_table`, `dot_row_table`, `boxcar_row_table` | The row table refused a projection, causing that kernel to use volts. |
+| `decoded_dots`, `dots_redecode` | Dots used decoded samples, or the worker decoded them again at paint time. |
+| `boxcar_trigger_lane`, `boxcar_decoded`, `boxcar_rounding`, `boxcar_voltage_sum` | Decoded HiRes trigger lane, resampling from decoded samples, volts projection near a half-row tie, or the original per-word voltage sum for a rounding-sensitive window. |
+| `decoded_sparse`, `decoded_screen`, `split_decoded_screen`, `direct_record` | Sparse projection, screen-grid resampling, column-sharded screen resampling, or the direct record renderer using volts. |
+| `trigger_from_codes`, `trigger_from_volts` | Software refinement via calibrated samples read from codes or from decoded slices. |
+| `zoom_record_unsupported`, `zoom_reduced_geometry`, `zoom_decoded`, `zoom_header_trigger`, `zoom_header_trigger_miss` | Ordinary code zoom refused the record, reduced code zoom refused the projection, zoom used a decoded frame, headered code zoom refined on calibrated samples, or headered code zoom could not establish an alignment. |
+| `zoom_shared_extrema`, `zoom_lane_extrema`, `zoom_linear`, `zoom_sinc` | Code zoom converted extrema in the interleaved or per-lane reducer, or converted samples for linear or Lanczos interpolation. |
+| `measurement_decode`, `zoom_measurement_decode` | A measurement fold needed a decoded frame during code placement or code zoom. |
+
+Calibration used to construct a lookup or fixed-point projection is setup work.
+The counters cover the draw path, including its trigger and fold work. Source
+header logging, source publication of the newest waveform and callers that
+supply an already constructed waveform record are outside this observation.
+
+See the [draw route audit and fixture replay](draw-routes.md).

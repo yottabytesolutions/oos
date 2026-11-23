@@ -8,6 +8,7 @@ use std::fmt::Write;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+pub(crate) mod fallback;
 mod source;
 #[cfg(any(target_os = "linux", test))]
 pub(crate) use source::SourceBatch;

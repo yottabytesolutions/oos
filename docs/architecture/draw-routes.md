@@ -74,6 +74,36 @@ The adapter calls above are in [worker placement](../../ui/src/drawpipe/stage.rs
 [decoded zoom](../../ui/src/picture/deposit/standard/zoom.rs).
 See [UI admission](../../ui/src/ui.rs) and [record drawing](../../ui/src/ui/deep_draw.rs) for the UI route.
 
+## Captured batch replay
+
+The host replay uses the frozen view and submitted record range in each archived
+batch. It runs placement and tile painting once per record with the production
+counters. The plain and headered fixture groups contribute 750 and 666
+records respectively. Some groups contain more than one view. Every unlisted
+counter was zero in that group. These captures provide host evidence for the
+recorded settings.
+
+Run the ignored `captured_fallback_counts` test with `OOS_FIXTURES` set to one
+fixture group to reproduce a row.
+
+| Group | Plain records | Plain nonzero counts | Headered records | Headered nonzero counts |
+|---|---:|---|---:|---|
+| deep | 4 | `split_decoded_screen` 4, `trigger_from_volts` 4 | 4 | `split_decoded_screen` 4, `trigger_from_volts` 4 |
+| dense-1ch-10us | 87 | `trigger_from_codes` 87 | 66 | `trigger_from_codes` 66 |
+| dense-1ch-1us | 94 | `trigger_from_codes` 94, `zoom_linear` 40 | 75 | `trigger_from_codes` 55, `zoom_header_trigger` 20, `zoom_linear` 20 |
+| dense-2ch-1us | 38 | `trigger_from_codes` 38 | 38 | `trigger_from_codes` 38 |
+| dense-4ch-10us | 43 | `trigger_from_codes` 43 | 43 | `trigger_from_codes` 43 |
+| dense-4ch-1us | 39 | `trigger_from_codes` 39 | 41 | `trigger_from_codes` 41 |
+| dots | 41 | `trigger_from_codes` 41 | 17 | `trigger_from_codes` 17 |
+| hires-1us | 35 | `boxcar_rounding` 35, `boxcar_trigger_lane` 35, `boxcar_voltage_sum` 35, `trigger_from_volts` 35 | 39 | `boxcar_rounding` 39, `boxcar_trigger_lane` 39, `boxcar_voltage_sum` 39, `trigger_from_volts` 39 |
+| hires-200ns | 48 | `interpolation_trigger_frame` 48, `trigger_from_volts` 48 | 49 | `interpolation_trigger_frame` 49, `trigger_from_volts` 49 |
+| measurement | 61 | `measurement_decode` 4, `trigger_from_codes` 61 | 45 | `measurement_decode` 4, `trigger_from_codes` 45 |
+| peak | 56 | `trigger_from_codes` 56 | 69 | `trigger_from_codes` 69 |
+| short-1ch-200ns | 97 | `trigger_from_codes` 97 | 77 | `trigger_from_codes` 77 |
+| short-1ch-5ns | 40 | `interpolation_trigger_frame` 40, `trigger_from_volts` 40 | 38 | `interpolation_trigger_frame` 38, `trigger_from_volts` 38 |
+| short-4ch-50ns | 35 | `interpolation_trigger_frame` 35, `trigger_from_volts` 35 | 34 | `interpolation_trigger_frame` 34, `trigger_from_volts` 34 |
+| zoom | 32 | `trigger_from_codes` 32, `zoom_shared_extrema` 32 | 31 | `trigger_from_volts` 24, `zoom_decoded` 24, `zoom_header_trigger` 31, `zoom_header_trigger_miss` 24, `zoom_shared_extrema` 7 |
+
 ## Callers retained after batch-only acquisition
 
 - `stage::owner::Owner` owns deposit composition. `Pipe::accept` and `accept_into` are test entry points into that

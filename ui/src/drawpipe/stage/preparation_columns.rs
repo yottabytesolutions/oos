@@ -44,10 +44,13 @@ impl Painter {
             let mut p = Prepared::reuse(slot, v, index);
             #[cfg(test)]
             let _counters = b.header.trace.as_ref().map(|_| test_scope::WorkerCounters::enter(b.counters));
-            #[cfg(test)]
-            fixture_bench::record(index, || self.columns.place(b, v, &mut p, &mut dispatch));
-            #[cfg(not(test))]
-            self.columns.place(b, v, &mut p, &mut dispatch);
+            let (_, marks) = fallback::capture(|| {
+                #[cfg(test)]
+                fixture_bench::record(index, || self.columns.place(b, v, &mut p, &mut dispatch));
+                #[cfg(not(test))]
+                self.columns.place(b, v, &mut p, &mut dispatch);
+            });
+            *p.fallbacks.get_mut() = marks;
             refine += p.refine;
             *slot = Some(p);
         }
@@ -106,6 +109,7 @@ impl Columns {
             p.decoded_dots = false;
             p.plan = Some(self.codes(b, v, p, (frame, placement), previous, dispatch));
         } else if let Some(grid) = ScreenGrid::for_placement(frame, &placement) {
+            Cause::SplitDecodedScreen.mark();
             let partial = frame.partial;
             let retained = b.newest.as_ref().filter(|newest| std::ptr::eq(frame, &***newest));
             let source = retained.unwrap_or(&scratch).clone();
@@ -246,6 +250,7 @@ impl Columns {
         }
         for job in dispatch.jobs.drain(..) {
             let Job::Columns(task) = job else { unreachable!("only column jobs were dispatched") };
+            fallback::merge(task.fallbacks);
             let index = task.index;
             self.tasks[index] = Some(task);
         }
@@ -334,18 +339,22 @@ pub(super) struct Task {
     spans: [Option<Spans>; NCH],
     screen: [Vec<f32>; NCH],
     trigger: WideShard,
+    fallbacks: u64,
     #[cfg(test)]
     allocations: usize,
 }
 
 impl Task {
     pub(super) fn run(&mut self) {
-        #[cfg(not(test))]
-        self.reduce();
-        #[cfg(test)]
-        {
-            self.allocations += crate::system::test_allocator::count_own(|| self.reduce()).0;
-        }
+        let (_, marks) = fallback::capture(|| {
+            #[cfg(not(test))]
+            self.reduce();
+            #[cfg(test)]
+            {
+                self.allocations += crate::system::test_allocator::count_own(|| self.reduce()).0;
+            }
+        });
+        self.fallbacks = marks;
     }
 
     fn reduce(&mut self) {

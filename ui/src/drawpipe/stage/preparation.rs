@@ -6,6 +6,7 @@ impl super::Prepared {
         let mut p = slot.take().unwrap_or_else(|| {
             Box::new(Self {
                 index,
+                fallbacks: Default::default(),
                 decoded_dots: false,
                 plan: None,
                 codes: None,

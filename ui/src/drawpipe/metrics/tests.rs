@@ -135,5 +135,8 @@ fn state_query_appends_the_versioned_sections_after_legacy_fields() {
     let (_, work) = pipeline.split_once(" work.v1 ").unwrap();
     let (_, route) = work.split_once(" route.v1 ").unwrap();
     let (_, source) = route.split_once(" source.v1 ").unwrap();
-    assert!(source.trim_end().ends_with("duty=0.000/0.000 budget_ms=17 source.serial=0 first_trigger=0.000/0.000 grant=0/0 bytes=0/0 captured_discarded=0 uncorrected=0 work_per_record_ns=0 fixed_cost_ns=0 parallelism=0 step.missed=0"));
+    let (source, fallback) = source.split_once(" fallback.v1 ").unwrap();
+    assert!(fallback.starts_with("no_adapter=0 no_words=0 invalid_layout=0 "));
+    assert!(fallback.trim_end().ends_with("direct_record=0"));
+    assert!(source.ends_with("duty=0.000/0.000 budget_ms=17 source.serial=0 first_trigger=0.000/0.000 grant=0/0 bytes=0/0 captured_discarded=0 uncorrected=0 work_per_record_ns=0 fixed_cost_ns=0 parallelism=0 step.missed=0"));
 }

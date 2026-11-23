@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
+use crate::drawpipe::metrics::fallback::Cause;
 
 type PlacementCodes<'a> = (&'a [u8], CodeLayout, crate::picture::deposit::envelope::Layout);
 
@@ -11,10 +12,7 @@ pub(in crate::drawpipe) fn input<'batch, 'bytes>(
     scratch: &mut Frame,
     have_decoded: bool,
 ) -> (Option<PlacementCodes<'bytes>>, impl Fn(&mut Frame) + use<'batch, 'bytes>) {
-    let words = batch.codes.as_ref().and_then(|codes| {
-        let raw = codes(index, bytes, scratch)?;
-        Some((bytes, raw, route::layout(batch, &raw)?))
-    });
+    let words = words(batch, index, bytes, scratch);
     let decode = move |frame: &mut Frame| {
         batch.decode.decode(index, bytes, frame);
         batch.header.tag(frame);
@@ -25,6 +23,18 @@ pub(in crate::drawpipe) fn input<'batch, 'bytes>(
         decode(scratch);
     }
     (words, decode)
+}
+
+pub(in crate::drawpipe) fn words<'a>(
+    batch: &Arc<Batch>,
+    index: usize,
+    bytes: &'a [u8],
+    frame: &mut Frame,
+) -> Option<PlacementCodes<'a>> {
+    let codes = Cause::NoAdapter.absent(batch.codes.as_ref())?;
+    let raw = Cause::NoWords.absent(codes(index, bytes, frame))?;
+    let lanes = Cause::InvalidLayout.absent(route::layout(batch, &raw))?;
+    Some((bytes, raw, lanes))
 }
 
 #[cfg(test)]
@@ -53,5 +63,6 @@ fn placement_reuses_the_source_waveform_when_a_code_view_is_unavailable() {
     assert!(fallback.is_none());
     crate::drawpipe::host::finish_batch(&pipe, 1).unwrap();
     assert_eq!(count.load(Ordering::Relaxed), 0);
+    assert_eq!(pipe.counters.routes.fallbacks.entries().find(|(cause, _)| *cause == "no_words"), Some(("no_words", 1)));
     assert_eq!(pipe.take_waveform((128, 64)).unwrap().seq, 1);
 }

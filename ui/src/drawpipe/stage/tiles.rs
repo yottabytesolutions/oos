@@ -63,7 +63,9 @@ impl Painter {
         let started = dots.peek().map(|_| Instant::now());
         for p in dots {
             let Some(plan) = &p.plan else { continue };
+            p.fallbacks.fetch_or(Cause::DecodedDots.bit(), Ordering::Relaxed);
             let frame = newest_at(b, p.index).unwrap_or_else(|| {
+                p.fallbacks.fetch_or(Cause::DotsRedecode.bit(), Ordering::Relaxed);
                 #[cfg(test)]
                 fixture_bench::at(p.index, || {
                     fixture_stage!(Writes, b.decode.decode(p.index, chunk(b, p.index), scratch))
@@ -91,6 +93,7 @@ fn account(b: &Batch, d: &mut Deposit, placed: &[Option<Box<Prepared>>]) {
     for p in placed.iter().flatten() {
         let Some(plan) = &p.plan else { continue };
         d.records += 1;
+        b.counters.routes.fallbacks.add(p.fallbacks.load(Ordering::Relaxed));
         b.counters.routes.add(plan.route, 1);
         #[cfg(any(target_os = "linux", test))]
         if let Some(trace) = &b.header.trace {

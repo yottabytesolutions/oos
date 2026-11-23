@@ -82,6 +82,7 @@ pub(crate) fn deposit_code_dots<T: Count>(
         if let Some(rows) = cache[codes.word % 4].get(codes, map, h) {
             dots(band, (h, first, codes.n), map, 24, |i| rows.row(codes.at_code(i)) as usize)
         } else {
+            crate::drawpipe::metrics::fallback::Cause::DotRowTable.mark();
             deposit_dots_t(band, h, first, codes, map, 24)
         }
     })

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Column extrema on interleaved codes, before calibration and placement.
 
+use crate::drawpipe::metrics::fallback::Cause;
 use crate::fastdraw::code_rows::RowCache;
 use crate::fastdraw::{self, Codes, Map, Spans};
 use oos_core::model::NCH;
@@ -149,6 +150,7 @@ pub(crate) fn spans_into<const N: usize>(
     if let Some(rows) = cache.get(codes, map, height) {
         rows.write_spans(envelopes.columns.iter().map(|column| (column.low[lane], column.high[lane])), &mut out.rows);
     } else {
+        Cause::EnvelopeRowTable.mark();
         out.rows.extend(envelopes.columns.iter().map(|column| {
             let (low, high) = (column.low[lane], column.high[lane]);
             if low <= high {

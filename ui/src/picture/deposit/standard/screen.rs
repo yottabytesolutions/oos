@@ -25,6 +25,7 @@ pub(crate) fn trigger(
     if !f.roll && !f.scan && crate::trignear::fixture::bypass() {
         return (f.pre as f64, TrigOutcome::Hardware);
     }
+    Cause::TriggerFromVolts.when(!f.roll && !f.scan && !m.trig_on_la() && !m.bus_on_la());
     let window = projection.time_per_div * HDIV as f64;
     let (ti, found) = timed_trigger(refine_time, || {
         record::record_trigger_with(f, m, (POINTS, window, projection.delay - window / 2.0), wide.as_deref_mut())
@@ -65,18 +66,17 @@ pub(super) fn place(
     }
     // The pool uses the exact screen points. The legacy interpolation switch still applies on direct redraws.
     let interp = if route == Route::Upsampled { Interp::Exact } else { interp };
-    let mut project = || sparse::project(m, f, interp, |c, _, _, values| samples[c].extend_from_slice(values));
-    #[cfg(test)]
-    let mut project = || crate::trignear::fixture::sparse(f, &mut project);
     let sparse = matches!(route, Route::Upsampled | Route::Record)
         && f.fixed_ti.is_none()
         && m.acq != AcqMode::HiRes
         && !f.envelope
         && dt / f.dt < 2.0
-        && project().is_some();
+        && project_decoded(m, f, interp, samples).is_some();
     let (triggered, pairs) = if sparse {
+        Cause::DecodedSparse.mark();
         (true, false)
     } else {
+        Cause::DecodedScreen.mark();
         let (ti, outcome) = trigger(m, f, &projection, None, None);
         let pairs = record::resample_channels(f, m, (POINTS, window, first), ti, samples);
         (outcome != kernel::TrigOutcome::NotFound, pairs)
@@ -94,6 +94,23 @@ pub(super) fn place(
     let mut plan = FastFrame::record(rec, projection, [None; NCH]);
     plan.route = route;
     plan
+}
+
+fn project_decoded(m: &Model, f: &Frame, interp: Interp, samples: &mut [Vec<f32>; NCH]) -> Option<bool> {
+    let mut project = || {
+        Cause::TriggerFromVolts.when(
+            m.trig_type == TrigType::Edge
+                && m.trig_line().is_none()
+                && !f.roll
+                && !f.scan
+                && f.ch[m.trig_src].len() > 1,
+        );
+        sparse::project(m, f, interp, |c, _, _, values| samples[c].extend_from_slice(values))
+    };
+    #[cfg(test)]
+    return crate::trignear::fixture::sparse(f, &mut project);
+    #[cfg(not(test))]
+    project()
 }
 
 #[cfg(test)]

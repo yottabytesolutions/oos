@@ -6,6 +6,10 @@ is present as `newest.bin` only when it was supplied by acquisition. The ordinar
 `dma.bin`. Digital samples are stored in `la.bin` when present. `dump_io_ns` covers the payload writes and
 sidecar body write. The timing field itself and the final atomic rename follow that measurement.
 
+The `oos-batch.v2` loader ignores metadata from the retired FPGA interpolation experiment.
+Replay still requires the DMA layout to match the recorded acquisition geometry. Captures whose
+interpolated payload changed the frame size fail this check.
+
 Set `acq.dump = on` and optionally `acq.dump.count = <n>` in system.conf before restarting oos-ui.
 The switches default to off and four batches per change, with the count bounded to 1–32.
 The root defaults to `/tmp/oos-batches`. The `OOS_BATCH_DUMP`, `OOS_BATCH_DUMP_COUNT` and

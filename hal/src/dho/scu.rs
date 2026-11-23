@@ -165,20 +165,12 @@ fn readout_window(w: &mut Vec<Write>, win: &Window, sh: &mut Shadows) {
     if win.avg {
         w.push((AVG_OFFSET, avg_offset(win.start / win.ratio, win.ratio)));
     }
-    w.push((0x11f0, tx_points(win)));
+    let size = win.n.div_ceil(4) * 4 / win.ratio;
+    w.push((0x11f0, if size == 8 { 128 } else { size }));
     sh.s1010 |= 1 << 31;
     w.push((0x1010, sh.s1010));
     sh.s400c &= !(1 << 25);
     w.push((0x400c, sh.s400c));
-}
-
-pub(super) fn tx_points(win: &Window) -> u32 {
-    let size = win.n.div_ceil(4) * 4 / win.ratio;
-    if size == 8 {
-        128
-    } else {
-        size
-    }
 }
 
 /// Play-last read-out (verified word-exact): 28 writes, then ONE read of 2 * n bytes from /dev/xdma0_c2h_0.

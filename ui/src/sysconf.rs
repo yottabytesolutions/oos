@@ -201,7 +201,7 @@ impl SysConf {
             };
             let (k, v) = (k.trim(), v.split(" #").next().unwrap_or("").trim());
             let ok = match k {
-                "acq.pipeline" => true,
+                "acq.pipeline" | "acq.play" | "acq.play.inferred" => true,
                 "ntp" => on_off(v).map(|b| c.ntp = b).is_some(),
                 "ntp.server" if v.eq_ignore_ascii_case(DHCP) => {
                     c.ntp_server = DHCP.into();

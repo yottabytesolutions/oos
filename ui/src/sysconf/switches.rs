@@ -75,13 +75,20 @@ pub fn flag(env: Env, key: &str) -> Option<&'static str> {
     text(env, key).map(|v| if v.is_empty() || v == "0" { "off" } else { "on" })
 }
 
+fn report_obsolete_keys(conf: &str, mut report: impl FnMut(&'static str)) {
+    if conf_value(None, conf, "acq.pipeline").is_some() {
+        report("acq.pipeline");
+    }
+    if let Some(key) = ["acq.play", "acq.play.inferred"].into_iter().find(|key| conf_value(None, conf, key).is_some()) {
+        report(key);
+    }
+}
+
 impl Switches {
     /// The switches from an environment lookup, the fork's system.conf text (`fork_text`), the settings file alone
     /// and the cores.
     pub fn parse(env: Env, conf: &str, settings: &str, cores: crate::placement::Cores) -> Self {
-        if conf_value(None, conf, "acq.pipeline").is_some() {
-            eprintln!("oos-ui: ignoring obsolete system.conf key acq.pipeline");
-        }
+        report_obsolete_keys(conf, |key| eprintln!("oos-ui: ignoring obsolete system.conf key {key}"));
         Switches {
             demo_loop: text(env, "OOS_DEMO_LOOP").and_then(|v| v.parse().ok()).unwrap_or(0),
             compress: crate::compress::enabled_from(flag(env, "OOS_COMPRESS"), conf),
@@ -167,6 +174,25 @@ mod tests {
         let switches = Switches::parse(&|_| None, &merged, conf, Default::default());
         let current = Switches::parse(&|_| None, "acq.interp = fast", "", Default::default());
         assert_eq!(switches, current);
+    }
+
+    #[test]
+    fn obsolete_play_keys_are_ignored_with_one_notice() {
+        let conf = "acq.play = stock # old user setting\nacq.play.inferred = on\nntp = on\n";
+        let (system, errors) = super::super::SysConf::parse(conf);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert!(system.ntp);
+        assert!(!system.text().contains("acq.play"));
+
+        let merged = super::super::fork_text_of(conf, "acq.play = raw\n");
+        let mut reports = Vec::new();
+        report_obsolete_keys(&merged, |key| reports.push(key));
+        assert_eq!(reports, ["acq.play"]);
+        reports.clear();
+        report_obsolete_keys("acq.play.inferred = on", |key| reports.push(key));
+        assert_eq!(reports, ["acq.play.inferred"]);
+        let switches = Switches::parse(&|_| None, &merged, conf, Default::default());
+        assert_eq!(switches, Switches::default());
     }
 
     #[test]

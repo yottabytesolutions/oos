@@ -14,7 +14,27 @@ use oos_hal::dho::{afe, auxout, hz, tpu, uarttrig};
 #[cfg(test)]
 mod capture_tests;
 
-mod playback;
+impl super::super::Dho {
+    /// Capture mode and stored depth confirmed by a frame of the current hardware settings.
+    pub(crate) fn capture_state(&self, source: &crate::wave::Source) -> String {
+        use oos_hal::dho::acq::Mode;
+        let crate::wave::Source::Hw { shared, .. } = source else {
+            return " acq.capture=unavailable acq.capture.stored_points=0".into();
+        };
+        let (mode, points) = {
+            let g = crate::perfguard::deep::ui_lock(shared);
+            let id = g.acquisition.identity();
+            let frame = &g.frame;
+            let current = frame.seq != 0 && (frame.cfg, frame.stamp) == (id.gen(), id.epoch());
+            (g.want.as_ref().filter(|_| current).map(|want| want.mode), frame.acq.1)
+        };
+        match mode {
+            Some(Mode::Reduced(capture)) => format!(" acq.capture={capture} acq.capture.stored_points={points}"),
+            Some(_) => format!(" acq.capture=full acq.capture.stored_points={points}"),
+            None => " acq.capture=pending acq.capture.stored_points=0".into(),
+        }
+    }
+}
 
 /// SINGLE ends with the first frame after the press (`Settings::single`): one frame per batch and no batch after it
 /// until the next press. The UI waits for more records for segments, protocol triggers and zone triggers.
@@ -221,7 +241,6 @@ fn finish_settings(m: &Model, sw: &crate::sysconf::Switches, slow: Slow, s: &mut
     if sw.compress {
         live_compress(m, s);
     }
-    playback::select(m, sw, slow, s);
 }
 
 fn capture_reduction(m: &Model, sw: &crate::sysconf::Switches, slow: Slow, s: &mut Settings) {
@@ -254,12 +273,10 @@ pub(super) fn live_compress(m: &Model, s: &mut Settings) {
 }
 
 /// Protocol watch and XY need actual stored samples.
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn raw_for_ui(s: &mut Settings, needs_raw: bool) {
     if needs_raw {
         s.compress = 1;
-        if matches!(s.playback, Playback::Stock | Playback::StockInferred) {
-            s.playback = Playback::Raw;
-        }
     }
 }
 

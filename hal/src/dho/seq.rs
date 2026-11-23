@@ -10,9 +10,6 @@ mod capture;
 #[cfg(test)]
 mod capture_tests;
 mod execute;
-mod playback;
-#[cfg(test)]
-mod playback_tests;
 mod readout;
 pub mod time;
 pub use super::samples::{
@@ -22,8 +19,7 @@ pub use capture::CaptureReduction;
 pub use execute::{
     acquire_batch, acquire_batch_idle, acquire_batch_until, acquire_batch_with_clock, execute_bus, execute_bus_until,
 };
-pub use playback::{stock_play, Playback, StockPlay};
-pub use readout::frame_len;
+pub use readout::Playback;
 
 #[cfg(target_os = "linux")]
 use crate::dho::bus::{Bus, DmaBuf};
@@ -905,13 +901,7 @@ pub fn read_len(frames: usize, frame: usize) -> usize {
 
 /// Bytes of one frame in the read: the window of all interleaved channels (+ the 16-byte header in header mode).
 pub fn frame_bytes(s: &Settings, p: &hz::Params) -> usize {
-    let n = if let Some(play) = stock_play(s, p) {
-        play.frame_len()
-    } else if s.compress > 1 && s.playback.is_play4() {
-        compressed_len(s, p)
-    } else {
-        window(s, p).0
-    };
+    let n = if s.compress > 1 && s.playback.is_play4() { compressed_len(s, p) } else { window(s, p).0 };
     2 * (p.ratio * n) as usize + if s.header { 16 } else { 0 }
 }
 
@@ -1035,8 +1025,7 @@ pub fn read_raw_again<B: crate::dho::bus::Bus, R: std::io::Read>(
 
 /// `s` without the FPGA compression: what `read_raw_again` reads with.
 pub fn raw_settings(s: &Settings) -> Settings {
-    let playback = if s.playback.is_play4() { Playback::Raw } else { Playback::Last };
-    Settings { playback, compress: 1, frames: 1, ..s.clone() }
+    Settings { compress: 1, frames: 1, ..s.clone() }
 }
 
 /// Arms the next batch right after a read (and the LA read of the same record), so the FPGA records while the host

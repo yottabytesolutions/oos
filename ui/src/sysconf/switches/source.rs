@@ -74,25 +74,6 @@ impl fmt::Display for Capture {
     }
 }
 
-fn stock_play(conf: &str, report: &mut impl FnMut(&str, &str, &str)) -> Option<bool> {
-    let inferred = match conf_value(None, conf, "acq.play.inferred").as_deref() {
-        Some("on") => true,
-        Some("off") | None => false,
-        Some(value) => {
-            report("acq.play.inferred", value, "off");
-            false
-        }
-    };
-    match conf_value(None, conf, "acq.play").as_deref() {
-        Some("stock") => Some(inferred),
-        Some("raw") | None => None,
-        Some(value) => {
-            report("acq.play", value, "raw");
-            None
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct SourceOverhead {
     batch_settle: bool,
@@ -100,7 +81,6 @@ pub(crate) struct SourceOverhead {
     work_budget: Option<Duration>,
     stop_slot: StopSlot,
     capture: Capture,
-    stock_play: Option<bool>,
 }
 
 impl Default for SourceOverhead {
@@ -111,7 +91,6 @@ impl Default for SourceOverhead {
             work_budget: None,
             stop_slot: StopSlot::Zero,
             capture: Capture::default(),
-            stock_play: None,
         }
     }
 }
@@ -146,7 +125,6 @@ impl SourceOverhead {
                 }
             },
             capture: Capture::parse(conf, &mut report),
-            stock_play: stock_play(conf, &mut report),
         }
     }
 
@@ -171,22 +149,15 @@ impl SourceOverhead {
     pub(crate) fn capture(self) -> Capture {
         self.capture
     }
-
-    /// A stock request and its inferred-value opt-in.
-    pub(crate) fn stock_play(self) -> Option<bool> {
-        self.stock_play
-    }
 }
 
 impl fmt::Display for SourceOverhead {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let gap = if self.batch_settle { 0 } else { 10 };
         let sched = if self.fifo { "fifo" } else { "other" };
-        let play = if self.stock_play.is_some() { "stock" } else { "raw" };
-        let inferred = if self.stock_play == Some(true) { "on" } else { "off" };
         write!(
             f,
-            "acq.write_gap={gap} acq.sched={sched} acq.work_budget_ms={} acq.capture.requested={} acq.capture.inferred={} acq.play.requested={play} acq.play.inferred={inferred}",
+            "acq.write_gap={gap} acq.sched={sched} acq.work_budget_ms={} acq.capture.requested={} acq.capture.inferred={}",
             self.work_budget().as_millis(),
             self.capture,
             if self.capture.inferred { "on" } else { "off" },
@@ -207,28 +178,7 @@ mod tests {
         work_budget: None,
         stop_slot: StopSlot::Zero,
         capture: Capture { reduction: None, inferred: false },
-        stock_play: None,
     };
-
-    #[test]
-    fn stock_play_parses_only_explicit_system_conf_opt_ins() {
-        for (conf, expected) in [
-            ("", None),
-            ("acq.play.inferred = on", None),
-            ("acq.play = raw\nacq.play.inferred = on", None),
-            ("acq.play = stock", Some(false)),
-            ("acq.play = stock\nacq.play.inferred = on", Some(true)),
-        ] {
-            let sw = Switches::parse(&|_| Some("stock".into()), conf, "", Default::default());
-            assert_eq!(sw.source.stock_play(), expected);
-        }
-        let mut reports = Vec::new();
-        let invalid = stock_play("acq.play = linear\nacq.play.inferred = yes", &mut |key, _, _| {
-            reports.push(key.to_string());
-        });
-        assert_eq!(invalid, None);
-        assert_eq!(reports, ["acq.play.inferred", "acq.play"]);
-    }
 
     #[test]
     fn source_switch_values_and_defaults() {

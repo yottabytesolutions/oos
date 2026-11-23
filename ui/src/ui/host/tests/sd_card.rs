@@ -22,10 +22,16 @@ fn boot_card_record_reaches_all_system_page_rows() {
         ("hs", "hs", "ok", "High speed", TEXT),
         ("hs", "sdr104", "degraded", "High speed (expected SDR104)", AMBER),
         ("legacy", "sdr104", "worse", "Default speed", RED),
+        ("sdr12", "sdr104", "worse", "SDR12", RED),
         ("hs", "sdr104", "unverified", "Not yet seen in SDR104", DIM),
         ("unknown", "unknown", "unknown", "Unknown", DIM),
     ] {
-        fs::write(&input, format!("mode={mode}\nexpected={expected}\nstate={state}\nreason=none\n")).unwrap();
+        let streak = u32::from(matches!(state, "degraded" | "worse"));
+        fs::write(
+            &input,
+            format!("mode={mode}\nexpected={expected}\nstate={state}\nreason=none\nceiling={expected}\ndegraded_in_a_row={streak}\nkexec=0\n"),
+        )
+        .unwrap();
         bootcard::write_state(&output, bootcard::read_state(&input)).unwrap();
         let host = Host::fixture().cache_sd_card(&output);
         fs::remove_file(&output).unwrap();
@@ -36,8 +42,9 @@ fn boot_card_record_reaches_all_system_page_rows() {
             matches!(row, Row::Kv(label, text, c) if label == "SD card" && text == value && *c == color)
         }));
         let reply = Scpi::disconnected().exec_line(&mut ui, &Canvas::new(1, 1), ":SYSTem:STATe?");
-        let state_fields =
-            format!("sd.mode={mode} sd.expected={expected} sd.state={state} sd.degraded_in_a_row=0 sd.repair=none");
+        let state_fields = format!(
+            "sd.mode={mode} sd.expected={expected} sd.state={state} sd.degraded_in_a_row={streak} sd.repair=none"
+        );
         assert!(String::from_utf8(reply).unwrap().contains(&state_fields));
     }
     fs::remove_dir_all(directory).unwrap();

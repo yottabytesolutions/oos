@@ -147,13 +147,22 @@ The existing trial mechanism does not guarantee automatic HS selection in that c
 On each start, including kexec, `oos-update card-check` records the negotiated mode in `/tmp/oos-sd.state`. It
 resolves the host through `/sys/class/block/mmcblk0/device`, mounts debugfs if needed, and reads that host's `ios`
 timing. If `ios` is unavailable, the check uses the card-add message for that host from the kernel log. The
-expected mode comes from the running controller's device-tree node. SDR104 takes precedence over SDR50. If the
+ceiling comes from the running controller's device-tree node. SDR104 takes precedence over SDR50. If the
 node exists and neither property is present, the ceiling is High speed.
 
-The record has four lines in order, for example `mode=hs`, `expected=sdr104`, `state=degraded`, `reason=none`.
-A failed probe records `state=unknown` and a fixed reason. The check stores no card identifiers. If the command
-exits nonzero, rcS logs one warning and continues. The UI caches this record on launch and shows it in System
-info under Unit and in `:SYSTem:STATe?`. The detection paths still need verification on hardware.
+The check keeps `/oos/sd-card.state` on the mounted data partition. The version 1 text file holds a 16-byte SHA-256
+prefix of the card CID, the best mode observed, total, kexec, degraded and worse start counters, and the current
+slow streak. The last 16 starts are listed oldest first, with the build, start kind and observed mode. The check
+writes a fixed temporary file and renames it into place. A missing, incomplete, older-format or different-card record
+starts fresh. History write errors are logged and startup continues. A kexec install that restarts automatically
+records its SD mode before rebooting.
+
+The expected mode is the lower of the device-tree ceiling and the card's best recorded mode, including the current
+observation. A card that has yet to reach its ceiling is unverified. The slow streak counts ordinary starts.
+Unverified and unknown ordinary starts break it. Kexec starts leave it unchanged.
+`/tmp/oos-sd.state` carries the mode, expected mode, ceiling, state, reason, streak and kexec flag. The UI
+caches it at launch and shows the SD card under System > System info and in `:SYSTem:STATe?`. The card key stays in
+the history file. Detection and learning still need verification on hardware.
 
 ## OOS start-up after the kernel (rcS)
 
@@ -166,9 +175,10 @@ from `/etc/oos-board` ([porting.md](porting.md)):
 
 1. `Linux` (uptime at the start of rcS).
 2. `oos-oneshot` (boot magic back to `KRNL`), as the very first program, so a hanging new build on trial is followed
-   by stock at the next power-on (`update.md`), then the hardware watchdog (`oos-watchdog`, see below), then `/oos`,
-   `oos-update card-check`, the crash records of the last start in the background (`oos-crash-save`, below) and the
-   start count of 4c.
+   by stock at the next power-on (`update.md`), then the hardware watchdog (`oos-watchdog`, see below). Mount `/oos`
+   and the read-only stock partition at `/rigol`, run `oos-update boot` for trial bookkeeping (see 4c), then run
+   `oos-update card-check`. A kexec installation in `oos-update boot` needs the device model from `/rigol/data/vendor.bin`.
+   The UI loop saves crash records from the last start (`oos-crash-save`, below).
    Then **`oos-fpgad fpga-boot`**: only the
    BOOT command (spidev1.0, slot 0x400000), its uptime to `/tmp/oos-fpga-booted`. The bitstream loads while the rest of
    rcS runs; the fixed 3 s FPGA wait is counted from this command.

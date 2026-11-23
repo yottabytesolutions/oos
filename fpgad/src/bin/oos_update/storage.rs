@@ -1,17 +1,19 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::args::Args;
-use crate::{die, need_data, open_card, put, state_path, update, STDOUT_CLOSED};
+use crate::{die, need_data, put, state_path, update, STDOUT_CLOSED};
 
 pub(crate) fn run(args: &Args) {
     match args.command() {
         "storage-write" => return write(args).unwrap_or_else(|e| die(&e)),
-        "storage-data" => return open_card(args, true).prepare_data().unwrap_or_else(|e| die(&e)),
+        "storage-data" => {
+            return args.open_card(true).and_then(|mut card| card.prepare_data()).unwrap_or_else(|e| die(&e))
+        }
         _ => {}
     }
     need_data(args);
     let execute = args.flag("--execute");
-    let mut card = open_card(args, execute);
+    let mut card = args.open_card(execute).unwrap_or_else(|e| die(&e));
     let state = state_path(args);
     let result = if args.command() == "sd-mode" {
         update::sd::restage(&mut card, &state, execute)
@@ -44,7 +46,7 @@ fn write(args: &Args) -> Result<(), String> {
     }
     let mut card = match args.val("--host-card") {
         Some(path) => oos_hal::update::card::open_removable(std::path::Path::new(path))?,
-        None => open_card(args, true),
+        None => args.open_card(true)?,
     };
     card.write_checked(area, offset, &data)
 }

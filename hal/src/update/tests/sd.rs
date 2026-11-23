@@ -137,7 +137,9 @@ fn a_confirmed_sd_trial_survives_and_switching_back_to_hs_works() {
     set_mode(&f, "sdr104");
     sd::restage(&mut f.card(), &f.state(), true).unwrap();
     boot_started(&f.state(), Some(KX_BUILD)).unwrap();
-    assert!(confirm_running(&f.state(), None, Some(KX_BUILD)).unwrap());
+    let sha = f.st().current.unwrap().sha256;
+    assert!(confirm_with_sd_mode(&f.state(), sha, crate::bootcard::Mode::Hs).unwrap());
+    assert!(f.st().event.ends_with(" (SDR104 trial, observed hs)"));
     assert!(sd::restage(&mut f.card(), &f.state(), true).unwrap().unchanged);
     set_mode(&f, "hs");
     assert!(sd::restage(&mut f.card(), &f.state(), true).unwrap().written);

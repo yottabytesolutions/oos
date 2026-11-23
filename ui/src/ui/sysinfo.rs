@@ -158,8 +158,8 @@ fn sd_card(sd: oos_hal::bootcard::Status) -> Row {
     match sd.state() {
         CardState::Ok => kv(SD_CARD, observed),
         CardState::Degraded => kvc(SD_CARD, format!("{observed} (expected {expected})"), AMBER),
-        CardState::Worse => kvc(SD_CARD, "Default speed", RED),
-        CardState::Unverified => kvc(SD_CARD, format!("Not yet seen in {expected}"), DIM),
+        CardState::Worse => kvc(SD_CARD, observed, RED),
+        CardState::Unverified => kvc(SD_CARD, format!("Not yet seen in {}", sd.ceiling().label()), DIM),
         CardState::Unknown => kvc(SD_CARD, "Unknown", DIM),
     }
 }

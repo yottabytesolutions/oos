@@ -386,13 +386,20 @@ Logs: `/tmp/oos-update.log` (start count, watcher), `/tmp/oos-update.job` (GUI /
   watch stays on trial).
 - Powering off before "confirmed" (about 20 s after the start-up) counts as an unconfirmed start: the next OOS start
   rolls back. System > Update shows "on trial" until then.
-- `/tmp/oos-ui.off` (oos-ui stopped by hand): no verdict, the trial stays open.
+- `/tmp/oos-ui.off` signals a deliberate UI stop. The watcher leaves the trial open, skips the persist arm and
+  publishes completion with the same Power restart hint as an unverified boot selection.
 - rcS `oos-update boot`: a trial image that starts a second time without confirmation is rolled back at that start, with
   a notice on the panel first; a running image that is not the one on trial (recovery written by hand) drops the trial
   instead.
 - All state changes take a lock (`/oos/update/state.lock`), so rcS, the watcher, the GUI job and a shell call never
   interleave.
 - Power off, restart and a rollback tap are refused while an update job runs. The panel's own power key cannot be refused.
+- The watcher writes `/tmp/oos-update.judged` after applying its verdict and completing any persist arm. A confirmed
+  SDR104 trial records the negotiated mode from the startup check in the update event. Confirmation still follows
+  the software-health rule when the card is slow.
+- If the watcher cannot open the card for a persist arm, it logs the failure and publishes completion with boot
+  selection unverified. If it cannot open the card for a failed trial's rollback, it issues the same rollback-failed
+  notice as a restore error. A failed open leaves boot selection and trial state as they were before the attempt.
 
 Install keeps the image in `recovery` as the rollback image only when it is confirmed or was put there by hand
 (`untracked-<sha>`); over an image still on trial the slot keeps the last good one. `--force` with the image already in

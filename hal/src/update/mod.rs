@@ -36,10 +36,13 @@ pub mod text;
 pub use card::Card;
 use card::{check_image, Region};
 use hash::hex;
+pub use state::{confirm, confirm_running, confirm_with_sd_mode};
 use std::path::Path;
 
 /// Default place of the state file (OOS data partition).
 pub const STATE_PATH: &str = "/oos/update/state";
+/// Start-up watcher completion marker, shared with the panel power dialog.
+pub const JUDGED_PATH: &str = "/tmp/oos-update.judged";
 /// The keys every OOS build trusts (oos/keys/update.pub).
 pub const TRUSTED_KEYS: &str = include_str!("../../../keys/update.pub");
 
@@ -558,45 +561,6 @@ pub fn boot_started(state_path: &Path, running: Option<&str>) -> Result<Boot, St
     st.trial = Some(n + 1);
     st.save(state_path).map_err(io("writing the update state"))?;
     Ok(if n + 1 >= 2 && st.previous.is_some() { Boot::Rollback } else { Boot::Trial(n + 1) })
-}
-
-/// The image passed its trial. Returns true when it was on trial. `expect`: only when the state still names this
-/// image as current.
-pub fn confirm(state_path: &Path, expect: Option<[u8; 32]>) -> Result<bool, String> {
-    confirm_running(state_path, expect, None)
-}
-
-/// `confirm`, and with `running` (the build of the running image) only if that is the build on trial: an image that was
-/// written but never started is not confirmed.
-pub fn confirm_running(state_path: &Path, expect: Option<[u8; 32]>, running: Option<&str>) -> Result<bool, String> {
-    let _l = lock(state_path)?;
-    let mut st = State::load(state_path).map_err(io("reading the update state"))?;
-    if st.trial.is_none() {
-        return Ok(false);
-    }
-    if st.sd_trial.is_some() && st.trial == Some(0) {
-        return Err("SD mode trial has not booted yet: not confirmed".into());
-    }
-    if let Some(run) = running {
-        let cur = st.current.as_ref().map(|c| c.build.trim().to_string()).unwrap_or_default();
-        if run.trim() != cur {
-            return Err(format!(
-                "the running build {} is not the one on trial ({}): it has not started yet",
-                run.trim(),
-                cur
-            ));
-        }
-    }
-    if let Some(x) = expect {
-        if st.current.as_ref().map(|c| c.sha256) != Some(x) {
-            return Ok(false);
-        }
-    }
-    st.trial = None;
-    st.sd_trial = None;
-    st.event = format!("confirmed {}", st.current.as_ref().map_or("?", |c| short(&c.build)));
-    st.save(state_path).map_err(io("writing the update state"))?;
-    Ok(true)
 }
 
 /// Boot mode (persist = arm OOS after every confirmed start).

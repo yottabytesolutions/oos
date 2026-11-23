@@ -45,7 +45,7 @@
 //! Common options: --card /dev/mmcblk0, --state /oos/update/state, --keys FILE (extra trusted keys: verify, and
 //! install on a card file for tests; refused for the unit's card).
 
-use oos_hal::update::{self, card, hash::hex, kexec, pkg, Card, State};
+use oos_hal::update::{self, card, hash::hex, kexec, pkg, State};
 use std::path::{Path, PathBuf};
 
 const NOTICE: &str = "/tmp/oos-update.notice";
@@ -80,6 +80,9 @@ fn put(w: &mut dyn std::io::Write, closed: &std::sync::atomic::AtomicBool, a: st
 
 mod oos_update;
 
+#[cfg(target_os = "linux")]
+use oos_update::watch::run as watch;
+
 use oos_update::{
     messages,
     sign::{keygen, keys, pack},
@@ -108,11 +111,6 @@ fn tell(msg: &str) {
 fn notice(msg: &str) {
     let _ = std::fs::write(NOTICE, format!("{}\n", msg));
     tell(msg);
-}
-
-fn open_card(a: &Args, write: bool) -> Card {
-    let path = a.val("--card").unwrap_or("/dev/mmcblk0");
-    card::open_checked(Path::new(path), write).unwrap_or_else(|e| die(&e))
 }
 
 /// The SD card as the stock system names it.
@@ -208,7 +206,7 @@ fn main() {
         }
         "arm" => {
             need_data(&a);
-            let mut c = open_card(&a, true);
+            let mut c = a.open_card(true).unwrap_or_else(|e| die(&e));
             match update::arm_by_hand(&mut c, &state_path(&a)) {
                 Ok(true) => out!("next boot: OOS"),
                 Ok(false) => out!("OOS was already selected"),
@@ -222,13 +220,13 @@ fn main() {
                 // the choice counts from the next power-on: the boot selection follows at once
                 Some("persist") => {
                     update::set_mode(&p, true).unwrap_or_else(|e| die(&e));
-                    if let Err(e) = update::arm_checked(&mut open_card(&a, true), &p) {
+                    if let Err(e) = update::arm_checked(&mut a.open_card(true).unwrap_or_else(|e| die(&e)), &p) {
                         out!("not selected for the next power-on yet: {}", e);
                     }
                 }
                 Some("oneshot") => {
                     update::set_mode(&p, false).unwrap_or_else(|e| die(&e));
-                    open_card(&a, true).disarm_oos().unwrap_or_else(|e| die(&e));
+                    a.open_card(true).unwrap_or_else(|e| die(&e)).disarm_oos().unwrap_or_else(|e| die(&e));
                 }
                 None => {}
                 Some(m) => die(&format!("mode '{}': oneshot or persist", m)),
@@ -255,7 +253,7 @@ fn install(a: &Args) {
     let f = a.rest.get(1).unwrap_or_else(|| die("install FILE.oosupd [--execute] [--no-kexec | --new-dt]"));
     need_data(a);
     let p = read_file(f);
-    let mut c = open_card(a, a.flag("--execute"));
+    let mut c = a.open_card(a.flag("--execute")).unwrap_or_else(|e| die(&e));
     let test_card = c.is_test_file().unwrap_or_else(|e| die(&e.to_string()));
     let running_model = a.running_model(test_card);
     let opt = a.install_opt(&running_model);
@@ -481,6 +479,24 @@ fn kexec_check(_: &Args) {
     die("kexec-check runs on the unit only");
 }
 
+/// The oos-ui process: the one followed so far while it lives (a child that oos-ui forks is "oos-ui" until its exec),
+/// else the oldest one.
+#[cfg(target_os = "linux")]
+fn ui_pid(keep: Option<u32>) -> Option<u32> {
+    let is_ui = |pid: u32| std::fs::read_to_string(format!("/proc/{}/comm", pid)).is_ok_and(|c| c.trim() == "oos-ui");
+    if let Some(k) = keep.filter(|&k| is_ui(k)) {
+        return Some(k);
+    }
+    let mut best: Option<u32> = None;
+    for e in std::fs::read_dir("/proc").ok()?.flatten() {
+        let Ok(pid) = e.file_name().to_string_lossy().parse::<u32>() else { continue };
+        if is_ui(pid) {
+            best = Some(best.map_or(pid, |b| b.min(pid)));
+        }
+    }
+    best
+}
+
 /// oos-ui off for the kexec start: no restart, no transfer of the acquisition hardware in flight.
 #[cfg(target_os = "linux")]
 fn stop_ui() {
@@ -541,7 +557,7 @@ fn finish_kexec(a: &Args, p: &Path, f: kexec::Flags) -> bool {
     {
         keys.push(k);
     }
-    let mut c = open_card(a, true);
+    let mut c = a.open_card(true).unwrap_or_else(|e| die(&e));
     let done = match update::install(&mut c, p, &pk, &keys, &Args::kexec_opt(f, &a.running_model(false))) {
         Ok(r) => {
             r.lines.iter().for_each(|l| out!("{}", l));
@@ -604,11 +620,10 @@ fn may_restart(magic: Option<[u8; 4]>, on_trial: bool, mark: Option<&str>, build
 /// for a power-cycle.
 fn restart_for_trial(a: &Args, p: &Path) {
     let build = update::running_build().unwrap_or_default();
-    let magic = open_card(a, false).boot_magic().ok();
+    let magic = a.open_card(false).unwrap_or_else(|e| die(&e)).boot_magic().ok();
     let st = State::load(p).unwrap_or_default();
     let on_trial = st.trial.is_some() && st.current.as_ref().is_some_and(|c| c.build.trim() == build.trim());
-    let mark = std::fs::read_to_string(restart_mark(p)).ok();
-    if let Err(e) = may_restart(magic, on_trial, mark.as_deref(), &build) {
+    if let Err(e) = may_restart(magic, on_trial, std::fs::read_to_string(restart_mark(p)).ok().as_deref(), &build) {
         notice(&messages::no_restart(&build, &e, magic == Some(*b"OOSK") && on_trial));
         return;
     }
@@ -616,6 +631,7 @@ fn restart_for_trial(a: &Args, p: &Path) {
         notice(&messages::no_restart(&build, &format!("mark not written: {}", e), true));
         return;
     }
+    oos_update::card_check::before_restart();
     tell(&format!(
         "build {} installed and armed (OOSK, on trial): restarting automatically for the trial start",
         update::short(&build)
@@ -650,7 +666,7 @@ fn keep_booted_tree(a: &Args, kexec_start: bool) {
         std::fs::read(kexec::DT_FILE).ok()
     } else {
         // the header page and the tree only: no hashing of the whole image at every start
-        let mut c = open_card(a, false);
+        let mut c = a.open_card(false).unwrap_or_else(|e| die(&e));
         let lba = card::Region::Recovery.lba();
         c.read(lba, 2048).ok().and_then(|h| kexec::tree_at(&h)).and_then(|(off, len)| {
             let first = off / card::SECTOR as usize;
@@ -670,7 +686,7 @@ fn keep_booted_tree(a: &Args, kexec_start: bool) {
 }
 
 fn status(a: &Args) {
-    let mut c = open_card(a, false);
+    let mut c = a.open_card(false).unwrap_or_else(|e| die(&e));
     let p = state_path(a);
     let st = match State::load(&p) {
         Ok(s) => s,
@@ -796,7 +812,7 @@ fn boot(a: &Args) {
                 "/dev/tty1",
                 "\nUpdate not confirmed: restoring the previous build. Do not power off.\n",
             );
-            let mut c = open_card(a, true);
+            let mut c = a.open_card(true).unwrap_or_else(|e| die(&e));
             match update::rollback(&mut c, &p, "it started a second time without having been confirmed", true, None) {
                 Ok(r) => {
                     r.lines.iter().for_each(|l| out!("{}", l));
@@ -807,133 +823,6 @@ fn boot(a: &Args) {
             }
         }
         Err(e) => tell(&e),
-    }
-}
-
-/// The oos-ui process: the one followed so far while it lives (a child that oos-ui forks is "oos-ui" until its exec),
-/// else the oldest one.
-#[cfg(target_os = "linux")]
-fn ui_pid(keep: Option<u32>) -> Option<u32> {
-    let is_ui = |pid: u32| std::fs::read_to_string(format!("/proc/{}/comm", pid)).is_ok_and(|c| c.trim() == "oos-ui");
-    if let Some(k) = keep.filter(|&k| is_ui(k)) {
-        return Some(k);
-    }
-    let mut best: Option<u32> = None;
-    for e in std::fs::read_dir("/proc").ok()?.flatten() {
-        let Ok(pid) = e.file_name().to_string_lossy().parse::<u32>() else { continue };
-        if is_ui(pid) {
-            best = Some(best.map_or(pid, |b| b.min(pid)));
-        }
-    }
-    best
-}
-
-#[cfg(target_os = "linux")]
-fn watch(a: &Args) {
-    use update::{Health, Verdict};
-    let p = state_path(a);
-    let status = a.val("--status").unwrap_or("/tmp/oos-boot.status").to_string();
-    let autoacq = Path::new("/etc/oos-autoacq").exists();
-    // the verdict is about the image that runs now: the state as it was at this start, applied only if unchanged
-    let st0 = State::load(&p).unwrap_or_default();
-    // a kexec start says nothing about a power-on (device tree, loader, display state): neither confirm nor roll back.
-    // The next power-on is the trial start (the install armed OOS for it). Without an install, persist mode arms OOS
-    // again (oos-oneshot disarmed it at rcS).
-    if kexec::flags(&kexec::running_cmdline()).is_some() {
-        tell(
-            "kexec start: not judged; an installed trial needs an ordinary restart. Follow the install/restart notice",
-        );
-        if st0.persist && st0.trial.is_none() {
-            let mut c = open_card(a, true);
-            match update::arm_checked(&mut c, &p) {
-                Ok(true) => tell("persist mode: OOS armed for the next power-on"),
-                Ok(false) => {}
-                Err(e) => tell(&format!("persist mode: {}", e)),
-            }
-        }
-        return;
-    }
-    let running = update::running_build();
-    let trial_sha = st0
-        .current
-        .as_ref()
-        .filter(|c| st0.trial.is_some() && running.as_deref() == Some(c.build.as_str()))
-        .map(|c| c.sha256);
-    let t0 = std::time::Instant::now();
-    let (mut pid, mut since, mut restarts, mut seen) = (None::<u32>, 0.0f64, 0u32, false);
-    let verdict = loop {
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        let now = t0.elapsed().as_secs_f64();
-        if Path::new("/tmp/oos-ui.off").exists() {
-            tell("oos-ui stopped by hand (/tmp/oos-ui.off): start not judged, trial left open (oos-update confirm)");
-            return;
-        }
-        let cur = ui_pid(pid);
-        if cur != pid {
-            if cur.is_some() {
-                if seen {
-                    restarts += 1;
-                }
-                seen = true;
-                since = now;
-            }
-            pid = cur;
-        }
-        let startup_done = !autoacq
-            || std::fs::read_to_string(&status)
-                .is_ok_and(|t| t.lines().any(|l| matches!(l.split('\t').nth(1), Some("end") | Some("abort"))));
-        let h = Health {
-            elapsed: now,
-            ui_restarts: restarts,
-            ui_up: if pid.is_some() { now - since } else { 0.0 },
-            startup_done,
-        };
-        match update::judge(&h) {
-            Verdict::Wait => continue,
-            v => break v,
-        }
-    };
-    let st = st0;
-    match verdict {
-        Verdict::Good => {
-            if trial_sha.is_some() {
-                match update::confirm(&p, trial_sha) {
-                    Ok(true) => tell(&format!(
-                        "build {} confirmed (trial passed)",
-                        st.current.as_ref().map_or("?", |c| update::short(&c.build))
-                    )),
-                    Ok(false) => tell("start was good, but the update state changed meanwhile: nothing confirmed"),
-                    Err(e) => tell(&e),
-                }
-            }
-            if st.persist {
-                let mut c = open_card(a, true);
-                match update::arm_checked(&mut c, &p) {
-                    Ok(true) => tell("persist mode: OOS armed for the next power-on"),
-                    Ok(false) => {}
-                    Err(e) => tell(&format!("persist mode: {}", e)),
-                }
-            }
-        }
-        Verdict::Bad(why) => {
-            if trial_sha.is_some() && st.previous.is_some() {
-                let mut c = open_card(a, true);
-                match update::rollback(&mut c, &p, &why, true, trial_sha) {
-                    Ok(r) => {
-                        r.lines.iter().for_each(|l| out!("{}", l));
-                        notice(&messages::failed_trial(
-                            st.current.as_ref().map_or("?", |c| c.build.as_str()),
-                            &why,
-                            &r,
-                        ));
-                    }
-                    Err(e) => notice(&messages::trial_restore_failed(&why, &e)),
-                }
-            } else {
-                tell(&format!("start not clean ({}); OOS not armed again, the next power-on boots stock", why));
-            }
-        }
-        Verdict::Wait => unreachable!(),
     }
 }
 
@@ -949,10 +838,9 @@ mod tests {
 
     #[test]
     fn kexec_undo_uses_supervisor_only_when_no_loop_remains() {
-        let root = std::env::temp_dir().join(format!("oos-undo-{}", std::process::id()));
-        std::fs::create_dir_all(&root).unwrap();
+        let root = oos_update::test_support::TempDir::new();
         use std::os::unix::fs::PermissionsExt;
-        let probe = root.join("pgrep");
+        let probe = root.path().join("pgrep");
         std::fs::write(&probe, "#!/bin/sh\n[ \"$*\" = '-x oos-ui-loop' ] || exit 2\nexit \"$PROBE_STATUS\"\n").unwrap();
         std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o755)).unwrap();
         let script = UI_LOOP
@@ -964,13 +852,12 @@ mod tests {
         for (status, wanted) in [(0, ""), (1, "supervisor"), (2, "")] {
             let out = std::process::Command::new("sh")
                 .args(["-c", &script])
-                .env("PATH", format!("{}:{}", root.display(), std::env::var("PATH").unwrap()))
+                .env("PATH", format!("{}:{}", root.path().display(), std::env::var("PATH").unwrap()))
                 .env("PROBE_STATUS", status.to_string())
                 .output()
                 .unwrap();
             assert_eq!(String::from_utf8(out.stdout).unwrap().trim(), wanted, "probe {}", status);
         }
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     // Break it catches: a restart with KRNL armed (the trial start would be stock), of a build that is not on trial,

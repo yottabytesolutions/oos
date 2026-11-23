@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use crate::die;
+use oos_hal::update::{card, Card};
+use std::path::Path;
 
 pub(crate) struct Args {
     pub(crate) rest: Vec<String>,
@@ -26,6 +28,11 @@ impl Args {
         }
         a
     }
+    pub(crate) fn open_card(&self, write: bool) -> Result<Card, String> {
+        let path = self.val("--card").unwrap_or("/dev/mmcblk0");
+        card::open_checked(Path::new(path), write)
+    }
+
     pub(crate) fn install_opt<'a>(&self, running_model: &'a str) -> oos_hal::update::InstallOpt<'a> {
         oos_hal::update::InstallOpt {
             running_model,
@@ -67,5 +74,23 @@ impl Args {
     }
     pub(crate) fn val(&self, k: &str) -> Option<&str> {
         self.vals.iter().rev().find(|(x, _)| x == k).map(|(_, v)| v.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::oos_update::test_support::TempDir;
+
+    #[test]
+    fn card_open_returns_errors_and_uses_the_requested_card_file() {
+        let directory = TempDir::new();
+        let path = directory.path().join("sd-card");
+        let args =
+            Args { rest: Vec::new(), flags: Vec::new(), vals: vec![("--card".into(), path.display().to_string())] };
+        assert!(args.open_card(false).is_err());
+        std::fs::File::create(&path).unwrap();
+        assert!(args.open_card(false).unwrap().is_test_file().unwrap());
+        assert!(args.open_card(true).unwrap().is_test_file().unwrap());
     }
 }

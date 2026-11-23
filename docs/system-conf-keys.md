@@ -13,6 +13,10 @@ image scripts and [ADR 0012](adr/0012-hardware-verification.md) for experimental
 
 Startup ignores the retired `acq.play` and `acq.play.inferred` keys and logs one notice for the pair.
 
+The updater reads `sd.mode = hs|sdr104` from the device-local file. It defaults to `hs` and selects the device tree
+for the next image. After a persistently slow start, choose `hs` and follow the restaging procedure in
+[Device boot card mode](boot.md#device-boot-card-mode).
+
 ## Acquisition and rendering switches
 
 | Key | Values | Default | Effect | Unit evidence |

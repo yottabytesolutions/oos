@@ -133,7 +133,7 @@ quantiles use only sampled reads that had accumulated waits.
 | `read` | ms | Execution of the C2H read step. |
 | `readout` | ms | Contiguous read-out register writes before the C2H read. |
 | `records_per_s` | Records/s | Records in the completed batch divided by elapsed time since the previous completed read. |
-| `duty` | Fraction | Fill time divided by elapsed time between consecutive read completions. |
+| `duty` | Fraction | Diagnostic ratio of observed fill time to elapsed time between consecutive read completions, independent of how much signal time the shown records cover. |
 | `budget_ms` | Whole ms | Configured or derived work budget, truncated to whole milliseconds in the response. |
 | `source.serial` | Reads | Completed ordinary reads using a serial grant. |
 | `first_trigger` | ms | Arm completion to the observed end of the first record wait. |
@@ -146,8 +146,10 @@ quantiles use only sampled reads that had accumulated waits.
 | `parallelism` | Worker lanes | The reported grant's record allowance capped at the worker count. |
 | `reference_count` | Records | Full-rate reference records deposited for the current acquisition identity. |
 | `reference_work_ns` | ns/record | p50/p90 of summed refinement, envelope and tile worker time over up to 64 deposited full-rate references. |
+| `capture_share` | Fraction | Fraction of wall time covered by the records shown in the latest status interval, clamped to 0 through 1. It is the shown record count multiplied by stored points per channel divided by sample rate, then divided by elapsed wall time. The same interval supplies the trigger status percentage. `--` means the share is unavailable. |
 
 See [source metrics](../../ui/src/drawpipe/metrics/source.rs),
+[capture status](../../ui/src/ui/step_draw/capture.rs),
 [grant model](../../ui/src/drawpipe/admission/model.rs), [source timing](../../ui/src/board/dho/hw/batch_timing.rs)
 and [HAL batch phases](../../hal/src/dho/seq/execute.rs).
 

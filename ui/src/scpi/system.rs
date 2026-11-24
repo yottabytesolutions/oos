@@ -91,7 +91,12 @@ fn settings(scpi: &mut Scpi, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str
         );
         text.push_str(&board().capture_state(&ui.src));
         let counters = crate::drawpipe::counters();
-        text.push_str(&counters.pipeline_text(ui.switches().source.work_budget(), crate::pacing::step_missed()));
+        let capture_share = crate::ui::step_draw::capture::share(ui);
+        text.push_str(&counters.pipeline_text_with_share(
+            switches.source.work_budget(),
+            crate::pacing::step_missed(),
+            capture_share,
+        ));
         counters.acquisition.write_disarms(&mut text);
         return Some(text_reply(&text));
     }

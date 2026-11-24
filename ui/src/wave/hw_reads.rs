@@ -9,6 +9,26 @@ use crate::board::{board, Board};
 use crate::model::{Model, ModelExt, HDIV};
 
 impl Source {
+    /// Sample rate and points per channel of the latest hardware frame.
+    pub fn hw_rate_depth(&self) -> Option<(f64, usize)> {
+        self.hw_rate_depth_matching(None)
+    }
+
+    /// Captured geometry for the specified acquisition generation and epoch.
+    pub(crate) fn hw_rate_depth_matching(&self, pair: Option<(u64, u64)>) -> Option<(f64, usize)> {
+        let Source::Hw { shared, .. } = self else { return None };
+        let g = crate::perfguard::deep::ui_lock(shared);
+        let frame = &g.frame;
+        if frame.seq == 0 || pair.is_some_and(|pair| pair != (frame.cfg, frame.stamp)) {
+            return None;
+        }
+        if frame.acq.1 > 0 {
+            return Some(frame.acq);
+        }
+        let points = frame.ch.iter().map(Vec::len).max().unwrap_or(0);
+        (frame.dt > 0.0 && points > 0).then(|| (frame.dt.recip(), points))
+    }
+
     pub(crate) fn planned_rate_depth(&self, m: &Model, sw: &crate::sysconf::Switches) -> (f64, u64) {
         let planned = if self.is_hw() { board().auto_rate_depth(m, sw) } else { None };
         planned.unwrap_or_else(|| m.demo_rate_depth())

@@ -38,15 +38,7 @@ impl Samples {
         self.reference_work.add([Some(work_per_record)]);
     }
 
-    #[cfg(target_os = "linux")]
-    fn capture_duty(&self, since: Instant) -> Option<f64> {
-        if self.last_read.is_none_or(|last| last <= since) || self.window.quantiles(5)[0] == 0 {
-            return None;
-        }
-        Some(self.window.quantiles(6)[0] as f64 / 1_000_000.0)
-    }
-
-    pub(super) fn write(&self, text: &mut String, budget: Duration) {
+    pub(super) fn write(&self, text: &mut String, budget: Duration, capture_share: Option<f64>) {
         let [p50, p90] = self.window.quantiles(0);
         let _ = write!(
             text,
@@ -72,13 +64,11 @@ impl Samples {
         let _ = write!(text, " work_per_record_ns={work} fixed_cost_ns={fixed} parallelism={workers}");
         let [p50, p90] = self.reference_work.quantiles(0);
         let _ = write!(text, " reference_count={} reference_work_ns={p50}/{p90}", self.reference_count);
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl Metrics {
-    pub(crate) fn capture_duty(&self, identity: Identity, since: Instant) -> Option<f64> {
-        self.current(Some(identity))?.source.capture_duty(since)
+        if let Some(share) = capture_share {
+            let _ = write!(text, " capture_share={share:.3}");
+        } else {
+            text.push_str(" capture_share=--");
+        }
     }
 }
 

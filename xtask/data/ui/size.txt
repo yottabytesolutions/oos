@@ -31,7 +31,7 @@
 772 file ui/src/ui/wlan.rs
 653 file ui/src/ui/workflow.rs
 804 file ui/src/ui/workspace.rs
-1047 file ui/src/wave.rs
+1033 file ui/src/wave.rs
 138 fn ui/src/board/dho/fpga.rs spawn
 83 fn ui/src/cmd.rs execute
 103 fn ui/src/drm.rs Display::on_fd

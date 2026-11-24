@@ -139,7 +139,12 @@ impl Metrics {
         }
     }
 
-    pub(super) fn text(&self, routes: &super::route::RouteCounters, budget: Duration) -> String {
+    pub(super) fn text(
+        &self,
+        routes: &super::route::RouteCounters,
+        budget: Duration,
+        capture_share: Option<f64>,
+    ) -> String {
         let current = oos_hal::sync::lock(&self.0);
         let mut text = String::from(" stage.v1");
         for (prefix, histograms) in [("", &current.accepted), ("rejected.", &current.rejected)] {
@@ -156,7 +161,7 @@ impl Metrics {
             let _ = write!(text, " {name}={p50}/{p90}");
         }
         routes.write(&mut text);
-        current.source.write(&mut text, budget);
+        current.source.write(&mut text, budget, capture_share);
         text
     }
 }

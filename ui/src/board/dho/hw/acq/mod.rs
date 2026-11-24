@@ -41,6 +41,7 @@ mod linux;
 pub use linux::spawn;
 mod pacing;
 mod read;
+mod reference;
 mod roll;
 mod service;
 #[cfg(test)]
@@ -158,6 +159,8 @@ struct Raw {
     live: Option<Instant>,
     deep: Option<Instant>,
     dump: Option<super::header::dump::Dump>,
+    reference: super::raw::ReferenceCycle,
+    decoders: reference::Decoders,
 }
 
 struct AcqLoop<T: pacing::PacingPolicy> {

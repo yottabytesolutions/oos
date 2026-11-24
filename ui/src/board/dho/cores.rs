@@ -146,6 +146,11 @@ impl Cores {
 }
 
 impl Learnt {
+    #[cfg(any(target_os = "linux", test))]
+    pub(super) fn correction(self) -> Correction {
+        Correction::new(&self.l, 0)
+    }
+
     fn fit(&self, c: &[f64; P]) -> (usize, f64, f64) {
         let score = |s: usize| (0..P).map(|p| c[p] * self.l[(p + s) % P]).sum::<f64>();
         let turn = (0..P).max_by(|&a, &b| score(a).total_cmp(&score(b))).unwrap_or(0);

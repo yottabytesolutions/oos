@@ -84,6 +84,11 @@ impl<T: Default + RawBatch + 'static> DmaSource<T> {
         self.current.as_mut().expect("ready or prearm reserved a DMA destination")
     }
 
+    #[cfg(any(target_os = "linux", test))]
+    pub(super) fn exchange(&mut self, raw: &mut T) {
+        std::mem::swap(self.destination(), raw);
+    }
+
     /// If the completed destination will be loaned, only a distinct spare can back prearm.
     pub(super) fn spare(&mut self, pipe: &Pipe) -> Option<T> {
         self.take(Some(pipe))

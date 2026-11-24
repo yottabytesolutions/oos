@@ -7,8 +7,19 @@ use std::time::Duration;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Capture {
-    reduction: Option<(bool, u32)>,
+    mode: CaptureMode,
     inferred: bool,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum CaptureMode {
+    #[default]
+    Full,
+    Auto,
+    Explicit {
+        peak: bool,
+        factor: u32,
+    },
 }
 
 impl Capture {
@@ -21,39 +32,45 @@ impl Capture {
                 false
             }
         };
-        let reduction = conf_value(None, conf, "acq.capture").and_then(|value| {
-            if value == "full" {
-                return None;
-            }
-            let request = value.split_once(':').and_then(|(mode, factor)| {
-                let factor = factor.parse::<u32>().ok()?;
-                if !matches!(factor, 2 | 4 | 8 | 16 | 32 | 64) {
-                    return None;
-                }
-                match mode {
-                    "decimate" => Some((false, factor)),
-                    "peak" => Some((true, factor)),
-                    _ => None,
-                }
-            });
-            if request.is_none() {
-                report("acq.capture", &value, "full");
-            }
-            request
-        });
-        Self { reduction, inferred }
+        let value = conf_value(None, conf, "acq.capture");
+        let mode = match value.as_deref() {
+            None | Some("full") => CaptureMode::Full,
+            Some("auto") => CaptureMode::Auto,
+            Some(value) => value
+                .split_once(':')
+                .and_then(|(mode, factor)| {
+                    let factor = factor.parse::<u32>().ok()?;
+                    if !matches!(factor, 2 | 4 | 8 | 16 | 32 | 64) {
+                        return None;
+                    }
+                    matches!(mode, "decimate" | "peak")
+                        .then_some(CaptureMode::Explicit { peak: mode == "peak", factor })
+                })
+                .unwrap_or_else(|| {
+                    report("acq.capture", value, "full");
+                    CaptureMode::Full
+                }),
+        };
+        Self { mode, inferred }
     }
 
     pub(crate) fn reduction(self) -> Option<(bool, u32, bool)> {
-        self.reduction.map(|(peak, factor)| (peak, factor, self.inferred))
+        let CaptureMode::Explicit { peak, factor } = self.mode else { return None };
+        Some((peak, factor, self.inferred))
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn auto(self) -> bool {
+        self.mode == CaptureMode::Auto
     }
 }
 
 impl fmt::Display for Capture {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.reduction {
-            Some((peak, factor)) => write!(f, "{}:{factor}", if peak { "peak" } else { "decimate" }),
-            None => f.write_str("full"),
+        match self.mode {
+            CaptureMode::Explicit { peak, factor } => write!(f, "{}:{factor}", if peak { "peak" } else { "decimate" }),
+            CaptureMode::Full => f.write_str("full"),
+            CaptureMode::Auto => f.write_str("auto"),
         }
     }
 }
@@ -142,7 +159,7 @@ mod tests {
         fifo: false,
         work_budget: None,
 
-        capture: Capture { reduction: None, inferred: false },
+        capture: Capture { mode: CaptureMode::Full, inferred: false },
     };
 
     #[test]
@@ -213,6 +230,10 @@ mod tests {
 
     #[test]
     fn capture_requires_an_explicit_system_conf_value() {
+        let auto = Switches::parse(&|_| None, "acq.capture = auto", "", Default::default()).source.capture();
+        assert!(auto.auto());
+        assert_eq!(auto.to_string(), "auto");
+        assert!(!Capture::default().auto());
         for (peak, mode) in [(false, "decimate"), (true, "peak")] {
             for factor in [2, 4, 8, 16, 32, 64] {
                 let conf = format!("acq.capture = {mode}:{factor}\nacq.capture.inferred = on");

@@ -9,7 +9,7 @@ pub(super) use disarm::Outcome;
 /// Process-lifetime worker operation attempts, including failures. Never reset by acquisition changes.
 #[derive(Debug, Default)]
 pub struct AcquisitionCounters {
-    events: [AtomicU64; 8],
+    events: [AtomicU64; 9],
     diagnostics: crate::perfguard::deep::Diagnostics,
     disarm: disarm::Counters,
 }
@@ -24,6 +24,7 @@ pub(super) enum Event {
     BatchDisarm,
     Configure,
     SingleArm,
+    CaptureTransitionTimeout,
 }
 
 impl AcquisitionCounters {
@@ -47,12 +48,18 @@ impl AcquisitionCounters {
     }
 
     pub fn text(&self) -> String {
+        use std::fmt::Write as _;
         let n = |event: Event| self.events[event as usize].load(Ordering::Relaxed);
-        format!(
+        let mut text = format!(
             " acq_seg_start={} acq_seg_abort={} acq_roll_stop={} acq_roll_start={} acq_batch_prearm={} acq_batch_disarm={} acq_configure={} acq_single_arm={}",
             n(Event::SegStart), n(Event::SegAbort), n(Event::RollStop), n(Event::RollStart),
             n(Event::BatchPrearm), n(Event::BatchDisarm), n(Event::Configure), n(Event::SingleArm)
-        )
+        );
+        let timeouts = n(Event::CaptureTransitionTimeout);
+        if timeouts != 0 {
+            write!(text, " acq_capture_transition_timeout={timeouts}").expect("writing to a String cannot fail");
+        }
+        text
     }
 }
 

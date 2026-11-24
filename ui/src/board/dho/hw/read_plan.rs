@@ -19,6 +19,8 @@ mod window;
 #[cfg(test)]
 mod tests;
 
+#[cfg(any(target_os = "linux", test))]
+pub(super) use capture::auto_capture;
 pub(super) use capture::configure_capture;
 pub(super) use depth::{depth, use_screen_depth};
 #[cfg(any(target_os = "linux", test))]

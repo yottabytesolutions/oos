@@ -17,7 +17,7 @@ use oos_hal::dho::{
     seq::{self, time::Clock},
     zone,
 };
-use std::io::Read;
+use std::{io::Read, time::Instant};
 
 /// Disjoint hardware borrows while a batch's register-settling policy is active.
 pub(super) struct ReadIo<'a, B, R, C> {
@@ -56,6 +56,7 @@ pub(super) struct Completed {
     pub(super) count: u32,
     pub(super) batch_ms: f32,
     pub(super) clock: StageClock,
+    pub(super) reference_at: Option<Instant>,
 }
 
 pub(super) struct Readout {
@@ -120,8 +121,17 @@ impl BatchState {
         let asked = (request.want.as_ref(), request.mode);
         let wait = stop::FirstWait::default();
         let clock = io.clock;
-        let changed = || wait.canceled(&lock(out), plan, asked, (b.auto, reserved), io.clock.now());
         let started = io.clock.now();
+        let reduced = raw::is_reduced(b);
+        // The cadence may interrupt the first-trigger poll. Fill and DMA run normally once it succeeds.
+        let reference_deadline = reduced.then(|| started + self.raw.reference.remaining(request.pair(), started));
+        let changed = || {
+            let g = lock(out);
+            let now = clock.now();
+            (reduced && g.hold)
+                || reference_deadline.is_some_and(|deadline| now >= deadline)
+                || wait.canceled(&g, plan, asked, (b.auto, reserved), now)
+        };
         let fill_ms = pacing.fill_ms(&mut self.fill, started);
         let allowed = |count| capture_read_allowed(plan, out, &mut self.record_wait, request, count, clock);
         // The HAL owns the fill, ring readout and C2H sequence as one cancellation-aware operation.
@@ -137,7 +147,15 @@ impl BatchState {
                 (timing.wait(fill_ms), clock),
                 |_| {},
                 changed,
-                (|| plan.serial() && plan.capture_changed(&lock(out), asked), allowed),
+                (
+                    || {
+                        plan.serial() && {
+                            let g = lock(out);
+                            plan.capture_changed(&g, asked) || (reduced && g.hold)
+                        }
+                    },
+                    allowed,
+                ),
                 |phase| timing.observe(phase),
             )
         })
@@ -147,10 +165,21 @@ impl BatchState {
                 super::disarm(io.state, &mut io.bar, clock, out);
             }
         })?;
-        let read_at = io.clock.now();
+        Ok(self.finish_fill(capture, (count, fill_ms), (started, clock.now()), (&timing, pacing, prearm)))
+    }
+
+    fn finish_fill(
+        &mut self,
+        capture: &Capture<'_>,
+        (count, fill_ms): (u32, u64),
+        (started, read_at): (Instant, Instant),
+        (timing, pacing, prearm): (&batch_timing::SourceTiming, &impl PacingPolicy, bool),
+    ) -> Completed {
+        let (b, p, request) = (capture.settings, capture.params, capture.request);
+        self.raw.reference.observe(request.pair(), count, timing.trigger_wait());
         let batch_ms = (read_at - started).as_secs_f32() * 1e3;
         let read_ms = timing.read_ms();
-        crate::pacing::batch(|| clock.now(), batch_ms, count, seq::frames(b, p), fill_ms, read_ms);
+        crate::pacing::batch(|| read_at, batch_ms, count, seq::frames(b, p), fill_ms, read_ms);
         let pre_ms = timing.pre_ms(started);
         self.fill.done(pre_ms + read_ms);
         self.cap.done(
@@ -161,7 +190,7 @@ impl BatchState {
             prearm && super::super::window::prearm_keeps_replay(b, p, None),
             || pacing.picture_period(),
         );
-        Ok(Completed { count, batch_ms, clock: timing.complete(request.identity, read_at, count) })
+        Completed { count, batch_ms, clock: timing.complete(request.identity, read_at, count), reference_at: None }
     }
 
     pub(super) fn read(

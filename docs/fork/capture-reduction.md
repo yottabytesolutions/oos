@@ -39,10 +39,19 @@ raw stock register trace for those reduced tuples in the checked repository path
 
 ## Capture plans
 
-`acq.capture` in `system.conf` defaults to `full`. `decimate:n` and `peak:n` request a divider `n` of 2, 4, 8, 16,
-32 or 64, relative to the full rate of the channel set. X2 uses CH1, CH1+CH2 or CH1–CH4, the nominal ADC clock,
-Normal acquisition, Auto depth, a centred edge trigger and the ordinary triggered analog path. The base plan must
-be at full ADC rate. Requests outside this set use `full`.
+`acq.capture` in `system.conf` defaults to `full`. The diagnostic values `decimate:n` and `peak:n` request a
+divider `n` of 2, 4, 8, 16, 32 or 64, relative to the full rate of the channel set. `auto` opts into inferred
+Peak geometry and picks the largest supported divider of 2, 4 or 8 that gives two pairs per column of the active
+plot. X2 uses the nominal ADC clock, Normal acquisition, Auto depth, a centred edge trigger and the ordinary
+triggered analog path. Decimation requires a base plan at the full ADC rate. Peak may also reduce a remapped
+base rate. If the requested geometry or view is ineligible the source uses `full`.
+
+Peak schedules a full-rate reference after 200 ms and finishes any batch whose first trigger has arrived.
+Two discarded guard triggers and one full-rate reference per 200 ms cost 15 triggers/s. The source starts full
+rate and enters Peak after two measured batches at 100 Hz or
+more (15% overhead). Below 75 Hz (20% overhead) it returns to full rate. A geometry transition that fails to
+collect both triggers within 100 ms plus the duration of two records increments
+`acq_capture_transition_timeout` and keeps the identity at full rate.
 
 With `acq.capture.inferred = off`, choose the smallest stock fixed depth from 1 k, 10 k and 100 k that is at least
 `ceil(full_points / n)` and less than the full record. The selected profile is checked against the stock remap model.
@@ -60,10 +69,16 @@ depths to keep the same divider. These profiles use Normal mode. Their exact cap
 
 With explicit `acq.capture.inferred = on`, use `floor(full_points / n / 8) × 8` stored points per channel. This
 depth and the 78.125 MSa/s profiles (one channel at 16, two at 8 and four at 4) are **assumed**. The opt-in is also
-required for every Peak request. Peak uses one stored word per programmed point and lane. The display treats
-consecutive words as minimum then maximum, at one pair per two stored words. Pool placement sends the pairs to
+required for every explicit Peak request. Peak uses one stored word per programmed point and lane. The display treats
+consecutive words as an unordered pair of extrema, one pair per two stored words. Pool placement sends the pairs to
 the column envelope, using the hardware trigger position on that pair grid. The raw word order, pair rate
 and window still need verification from the captures.
+On a flat signal, those extrema include the minimum and maximum offset of the ADC cores in the pair. Capture
+subtracts the corresponding extrema of the learnt native-rate offsets. A pair spanning only part of the ADC
+pattern uses the midpoint of the possible offsets for each extreme, with residual bounded by half that extreme's
+offset range rounded up. For a varying signal the actual extremum's core is unknown and the residual can be as
+large as the full spread of the offsets. A reference captured below the native rate cannot teach all of those
+offsets.
 Factors beyond 16, 8 and 4 respectively would need the slow path. Its integer `62.5 M/rate` divider cannot represent
 those exact rates, so selecting them leaves capture at `full` even with opt-in. A depth below eight points also
 falls back to `full`.
@@ -92,7 +107,7 @@ bytes and is equal to frame size for X2. The dump sidecar carries `capture`, `ca
    `decimate:2`, iterating the exact factors above in ascending order with inferred on. Once decimation delivers
    correctly aligned reads, repeat with `peak:n` and inferred on. Restart the UI between switch changes. Run each
    configuration again with `full` if needed to check repeatability. Stop at the first unexpected result.
-5. For each run, use `:SYSTem:STATe?` to check `acq.capture.requested`, the frame-confirmed `acq.capture` and
+5. For each run, use `:SYSTem:STATe?` to check `acq.capture.requested`, the applied `acq.capture` and
    `acq.capture.stored_points`. Poll once per second over ten seconds after the first valid frame. Save the
    complete status lines, the UI log, and the four `fixture.txt`/`dma.bin` pairs from `/tmp/oos-batches` before
    changing the setup. `source.v1 bytes`, `read`, `readout`, `grant`, `fill`, `first_trigger`, `records_per_s`, and

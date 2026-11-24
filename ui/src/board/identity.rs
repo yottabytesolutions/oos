@@ -97,9 +97,22 @@ impl CaptureStatus {
 pub(super) struct SourceStatus {
     latest: String,
     diagnostic: Option<(u64, CaptureStatus)>,
+    capture: Option<(Identity, String)>,
 }
 
 impl SourceStatus {
+    #[cfg(any(target_os = "linux", test))]
+    pub(super) fn applied_capture(&mut self, identity: Identity, description: String) {
+        self.capture = Some((identity, description));
+    }
+
+    pub(super) fn capture(&self, identity: Identity) -> Option<&str> {
+        self.capture
+            .as_ref()
+            .filter(|(id, _)| (id.gen(), id.epoch()) == (identity.gen(), identity.epoch()))
+            .map(|(_, description)| description.as_str())
+    }
+
     pub(super) fn set(&mut self, message: String) {
         self.latest = message;
     }

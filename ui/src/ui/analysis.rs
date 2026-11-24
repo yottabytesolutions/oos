@@ -363,20 +363,6 @@ impl Ui {
         crate::framestats::measurement_bounds(&self.m, len, t0, dt)
     }
 
-    /// The measurement gate is independent of replay routing, so live CH and R
-    /// overlays use the same physical screen times at their own sample intervals.
-    pub(super) fn measurement_channel_samples<'a>(&self, rec: &'a Record, c: usize) -> Option<(&'a [f32], f64, f64)> {
-        let screen = rec.ch.get(c)?;
-        let (samples, t0, dt) = if let Some(raw) = self.reader_raw(rec).filter(|raw| {
-            self.m.acq != AcqMode::HiRes && !raw.frame.envelope && raw.frame.ch.get(c).is_some_and(|v| v.len() >= 2)
-        }) {
-            (raw.frame.ch.get(c)?.as_slice(), raw.t0 - raw.i0 as f64 * raw.frame.dt, raw.frame.dt)
-        } else {
-            (screen.as_slice(), rec.t0, rec.dt)
-        };
-        crate::framestats::measurement_slice(&self.m, samples, self.source_time_origin(WaveId::Ch(c), t0), dt)
-    }
-
     fn reference_measurement_key(&self, slot: usize) -> Option<(RefMeasureKey, f64)> {
         let r = self.refs.get(slot)?.as_ref()?;
         if r.v.len() < 2 || !r.dt.is_finite() || r.dt <= 0.0 {
@@ -532,9 +518,9 @@ impl Ui {
         // only for the raw window of a deep record (deepmeas.rs), read once in a while: where records come faster
         // than the worker (roll at 0.2 to 0.5 s/div) the last finished value could be from before a change of the
         // signal and stood for seconds (time_axis_at_every_channel_count on the unit, 2026-11-15)
-        if !self.last[0]
-            .as_ref()
-            .and_then(|r| r.raw.as_ref())
+        if !self
+            .measurement_record()
+            .and_then(|record| self.reader_raw(record))
             .is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame))
         {
             return false;
@@ -599,7 +585,7 @@ impl Ui {
             let mut worker = self.azr.ref_measure_worker.borrow_mut();
             let worker = worker.get_or_insert_with(RefMeasureWorker::open);
             if !worker.busy() {
-                let input = if let Some(raw) = &record.raw {
+                let input = if let Some(raw) = self.reader_raw(record) {
                     let values = &raw.frame.ch[channel];
                     let offset = (samples.as_ptr() as usize).checked_sub(values.as_ptr() as usize)?;
                     let lo = offset / std::mem::size_of::<f32>();
@@ -639,10 +625,12 @@ impl Ui {
     }
 
     pub(super) fn measure_channel_sources(&mut self) {
+        let keep_record_readings =
+            self.measurement_record().is_some_and(|rec| rec.raw.is_none() || self.reader_raw(rec).is_some());
         for channel in 0..NCH {
             let full = self.channel_needs_full_analysis(channel);
             let analysis = self.channel_measurement(channel, full).map(|(analysis, _)| analysis);
-            if analysis.is_none() && self.m.ch[channel].on && self.last[0].is_some() && !self.readers_use_average() {
+            if analysis.is_none() && self.m.ch[channel].on && keep_record_readings {
                 // the analysis job is still running: the record's own measurement (`measure_rec`) stays meanwhile
                 continue;
             }

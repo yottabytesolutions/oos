@@ -322,10 +322,7 @@ impl Painter {
         let truncated = d.extent.clocks().push(clock);
         b.counters.metrics.work(b.header.identity(), &self.cost, records, truncated);
         if let Some(flight) = oos_hal::sync::lock(&b.header.flight).as_mut() {
-            let pool = self.cost.pool;
-            #[cfg(test)]
-            let pool = b.clock.pool_override().unwrap_or(pool);
-            flight.worked(records, pool);
+            flight.worked(records, clock.pool_time(self.cost.pool));
         }
         Some(d)
     }

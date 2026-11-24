@@ -2,6 +2,9 @@
 
 use super::*;
 
+/// One stopped redraw carries the brightness of six live record draws.
+pub(in crate::ui) const STOPPED_TRACE_WEIGHT: u16 = 24 * 6;
+
 pub(in crate::ui) fn stopped(ui: &mut Ui) {
     if ui.m.run == RunState::Stop && ui.stop_final.is_none() {
         if let Some(pipe) = drawpipe::pipe() {
@@ -16,7 +19,7 @@ pub(in crate::ui) fn stopped(ui: &mut Ui) {
     ui.phz.clear();
     if average {
         if let Some(record) = ui.last[0].take() {
-            deep_draw::draw_record_weighted(ui, &record, 24 * 6);
+            deep_draw::draw_record_weighted(ui, &record, STOPPED_TRACE_WEIGHT);
             ui.last[0] = Some(record);
         }
     } else {
@@ -47,7 +50,7 @@ fn draw_native_capture(ui: &mut Ui) {
                     main.t0 - ui.m.deskew_ch[c],
                     main.dt,
                     &main.ch[c],
-                    24 * 6,
+                    STOPPED_TRACE_WEIGHT,
                     if shifted_main.is_some() { None } else { zw.as_deref() },
                     main.pairs,
                 );
@@ -61,7 +64,7 @@ fn draw_native_capture(ui: &mut Ui) {
                         z.t0 - ui.m.deskew_ch[c],
                         z.dt,
                         &z.ch[c],
-                        24 * 6,
+                        STOPPED_TRACE_WEIGHT,
                         if shifted.is_some() || detail.is_some() { None } else { zw.as_deref() },
                         z.pairs,
                     );

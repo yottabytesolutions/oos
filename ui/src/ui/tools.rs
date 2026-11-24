@@ -207,10 +207,10 @@ impl Ui {
             if Self::channel_basic_kind(k) {
                 // the full-record job still running: the record's own measurement (`measure_rec`) meanwhile
                 return self.channel_basic_reading(channel, k).unwrap_or_else(|| {
-                    if self.readers_use_average() {
-                        f64::NAN
-                    } else {
+                    if self.measurement_record().is_some() {
                         self.ana_get(channel, k)
+                    } else {
+                        f64::NAN
                     }
                 });
             }

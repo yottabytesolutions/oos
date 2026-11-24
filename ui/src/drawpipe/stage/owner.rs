@@ -185,16 +185,13 @@ pub(super) fn publish_completed(
         return current;
     }
     // Jobs are joined by Painter::batch. Drop the completed raw/decoder owner before output capacity wait.
-    #[cfg(test)]
-    let injected = b.clock.pool_override().is_some();
+    let clock = b.clock;
     drop(b);
     let result = slot.send_timed(d);
     match result {
         Ok(publication) => {
             if let Some(flight) = flight {
-                #[cfg(test)]
-                let publication = if injected { std::time::Duration::ZERO } else { publication };
-                flight.published(publication);
+                flight.published(clock.publication_time(|| publication));
             }
         }
         Err(d) => {

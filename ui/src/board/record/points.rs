@@ -9,7 +9,7 @@ pub(crate) fn point_channels(
     ti: f64,
     channels: &mut [Vec<f32>; NCH],
 ) {
-    let dt = window / n as f64;
+    let dt = window / n.max(1) as f64;
     for (values, out) in frame.ch.iter().zip(channels) {
         channel(values, (frame.dt, false), (n, dt, first), ti, out);
     }

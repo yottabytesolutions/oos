@@ -398,6 +398,8 @@ pub(super) fn account_picture(ui: &Ui, records: usize, composition: Composition)
 
 mod finish;
 mod stopped;
+#[cfg(test)]
+pub(super) use stopped::STOPPED_TRACE_WEIGHT;
 pub(super) use {finish::finish, stopped::stopped};
 
 pub(crate) mod capture;

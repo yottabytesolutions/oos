@@ -34,7 +34,6 @@ pub(super) enum RecordDelivery {
     Auto,
     Always,
     Zoom,
-    Average,
 }
 
 impl RecordDelivery {
@@ -43,7 +42,6 @@ impl RecordDelivery {
             Self::Auto => false,
             Self::Always => true,
             Self::Zoom => model.zoom,
-            Self::Average => drawpipe::average::software(model),
         }
     }
 }

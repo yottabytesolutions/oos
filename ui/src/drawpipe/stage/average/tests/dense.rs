@@ -51,19 +51,8 @@ pub(super) fn compare_fold(
             },
             Frame::clone,
         );
-        let grid = hw_grid(&view.m);
-        let (ti, triggered) = crate::board::record::record_trigger(&frame, &view.m, grid.0, grid.1, grid.2);
-        let mut record = Record {
-            t0: grid.2,
-            dt: grid.1 / grid.0 as f64,
-            ch: Default::default(),
-            triggered,
-            partial: frame.partial,
-            raw: None,
-            la: None,
-            pairs: false,
-        };
-        reference_channels(&frame, grid, ti, &mut record.ch);
+        let record = hw_record(&view.m, Arc::new(frame));
+        assert!(!record.pairs);
         expected = Some(original(expected.as_ref(), record, count));
     }
     let (output, _) = average_batch(&mut Painter::new(4, 0), batch, &view);

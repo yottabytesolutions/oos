@@ -3,7 +3,7 @@
 
 //! Retained captures and their stopped views.
 use super::*;
-use crate::board::identity::StopView;
+use crate::board::{identity::StopView, Frame};
 use crate::ui::lifecycle::worker::Worker;
 use std::{
     hash::{Hash, Hasher},
@@ -91,20 +91,20 @@ fn acquire_demo(job: DemoJob) -> DemoResult {
 }
 
 impl Ui {
-    /// Both Average acquisition paths publish the displayed volts in the record's screen grid.
+    /// Live Average captures already contain the result of averaging and must keep it during replay.
     pub(super) fn readers_use_average(&self) -> bool {
         self.m.acq == AcqMode::Average && !self.record_mode()
     }
 
     pub(super) fn reader_raw<'a>(&self, record: &'a Record) -> Option<&'a crate::wave::Raw> {
-        record.raw.as_ref().filter(|_| !self.readers_use_average())
+        record.raw.as_ref().filter(|raw| raw.frame.hw_avg || !self.readers_use_average())
     }
 
     /// During RUN, wait for the first record on a changed grid. STOP keeps the accepted grid
     /// and its time origin while the viewport moves over it.
     pub(super) fn displayed_reader_record(&self) -> Option<&Record> {
         let record = self.last[0].as_ref()?;
-        if self.readers_use_average() && self.m.run == RunState::Run {
+        if self.m.run == RunState::Run && self.readers_use_average() {
             return average::current_grid(self, record).then_some(record);
         }
         Some(record)
@@ -258,13 +258,14 @@ impl Ui {
             origin.to_bits(),
             view.0.to_bits(),
             view.1.to_bits(),
-            format!("{:?}", self.m.acq),
+            std::mem::discriminant(&self.m.acq),
             rec.triggered,
             self.src.is_hw(),
         )
             .hash(&mut h);
         for ch in &self.m.ch {
-            (ch.invert, format!("{:?}", ch.coupling), ch.bw, ch.offset.to_bits(), ch.vfine.to_bits()).hash(&mut h);
+            (ch.invert, std::mem::discriminant(&ch.coupling), ch.bw, ch.offset.to_bits(), ch.vfine.to_bits())
+                .hash(&mut h);
         }
         let key = h.finish();
         if let Some((_, cached)) = self.capture_views.borrow().views.iter().find(|(k, _)| *k == key) {
@@ -300,15 +301,20 @@ impl Ui {
     }
 
     pub(super) fn captured_view(&self, view: (f32, f32)) -> Option<Arc<Record>> {
-        self.captured_record_view(self.last[0].as_ref()?, view)
+        self.reader_capture_view(self.last[0].as_ref()?, view)
     }
 
     pub(super) fn refresh_capture_view(&mut self) {
-        if !self.readers_use_average() {
-            let view = (self.m.time_per_div(), self.m.delay);
-            if let Some(rec) = self.captured_view(view) {
-                self.replace_stopped_view(rec.as_ref().clone());
-            }
+        let Some(record) = self.last[0].as_ref() else { return };
+        let (points, window, first) = crate::board::record::hw_grid(&self.m);
+        if (record.t0, record.dt) == (first, window / points as f64)
+            && self.reader_raw(record).is_some_and(|raw| raw.frame.hw_avg)
+        {
+            return;
+        }
+        let view = (self.m.time_per_div(), self.m.delay);
+        if let Some(rec) = self.reader_capture_view(record, view) {
+            self.replace_stopped_view(rec.as_ref().clone());
         }
     }
 
@@ -349,10 +355,52 @@ impl Ui {
     }
 
     pub(in crate::ui) fn measurement_record(&self) -> Option<&Record> {
-        if self.m.meas_full_record && !self.readers_use_average() {
-            self.raw_read_record()
+        let displayed = self.displayed_reader_record()?;
+        if self.m.meas_full_record {
+            if let Some(native) = self.raw_read_record().filter(|record| self.reader_raw(record).is_some()) {
+                return Some(native);
+            }
+        }
+        Some(displayed)
+    }
+
+    /// Gate a channel to the same physical screen times as reference sources, at its own sample interval.
+    pub(super) fn measurement_channel_samples<'a>(&self, rec: &'a Record, c: usize) -> Option<(&'a [f32], f64, f64)> {
+        let screen = rec.ch.get(c)?;
+        let (samples, t0, dt) = if let Some(raw) = self.reader_raw(rec).filter(|raw| {
+            self.m.acq != AcqMode::HiRes && !raw.frame.envelope && raw.frame.ch.get(c).is_some_and(|v| v.len() >= 2)
+        }) {
+            (raw.frame.ch.get(c)?.as_slice(), raw.t0 - raw.i0 as f64 * raw.frame.dt, raw.frame.dt)
         } else {
-            self.displayed_reader_record()
+            (screen.as_slice(), rec.t0, rec.dt)
+        };
+        crate::framestats::measurement_slice(&self.m, samples, self.source_time_origin(WaveId::Ch(c), t0), dt)
+    }
+
+    fn measurement_window<'a>(&self, rec: &'a Record, c: usize) -> Option<&'a crate::wave::Raw> {
+        let raw = self.reader_raw(rec).filter(|_| self.m.acq != AcqMode::HiRes)?;
+        let len = raw.frame.ch[c].len();
+        let native_average = raw.frame.hw_avg && !raw.frame.envelope && len >= 2;
+        (raw.i1 <= len && (native_average || raw.i1 - raw.i0 > rec.ch[c].len())).then_some(raw)
+    }
+
+    pub(super) fn meas_frame(&self, rec: &Record, c: usize) -> Option<(Arc<Frame>, usize, usize)> {
+        let raw = self.measurement_window(rec, c)?;
+        Some((Arc::clone(&raw.frame), raw.i0, raw.i1))
+    }
+
+    pub(super) fn meas_slice<'a>(&self, rec: &'a Record, c: usize) -> (&'a [f32], f64) {
+        if let Some(raw) = self.measurement_window(rec, c) {
+            (&raw.frame.ch[c][raw.i0..raw.i1], raw.frame.dt)
+        } else {
+            (&rec.ch[c], rec.dt)
+        }
+    }
+
+    pub(super) fn meas_on_pairs(&self, rec: &Record, c: usize) -> bool {
+        match self.measurement_window(rec, c) {
+            Some(raw) => raw.frame.envelope,
+            None => rec.pairs || rec.raw.as_ref().is_some_and(|raw| raw.frame.envelope),
         }
     }
 

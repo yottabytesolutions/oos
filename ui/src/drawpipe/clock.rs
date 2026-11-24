@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+use crate::picture::deposit::pool::Timing;
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Default)]
@@ -49,9 +50,31 @@ impl StageClock {
         self
     }
 
-    #[cfg(test)]
-    pub(super) fn pool_override(self) -> Option<Duration> {
-        self.test_pool
+    fn pool_override(self) -> Option<Duration> {
+        #[cfg(test)]
+        {
+            self.test_pool
+        }
+        #[cfg(not(test))]
+        {
+            None
+        }
+    }
+
+    pub(super) fn pool_time(self, elapsed: Duration) -> Duration {
+        self.pool_override().unwrap_or(elapsed)
+    }
+
+    pub(super) fn pool_timing(self, timing: Timing, shards: usize) -> Timing {
+        self.pool_override().map_or(timing, |wall| Timing { wall, worker_time: wall * shards as u32 })
+    }
+
+    pub(super) fn publication_time(self, elapsed: impl FnOnce() -> Duration) -> Duration {
+        if self.pool_override().is_some() {
+            Duration::ZERO
+        } else {
+            elapsed()
+        }
     }
 
     pub(super) fn admitted(self) -> bool {
@@ -158,6 +181,22 @@ impl BatchClocks {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn virtual_pool_cost_also_suppresses_publication_duration() {
+        let (wall, worker_time) = (Duration::from_millis(2), Duration::from_millis(3));
+        let measured = || Timing { wall, worker_time };
+        let cost = Duration::from_millis(5);
+        let clock = StageClock::default();
+        assert_eq!(clock.pool_timing(measured(), 4).worker_time, worker_time);
+        assert_eq!(clock.publication_time(|| wall), wall);
+
+        let injected = clock.pool_for_test(cost);
+        assert_eq!(injected.pool_time(wall), cost);
+        let timing = injected.pool_timing(measured(), 4);
+        assert_eq!((timing.wall, timing.worker_time), (cost, cost * 4));
+        assert_eq!(injected.publication_time(|| panic!("injected timing must avoid the real clock")), Duration::ZERO);
+    }
 
     #[test]
     fn bounded_clocks_retain_both_ends() {

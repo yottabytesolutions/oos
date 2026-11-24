@@ -30,7 +30,7 @@ pub(super) fn reset_history_channels(state: &mut State) {
 
 #[derive(PartialEq)]
 struct Grid {
-    time: (f64, f64, bool),
+    time: (f64, f64),
     main: (f32, f32),
     zoom: Option<(f32, f32)>,
     depth: usize,
@@ -39,11 +39,15 @@ struct Grid {
 }
 
 impl Grid {
-    fn of(m: &Model, rec: &Record) -> Self {
+    fn of(ui: &Ui, rec: &Record) -> Self {
+        let m = &ui.m;
         Self {
-            time: (rec.t0, rec.dt, rec.pairs),
+            time: (rec.t0, rec.dt),
             main: (m.time_per_div(), m.delay),
-            zoom: m.zoom.then(|| (TIME_SCALES[m.zscale], m.zdelay)),
+            zoom: m
+                .zoom
+                .then(|| (TIME_SCALES[m.zscale], m.zdelay))
+                .filter(|_| rec.pairs || !average::software(m) || !ui.fast_ok()),
             depth: m.mdepth,
             channels: m.ch.each_ref().map(|c| c.on),
             trigger: (m.trig_type, m.trigger(), m.trig_coupling(), m.trig_line(), m.trig_nrej),
@@ -51,12 +55,12 @@ impl Grid {
     }
 
     fn matches(&self, rec: &Record) -> bool {
-        self.time == (rec.t0, rec.dt, rec.pairs)
+        self.time == (rec.t0, rec.dt)
     }
 }
 
 pub(super) fn current_grid(ui: &Ui, record: &Record) -> bool {
-    ui.batch_picture.average.grid.as_ref().is_some_and(|grid| *grid == Grid::of(&ui.m, record))
+    ui.batch_picture.average.grid.as_ref().is_some_and(|grid| *grid == Grid::of(ui, record))
 }
 
 fn previous<'a>(ui: &'a Ui, grid: &Grid, first: FirstDraw) -> Option<&'a Record> {
@@ -66,7 +70,7 @@ fn previous<'a>(ui: &'a Ui, grid: &Grid, first: FirstDraw) -> Option<&'a Record>
 }
 
 pub(super) fn blend_record_average(ui: &mut Ui, rec: &mut Record, first: FirstDraw) {
-    let grid = Grid::of(&ui.m, rec);
+    let grid = Grid::of(ui, rec);
     if ui.m.acq != AcqMode::Average {
         ui.batch_picture.average.grid = Some(grid);
         return;
@@ -75,17 +79,33 @@ pub(super) fn blend_record_average(ui: &mut Ui, rec: &mut Record, first: FirstDr
     let seed = if hw_avg { None } else { previous(ui, &grid, first) };
     if let Some(prev) = seed {
         let a = 1.0 / ui.m.avg_count as f32;
-        for (values, previous) in rec.ch.iter_mut().zip(&prev.ch) {
-            if values.len() == previous.len() {
-                for (x, p) in values.iter_mut().zip(previous) {
-                    if p.is_finite() {
-                        *x = p + (*x - p) * a;
-                    }
-                }
+        if rec.pairs == prev.pairs {
+            blend_channels(&mut rec.ch, &prev.ch, a);
+        } else if !rec.pairs {
+            // A dense FPGA average was drawn as screen pairs. Project its actual averaged samples
+            // onto the point grid before seeding a software fallback.
+            if let Some(raw) = prev.raw.as_ref().filter(|raw| raw.frame.hw_avg && !raw.frame.envelope) {
+                let frame = raw.frame.clone();
+                let trigger = raw.i0 as f64 - raw.t0 / frame.dt;
+                let screen = &mut ui.batch_picture.average.screen;
+                crate::board::record::point_channels(&frame, crate::board::record::hw_grid(&ui.m), trigger, screen);
+                blend_channels(&mut rec.ch, screen, a);
             }
         }
     }
     ui.batch_picture.average.grid = Some(grid);
+}
+
+fn blend_channels(channels: &mut [Vec<f32>; NCH], seed: &[Vec<f32>; NCH], weight: f32) {
+    for (values, previous) in channels.iter_mut().zip(seed) {
+        if values.len() == previous.len() {
+            for (x, p) in values.iter_mut().zip(previous) {
+                if p.is_finite() {
+                    *x = p + (*x - p) * weight;
+                }
+            }
+        }
+    }
 }
 
 pub(super) fn count_record_fallback(ui: &Ui, rec: &Record) {
@@ -146,8 +166,8 @@ pub(super) fn consume_batch(
     taps: &mut deep_draw::ReaderTaps,
 ) -> Option<(usize, std::time::Duration)> {
     let mut screen = std::mem::take(&mut ui.batch_picture.average.screen);
-    let grid = Grid::of(&ui.m, &rec);
-    output.apply(previous(ui, &grid, *first), &mut screen);
+    let grid = Grid::of(ui, &rec);
+    output.apply(previous(ui, &grid, *first).filter(|prev| !prev.pairs), &mut screen);
     rec.ch = screen;
     if composition.filter_record(ui, &rec, eligibility, first) {
         composition.filtered -= usize::from(eligibility == PictureEligibility::Drawable);

@@ -2640,14 +2640,6 @@ impl Ui {
         }
     }
 
-    /// Whether channel `c` of record `rec` is measured on min/max pairs (`meas_slice`).
-    pub(super) fn meas_on_pairs(&self, rec: &Record, c: usize) -> bool {
-        match self.meas_frame(rec, c) {
-            Some((f, _, _)) => f.envelope,
-            None => rec.pairs || rec.raw.as_ref().is_some_and(|r| r.frame.envelope),
-        }
-    }
-
     /// (points, dt, time of the first point relative to the trigger) of the last record of channel c.
     pub fn record_info(&self, c: usize) -> Option<(usize, f64, f64)> {
         let r = self.displayed_reader_record()?;
@@ -2860,13 +2852,13 @@ impl Ui {
                     Some((mut rec, eligibility, tap, None)) => {
                         self.bus_candidate_committed();
                         self.m.status = if rec.triggered { TrigStatus::Triggered } else { TrigStatus::Auto };
-                        deep_draw::condition_record(self, &mut rec);
-                        average::blend_record_average(self, &mut rec, first);
+                        deep_draw::prepare_record(self, &mut rec, first);
                         let t1 = std::time::Instant::now();
                         got += composition.draw_record(self, &rec, sw.interp, drawing_input, eligibility, &mut first);
                         td += record_draw.placed(bill_record, t1.elapsed()).as_secs_f32() * 1000.0;
                         deep_draw::remember_record(self, &rec, hw_seg);
-                        if deep_raw && rec.raw.as_ref().is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame)) {
+                        if deep_raw && self.reader_raw(&rec).is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame))
+                        {
                             raw_rec = Some(rec.clone());
                         }
                         taps.next_record(self, tap);
@@ -5901,27 +5893,27 @@ impl Ui {
     pub(crate) fn measure_last(&mut self) -> bool {
         // a raw window above the background size goes to the measurement worker (`measure_channel_sources`)
         let limit = analysis::BACKGROUND_MEASUREMENT_POINTS;
-        let measured = if self.readers_use_average() {
-            self.measure_average()
-        } else {
-            let measured = self.last[0].clone().is_some_and(|rec| self.measure_rec(&rec, limit));
-            if measured {
-                self.measure_channel_sources();
+        let measured = match self.displayed_reader_record() {
+            Some(rec) if rec.raw.is_none() || self.reader_raw(rec).is_some() => {
+                let rec = self.last[0].take().expect("the displayed record is the current capture");
+                let measured = self.measure_rec(&rec, limit);
+                self.last[0] = Some(rec);
+                if measured {
+                    self.measure_channel_sources();
+                }
+                measured
             }
-            measured
+            record => {
+                let present = record.is_some();
+                self.meas_env = std::array::from_fn(|c| record.is_some_and(|r| self.meas_on_pairs(r, c)));
+                change::acquisition::cancel_measurement(self);
+                self.meas_want = false;
+                self.measure_channel_sources();
+                present
+            }
         };
         self.measure_refs();
         measured
-    }
-
-    fn measure_average(&mut self) -> bool {
-        let record = self.displayed_reader_record();
-        let present = record.is_some();
-        self.meas_env = std::array::from_fn(|c| record.is_some_and(|r| self.meas_on_pairs(r, c)));
-        change::acquisition::cancel_measurement(self);
-        self.meas_want = false;
-        self.measure_channel_sources();
-        present
     }
 
     /// The measurements of `rec` now, on this thread, of the channels with at most `limit` samples (`measure_work`).
@@ -6038,12 +6030,12 @@ impl Ui {
         }
         self.meas_want = false;
         let pending = self.meas_pending.take();
-        let Some(rec) = pending.as_ref().or(self.last[0].as_ref()) else { return };
+        let Some(rec) = pending.as_ref().or_else(|| self.displayed_reader_record()) else { return };
         if !change::acquisition::record(self, rec) {
             return;
         }
         // a held pair record (deepmeas.rs) is never measured: the measurement stays that of the last raw one
-        if crate::deepmeas::hold(&self.m, rec.raw.as_ref().map(|r| &*r.frame), self.src.hw_deep_ok()) {
+        if crate::deepmeas::hold(&self.m, self.reader_raw(rec).map(|r| &*r.frame), self.src.hw_deep_ok()) {
             return;
         }
         let env: [bool; NCH] = std::array::from_fn(|c| self.meas_on_pairs(rec, c));
@@ -6062,11 +6054,12 @@ impl Ui {
             .collect();
         let cheap = self.meas_cheap(rec);
         let identity = change::acquisition::identity(self);
+        let tap = self.batch_picture.tap_statistics.as_ref().and_then(|stats| stats.frame_for(rec));
         let w = self.meas_bg.as_mut().expect("worker");
         if w.tx.send(lifecycle::WorkerJob::Measure((identity, cheap, job))).is_ok() {
             w.accept = true;
             w.busy = true;
-            w.tap = self.batch_picture.tap_statistics.as_ref().and_then(|stats| stats.frame_for(rec));
+            w.tap = tap;
             self.meas_env_sent = env;
         } else {
             // the thread is gone: measure here again
@@ -6081,30 +6074,12 @@ impl Ui {
     /// analysis (the DVM, the software counter, the analyser views, XY).
     fn meas_cheap(&self, rec: &Record) -> bool {
         let m = &self.m;
-        rec.raw.as_ref().is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame))
+        self.reader_raw(rec).is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame))
             && m.meas.iter().all(|(k, _)| crate::framestats::CHEAP.contains(k))
             && !m.dvm_on
             && !m.cnt_on
             && m.view == AView::Scope
             && !self.xy
-    }
-
-    /// The window of the hardware frame `meas_slice` measures channel `c` on, if it does.
-    fn meas_frame(&self, rec: &Record, c: usize) -> Option<(std::sync::Arc<crate::board::Frame>, usize, usize)> {
-        let r = self.reader_raw(rec).filter(|_| self.m.acq != AcqMode::HiRes)?;
-        (r.i1 <= r.frame.ch[c].len() && r.i1 - r.i0 > rec.ch[c].len()).then(|| (r.frame.clone(), r.i0, r.i1))
-    }
-
-    /// Samples to measure channel `c` on: every captured sample of the screen window when the hardware frame has more
-    /// than the screen record (conditioned like the record), else the screen record.
-    fn meas_slice<'a>(&self, rec: &'a Record, c: usize) -> (&'a [f32], f64) {
-        // high res: the screen record is the mean of those samples, the measurements follow it
-        if let Some(r) = self.reader_raw(rec).filter(|_| self.m.acq != AcqMode::HiRes) {
-            if self.meas_frame(rec, c).is_some() {
-                return (&r.frame.ch[c][r.i0..r.i1], r.frame.dt);
-            }
-        }
-        (&rec.ch[c], rec.dt)
     }
 
     /// `meas_slice` as an own copy.

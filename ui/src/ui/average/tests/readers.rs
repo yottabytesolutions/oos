@@ -49,9 +49,9 @@ fn volts(ui: &mut Ui, mode: &str) -> Vec<f32> {
     std::str::from_utf8(&bytes[11..]).unwrap().split(',').map(|value| value.parse().unwrap()).collect()
 }
 
-fn check_transfer(ui: &mut Ui, display: &[f32], raw: &[f32]) {
+fn check_transfer(ui: &mut Ui, display: &[f32], raw: &[f32], native_max: bool) {
     for mode in ["NORM", "MAX", "RAW"] {
-        let expected = if mode == "RAW" { raw } else { display };
+        let expected = if mode == "RAW" || mode == "MAX" && native_max { raw } else { display };
         let actual = volts(ui, mode);
         assert_eq!(actual.len(), expected.len(), "{mode}");
         assert!(actual.iter().zip(expected).all(|(a, b)| (a - b).abs() < 1e-6), "{mode}");
@@ -90,11 +90,11 @@ fn check_noisy_batch_readers(tdiv: &str, signal: fn(u8, &mut Frame)) {
     assert!((ui.wave_at_source(WaveId::Ch(0), 0.0).unwrap() - 0.375).abs() < 1e-6);
     let mean = crate::board::BasicStats::of(&view).reading(Meas::Vavg).unwrap();
     assert!((ui.dvm_value() - mean).abs() < 1e-6);
-    check_transfer(&mut ui, &view, &raw);
+    check_transfer(&mut ui, &view, &raw, false);
 
     ui.m.run = RunState::Stop;
     ui.step(0.04);
-    check_transfer(&mut ui, &view, &raw);
+    check_transfer(&mut ui, &view, &raw, false);
     assert_eq!(ui.meas(0, Meas::Vpp), vpp);
 
     ui.m.run = RunState::Run;
@@ -132,13 +132,23 @@ fn stopped_average_pan_zoom_draws_between_grid_samples_and_keeps_raw() {
     assert!((ui.wave_at_source(WaveId::Ch(0), ui.m.zdelay as f64).unwrap() - 0.375).abs() < 1e-6);
 
     let mut expected = crate::wave::Phosphor::new(ui.phz.w, ui.phz.h);
-    expected.draw_ex(0, &ui.zoom_display_model(), ui.view(), clock.0, clock.1, &samples, 24 * 6, None, false);
+    expected.draw_ex(
+        0,
+        &ui.zoom_display_model(),
+        ui.view(),
+        clock.0,
+        clock.1,
+        &samples,
+        step_draw::STOPPED_TRACE_WEIGHT,
+        None,
+        false,
+    );
     assert_eq!(ui.phz.maps()[0], expected.maps()[0]);
     assert!(ui.phz.maps()[0].iter().any(|&pixel| pixel > 0));
 }
 
 #[test]
-fn hardware_average_uses_its_display_grid_without_a_stopped_reread() {
+fn hardware_average_uses_native_samples_for_measurement_cursor_stopped_zoom_and_max() {
     let _scope = drawpipe::test_scope::Scope::new();
     let mut ui = ui();
     ui.m.avg_hw = true;
@@ -154,14 +164,40 @@ fn hardware_average_uses_its_display_grid_without_a_stopped_reread() {
     let screen = ui.last[0].as_ref().unwrap().ch[0].clone();
     let displayed_max = screen.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     assert!((0.375..0.5).contains(&displayed_max));
-    assert_eq!(ui.meas(0, Meas::Vmax), f64::from(displayed_max));
-    check_transfer(&mut ui, &screen, &raw);
+    assert_eq!(ui.meas(0, Meas::Vmax), 5.0);
+    let rec = ui.displayed_reader_record().unwrap();
+    let window = ui.reader_raw(rec).unwrap();
+    assert_eq!(ui.meas_slice(rec, 0), (&raw[window.i0..window.i1], window.frame.dt));
+    let (samples, dt, t0) = ui.deskew_samples(WaveId::Ch(0)).unwrap();
+    assert_eq!(samples, raw);
+    assert_eq!(ui.wave_at_source(WaveId::Ch(0), t0), Some(5.0));
+    assert_eq!(dt, 2e-9);
+    check_transfer(&mut ui, &screen, &raw, false);
     ui.m.run = RunState::Stop;
     ui.step(0.04);
     let Source::Hw { shared, .. } = &ui.src else { panic!("requires fake hardware") };
     assert!(oos_hal::sync::lock(shared).stop_view.is_none());
-    check_transfer(&mut ui, &screen, &raw);
-    assert_eq!(ui.meas(0, Meas::Vmax), f64::from(displayed_max));
+    check_transfer(&mut ui, &screen, &raw, true);
+    ui.set_zoom(true);
+    ui.m.zscale = ui.m.tscale - 3;
+    ui.step(0.04);
+    let rec = ui.last[0].as_ref().unwrap();
+    let detail = ui.reader_capture_view(rec, ui.view()).unwrap();
+    assert!(Arc::ptr_eq(&detail.raw.as_ref().unwrap().frame, &rec.raw.as_ref().unwrap().frame));
+    let mut expected = crate::wave::Phosphor::new(ui.phz.w, ui.phz.h);
+    expected.draw_ex(
+        0,
+        &ui.zoom_display_model(),
+        ui.view(),
+        detail.t0,
+        detail.dt,
+        &detail.ch[0],
+        step_draw::STOPPED_TRACE_WEIGHT,
+        None,
+        detail.pairs,
+    );
+    assert_eq!(ui.phz.maps()[0], expected.maps()[0]);
+    assert_eq!(ui.meas(0, Meas::Vmax), 5.0);
 }
 
 #[test]
@@ -180,16 +216,15 @@ fn readers_wait_for_the_new_grid_after_a_running_reseed() {
 }
 
 #[test]
-fn rise_time_at_a_slow_time_base_uses_screen_grid_crossings() {
+fn software_average_rise_time_at_a_slow_time_base_uses_screen_grid_crossings() {
     let _scope = drawpipe::test_scope::Scope::new();
     let mut ui = ui();
-    ui.m.avg_hw = true;
-    ui.m.tscale = tscales().iter().position(|&t| (t - 1e-3).abs() < 1e-9).unwrap();
+    crate::store::set(&mut ui.m, "tdiv", "0.00001").unwrap();
+    ui.m.mask_on = true;
     ui.m.meas_full_record = true;
     ui.step(0.04);
     let mut averaged = frame(&ui, 1, 0);
-    averaged.hw_avg = true;
-    averaged.dt = 1e-6;
+    averaged.dt = 10e-9;
     averaged.pre = 6000;
     averaged.fixed_ti = Some(6000.0);
     averaged.ch[0] = (0..12_000).map(|i| if i / 200 % 2 == 0 { -1.0 } else { 1.0 }).collect();
@@ -203,5 +238,38 @@ fn rise_time_at_a_slow_time_base_uses_screen_grid_crossings() {
     let measured = ui.meas(0, Meas::Rise);
     assert!((measured - expected).abs() < 1e-12, "{measured} != {expected}");
     assert!(measured > native, "grid rise {measured}, native rise {native}");
-    assert!(ui.meas(0, Meas::Vrms).is_nan(), "pair values are not weighted samples");
+    assert!(ui.meas(0, Meas::Vrms).is_finite());
+}
+
+#[test]
+fn dense_software_average_matches_between_worker_and_records_routes() {
+    let inputs = [0, 1, 0, 1, 2];
+    let capture = |workers: bool| {
+        let _scope = drawpipe::test_scope::Scope::new();
+        let mut ui = ui();
+        crate::store::set(&mut ui.m, "tdiv", "0.000001").unwrap();
+        ui.m.mask_on = !workers;
+        ui.step(0.04);
+        assert_eq!(ui.fast_ok(), workers);
+        if workers {
+            submit_with(&ui, 0, &inputs, dense_signal);
+        } else {
+            for (index, code) in inputs.into_iter().enumerate() {
+                let mut rec = frame(&ui, (index + 1) as u64, code);
+                dense_signal(code, &mut rec);
+                push(&ui, rec);
+            }
+        }
+        ui.step(0.04);
+        let rec = ui.last[0].take().unwrap();
+        assert!(!rec.pairs);
+        assert!(rec.dt / rec.raw.as_ref().unwrap().frame.dt >= 2.0);
+        assert_eq!(rec.ch[0].len(), crate::board::record::HW_POINTS);
+        rec
+    };
+    let worker = capture(true);
+    let record = capture(false);
+    assert_eq!((worker.t0, worker.dt), (record.t0, record.dt));
+    let max_error = worker.ch[0].iter().zip(&record.ch[0]).map(|(a, b)| (a - b).abs()).fold(0.0, f32::max);
+    assert!(max_error <= 0.5 / 7500.0, "maximum grid error: {} ADC counts", max_error * 7500.0);
 }

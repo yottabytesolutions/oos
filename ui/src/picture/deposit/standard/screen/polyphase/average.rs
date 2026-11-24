@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::{
-    dot, fixture_stage, kernel, kernel_edge, position, Taps, COEFFICIENT_UNIT, PHASES, POSITION_BITS, POSITION_UNIT,
-    TAPS,
+    cached_kernel, dot, fixture_stage, kernel_edge, pivot, position, Taps, PHASES, POSITION_BITS, POSITION_UNIT, TAPS,
 };
 use crate::fastdraw::Codes;
 use std::ops::Range;
+
+const LANCZOS_UNIT: i32 = 1 << 15;
+const PIVOT_BIAS: i32 = LANCZOS_UNIT / 2;
 
 /// Point samples for Average's screen grid. Each linear point reads at most two DMA words.
 #[derive(Clone, Copy, Debug)]
@@ -76,12 +78,16 @@ impl AverageGrid {
             let mut base = at(visible.start) as usize;
             let mut taps: Taps = std::array::from_fn(|j| centered_at(codes, base + j, 7));
             while visible.start < visible.end {
-                let phases = kernel(kernel_edge(base, codes.n));
+                let phases = cached_kernel(kernel_edge(base, codes.n), LANCZOS_UNIT, PIVOT_BIAS);
                 let end = run_end(visible.clone(), base, origin, reciprocal, at);
                 let sample = base as f64;
                 out.extend((visible.start..end).map(|k| {
                     let phase = ((at(k) - sample) * PHASES as f64).round() as usize;
-                    volts.convert(dot(&taps, &phases[phase]) as f32 * (1.0 / COEFFICIENT_UNIT as f32))
+                    // Bias the central coefficient to fit Q15 in i16 and keep the SIMD sum in i32.
+                    // Restore that tap in i64 since the full response can exceed the ADC rails.
+                    let response =
+                        i64::from(dot(&taps, &phases[phase])) + i64::from(i32::from(taps[pivot(phase)]) * PIVOT_BIAS);
+                    volts.convert(response as f32 * (1.0 / LANCZOS_UNIT as f32))
                 }));
                 if end == visible.end {
                     break;

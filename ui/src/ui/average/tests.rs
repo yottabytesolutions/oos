@@ -273,22 +273,58 @@ fn average_grid_changes_reseed_on_both_routes_but_vertical_mapping_keeps_the_see
         ui.step(0.04);
         check_next(&mut ui, 8, 0.375);
 
-        let settings: [fn(&mut Model); 7] = [
+        let settings: [fn(&mut Model); 5] = [
             |m| m.tscale += 1,
             |m| m.delay += 5e-9,
-            |m| m.zoom = true,
-            |m| m.zdelay += 5e-9,
             |m| m.mdepth = 1,
             |m| m.slope = Slope::Fall,
             |m| m.ch[1].on = true,
         ];
-        for change in settings {
+        let record_zoom: [fn(&mut Model); 2] = [|m| m.zoom = true, |m| m.zdelay += 5e-9];
+        for change in settings.into_iter().chain(record_zoom.into_iter().filter(|_| !batch)) {
             check_next(&mut ui, 4, 0.3125);
             change(&mut ui.m);
             ui.step(0.04);
             check_next(&mut ui, 6, 0.375);
         }
     }
+}
+
+#[test]
+fn running_worker_average_keeps_its_seed_and_readers_during_zoom() {
+    let _scope = drawpipe::test_scope::Scope::new();
+    let mut ui = ui();
+    assert_eq!(advance(&mut ui, 0, &[4]), 0.25);
+    ui.set_zoom(true);
+    ui.step(0.04);
+    assert!(ui.m.zoom && ui.fast_ok());
+    assert_eq!(ui.wave_at_source(WaveId::Ch(0), 0.0), Some(0.25));
+    assert_eq!(advance(&mut ui, 1, &[8]), 0.375);
+
+    let previous = (ui.m.zscale, ui.m.zdelay);
+    ui.m.zscale -= 1;
+    ui.m.zdelay += 5e-9;
+    ui.step(0.04);
+    assert_ne!(ui.m.zscale, previous.0);
+    assert_ne!(ui.m.zdelay, previous.1);
+    assert_eq!(ui.wave_at_source(WaveId::Ch(0), 0.0), Some(0.375));
+    assert_eq!(ui.meas(0, Meas::Vmax), 0.375);
+    assert_eq!(advance(&mut ui, 2, &[12]), 0.5625);
+}
+
+#[test]
+fn rejected_average_record_does_not_count_as_a_fallback() {
+    let _scope = drawpipe::test_scope::Scope::new();
+    let mut ui = ui();
+    ui.m.zones[0] = crate::zone::Zone { on: true, pts: vec![(-1e-7, 0.7), (1e-7, 0.8)], ..Default::default() };
+    ui.step(0.04);
+    assert!(!ui.fast_ok());
+    queue_record(&ui, 1, 4);
+    queue_record(&ui, 2, 12);
+    ui.step(0.04);
+    assert_eq!((ui.zone_drops, ui.records), (1, 1));
+    let counters = drawpipe::counters().pipeline_text(std::time::Duration::ZERO, 0);
+    assert!(counters.contains("average_zone=1 "), "{counters}");
 }
 
 #[test]

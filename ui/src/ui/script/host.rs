@@ -60,8 +60,6 @@ fn scripted_batch(args: &[String]) -> Result<Option<(BatchKind, RecordDelivery)>
     let value = crate::arg(args, "--scripted-batch").ok_or("--scripted-batch KIND required")?;
     let (kind, delivery) = if let Some(kind) = value.strip_suffix("-zoom-records") {
         (kind, RecordDelivery::Zoom)
-    } else if let Some(kind) = value.strip_suffix("-average-records") {
-        (kind, RecordDelivery::Average)
     } else {
         (value.as_str(), RecordDelivery::Auto)
     };

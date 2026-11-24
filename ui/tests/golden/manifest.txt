@@ -24494,7 +24494,7 @@
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/Off-1ch-5us/first.png",
       "provenance": "fixture=m1-v1;source=raw;dots=Off;channels=1;tdiv=5 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -24507,14 +24507,14 @@
           480
         ]
       ],
-      "rgb_sha256": "12979e6e0ed72074533254e1ac8f39087cb7b75ea8c866014ae9a424f54b8a2b",
+      "rgb_sha256": "d1dae5a52e2e6fdbcea63f2d75c9598e9cf25089ecb11cb58b41b7d93b6e80bb",
       "script_sha256": "350cd3c5b31be4f36d6efd8bf1216089e4a52da9820ffdb7c7358e14bdc6daaa",
-      "settings": "settings dots=Off channels=1 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=17 menu_open=false acq=(1250000000.0, 70312) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=Off channels=1 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=3 menu_open=false acq=(1250000000.0, 70312) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/Off-1ch-5us/settled.png",
       "provenance": "fixture=m1-v1;source=raw;dots=Off;channels=1;tdiv=5 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -24527,10 +24527,10 @@
           480
         ]
       ],
-      "rgb_sha256": "430489366ef4805f2ec39ca19930c5bb29f37dc666f58409c7273922cd363959",
+      "rgb_sha256": "17e2764a484f6480ef202dff03c889a0f4005b766066614d585f91a0a66ea865",
       "script_sha256": "350cd3c5b31be4f36d6efd8bf1216089e4a52da9820ffdb7c7358e14bdc6daaa",
-      "settings": "settings dots=Off channels=1 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=278 menu_open=false acq=(1250000000.0, 70312) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=Off channels=1 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=22 menu_open=false acq=(1250000000.0, 70312) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
@@ -24642,7 +24642,7 @@
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/Off-1ch-200us/first.png",
       "provenance": "fixture=m1-v1;source=raw;dots=Off;channels=1;tdiv=200 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -24655,14 +24655,14 @@
           480
         ]
       ],
-      "rgb_sha256": "60dc2de17479e194a93c541ff5abfeda087b9343c0112a0d29f195e5ad2ace8e",
+      "rgb_sha256": "78cfb657cce195160efac5584b59eeab461c9dce8fe09ed86fd914e8771dc187",
       "script_sha256": "0a90f731c8fdbdcd51dde70e5da324fb6e1823e3ffe7db3474f9364dcebb6182",
-      "settings": "settings dots=Off channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=17 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=Off channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=3 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/Off-1ch-200us/settled.png",
       "provenance": "fixture=m1-v1;source=raw;dots=Off;channels=1;tdiv=200 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -24675,10 +24675,10 @@
           480
         ]
       ],
-      "rgb_sha256": "588b58f278e5e06e0d8f6a51c70677c5422ab974f1a0c926383797dfea18f771",
+      "rgb_sha256": "c3d901f064c181bb77db56810f3afdbab1ed757b7f69a8b926e7182cd0339292",
       "script_sha256": "0a90f731c8fdbdcd51dde70e5da324fb6e1823e3ffe7db3474f9364dcebb6182",
-      "settings": "settings dots=Off channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=278 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=Off channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=22 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
@@ -24790,7 +24790,7 @@
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/Off-4ch-5us/first.png",
       "provenance": "fixture=m1-v1;source=raw;dots=Off;channels=4;tdiv=5 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -24803,14 +24803,14 @@
           480
         ]
       ],
-      "rgb_sha256": "b0c06334f7e77a6ddabe77c296c574211d95269b5041bd2dab5407e5606e6e58",
+      "rgb_sha256": "0488d299d252d72a45b7a602d40d213ce482bb9ce763783b94eba85e21b22d9e",
       "script_sha256": "9e1feb5bd1521078bcb0e0c2d54885823d372cf7c36bb09067c0e5f4404d1c42",
-      "settings": "settings dots=Off channels=4 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=17 menu_open=false acq=(312500000.0, 17584) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=Off channels=4 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=3 menu_open=false acq=(312500000.0, 17584) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/Off-4ch-5us/settled.png",
       "provenance": "fixture=m1-v1;source=raw;dots=Off;channels=4;tdiv=5 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -24823,10 +24823,10 @@
           480
         ]
       ],
-      "rgb_sha256": "fece4591fed1e157dd2ce8bb73eea766af5766a183becd57a87c9bc08e15a79f",
+      "rgb_sha256": "722f4c3050e7a1419243c7cf97b3836a4ff9ce34ff2a30ce48a8d77da2030832",
       "script_sha256": "9e1feb5bd1521078bcb0e0c2d54885823d372cf7c36bb09067c0e5f4404d1c42",
-      "settings": "settings dots=Off channels=4 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=278 menu_open=false acq=(312500000.0, 17584) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=Off channels=4 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=22 menu_open=false acq=(312500000.0, 17584) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
@@ -24938,7 +24938,7 @@
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/Off-4ch-200us/first.png",
       "provenance": "fixture=m1-v1;source=raw;dots=Off;channels=4;tdiv=200 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -24951,14 +24951,14 @@
           480
         ]
       ],
-      "rgb_sha256": "0c45cc73b3b3beb438da2d75e34ef6b0b963e591e3d8350f8b8cb9a867b92020",
+      "rgb_sha256": "d8e8541f9dae3ed2f7ff1e1654f167d4bc0a9c22c9e75ca80b1748246ae6b996",
       "script_sha256": "efc7c5f6b7e75351cee1065fdfb54f17ea9103e9286603f1d488dd5eb8843ab7",
-      "settings": "settings dots=Off channels=4 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=17 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=Off channels=4 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=3 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/Off-4ch-200us/settled.png",
       "provenance": "fixture=m1-v1;source=raw;dots=Off;channels=4;tdiv=200 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -24971,10 +24971,10 @@
           480
         ]
       ],
-      "rgb_sha256": "648cc380234af3ec533f697701173404ec115571cfc0c699727ddd3475a80aa2",
+      "rgb_sha256": "d1cb5dd853bb33507ca59cd1ca4fb81317cf67d0882de4b61931ab901afbe2c6",
       "script_sha256": "efc7c5f6b7e75351cee1065fdfb54f17ea9103e9286603f1d488dd5eb8843ab7",
-      "settings": "settings dots=Off channels=4 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=278 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=Off channels=4 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=22 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
@@ -25086,7 +25086,7 @@
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/On-1ch-5us/first.png",
       "provenance": "fixture=m1-v1;source=raw;dots=On;channels=1;tdiv=5 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -25099,14 +25099,14 @@
           480
         ]
       ],
-      "rgb_sha256": "6fb75f876260bdc6c6f6b38b9c1531bcaf373f774c7ae101c7a2e44b07d977d1",
+      "rgb_sha256": "354732be6305317bc31e7138562cdc79cb45ce78ccffd9d754fd38f69b6d990d",
       "script_sha256": "a7543339faaaf179beb0862a4fcbbdbd4bb443a3edaa63d6356cc4405c07931a",
-      "settings": "settings dots=On channels=1 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=17 menu_open=false acq=(1250000000.0, 70312) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=On channels=1 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=3 menu_open=false acq=(1250000000.0, 70312) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/On-1ch-5us/settled.png",
       "provenance": "fixture=m1-v1;source=raw;dots=On;channels=1;tdiv=5 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -25119,10 +25119,10 @@
           480
         ]
       ],
-      "rgb_sha256": "b0b5ac30f1bfb3a3da01ae2d75fb71bd9718227aba7f218ba49cef1082364899",
+      "rgb_sha256": "4453f439ff07aa64f48a074c673aeb87b3bf0c0eb5632a6d5602db870c086606",
       "script_sha256": "a7543339faaaf179beb0862a4fcbbdbd4bb443a3edaa63d6356cc4405c07931a",
-      "settings": "settings dots=On channels=1 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=278 menu_open=false acq=(1250000000.0, 70312) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=On channels=1 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=22 menu_open=false acq=(1250000000.0, 70312) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
@@ -25234,7 +25234,7 @@
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/On-1ch-200us/first.png",
       "provenance": "fixture=m1-v1;source=raw;dots=On;channels=1;tdiv=200 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -25247,14 +25247,14 @@
           480
         ]
       ],
-      "rgb_sha256": "443f21bdb5e26c8f787a5f126803b52a8b0ddccb993ab2a788a26035f340474f",
+      "rgb_sha256": "0dbd3a2cc72e57379e3746afa622918f0b890a8b47db076c02fe0cb016f07818",
       "script_sha256": "c199ca4845460166afd1685e0de4845664666b1648dc88715cf31381d47ef8e4",
-      "settings": "settings dots=On channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=17 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=On channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=3 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/On-1ch-200us/settled.png",
       "provenance": "fixture=m1-v1;source=raw;dots=On;channels=1;tdiv=200 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -25267,10 +25267,10 @@
           480
         ]
       ],
-      "rgb_sha256": "76983ebe6dfaef3951f1d9bbf4ba1038ce4935524c4ab9186633555aa9c137dc",
+      "rgb_sha256": "8a8bc44e0b872fb6acbbcc017779a357b2d3c23715841bbce08067bd394b2cca",
       "script_sha256": "c199ca4845460166afd1685e0de4845664666b1648dc88715cf31381d47ef8e4",
-      "settings": "settings dots=On channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=278 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=On channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=22 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
@@ -25382,7 +25382,7 @@
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/On-4ch-5us/first.png",
       "provenance": "fixture=m1-v1;source=raw;dots=On;channels=4;tdiv=5 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -25395,14 +25395,14 @@
           480
         ]
       ],
-      "rgb_sha256": "d752d2a606ae596c99d5fd19cfea8b81b25b65246cd60a41e16c9c3372fa2e4d",
+      "rgb_sha256": "906c7902249b3b3e67ffa0aa2ee1f412b52af338ca989d5fb9effcf34763dbfc",
       "script_sha256": "0af9b0a4cb61a5496a4f4b2985c28fbd0cc603e3218ef140559780a792e9e281",
-      "settings": "settings dots=On channels=4 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=17 menu_open=false acq=(312500000.0, 17584) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=On channels=4 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=3 menu_open=false acq=(312500000.0, 17584) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/On-4ch-5us/settled.png",
       "provenance": "fixture=m1-v1;source=raw;dots=On;channels=4;tdiv=5 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -25415,10 +25415,10 @@
           480
         ]
       ],
-      "rgb_sha256": "01a3dc24971f84073c5098b48be817b2a0866592e70e37520ea164eeb50e54b9",
+      "rgb_sha256": "af3988cc7def175065a233f6abb919d411d78822556a9483ad03b0cea50d07d6",
       "script_sha256": "0af9b0a4cb61a5496a4f4b2985c28fbd0cc603e3218ef140559780a792e9e281",
-      "settings": "settings dots=On channels=4 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=278 menu_open=false acq=(312500000.0, 17584) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=On channels=4 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=22 menu_open=false acq=(312500000.0, 17584) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
@@ -25530,7 +25530,7 @@
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/On-4ch-200us/first.png",
       "provenance": "fixture=m1-v1;source=raw;dots=On;channels=4;tdiv=200 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -25543,14 +25543,14 @@
           480
         ]
       ],
-      "rgb_sha256": "3a0daaa610253ba1f02e1436ff41fef4dbb444e93097b011050e68c67c4b1aaf",
+      "rgb_sha256": "60ad56cda1e8416f17fb5bdb10949a2154f68ad58733eda8b1cd6b092a27d7c5",
       "script_sha256": "2af6ebf6054502f1b9ff7b68d02552aa1b12f387bbd441c2ffdc05f5f544a3c5",
-      "settings": "settings dots=On channels=4 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=17 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=On channels=4 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=3 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/On-4ch-200us/settled.png",
       "provenance": "fixture=m1-v1;source=raw;dots=On;channels=4;tdiv=200 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -25563,10 +25563,10 @@
           480
         ]
       ],
-      "rgb_sha256": "021a8bfbee764104a2dc5edf8cac0d210e1e803f05fbdd5e6b4e942487ab436f",
+      "rgb_sha256": "b429832c824dcb9229d954e6f8093b1c94508276f6e8a76e17b5b2bd154a7931",
       "script_sha256": "2af6ebf6054502f1b9ff7b68d02552aa1b12f387bbd441c2ffdc05f5f544a3c5",
-      "settings": "settings dots=On channels=4 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=278 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=On channels=4 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=22 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
@@ -25678,7 +25678,7 @@
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/Auto-1ch-5us/first.png",
       "provenance": "fixture=m1-v1;source=raw;dots=Auto;channels=1;tdiv=5 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -25691,14 +25691,14 @@
           480
         ]
       ],
-      "rgb_sha256": "12979e6e0ed72074533254e1ac8f39087cb7b75ea8c866014ae9a424f54b8a2b",
+      "rgb_sha256": "d1dae5a52e2e6fdbcea63f2d75c9598e9cf25089ecb11cb58b41b7d93b6e80bb",
       "script_sha256": "71e2b56ea5d70c703c4f4e6ab9ce75a0747a9a87869ec550bc9f18caa3c940d3",
-      "settings": "settings dots=Auto channels=1 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=17 menu_open=false acq=(1250000000.0, 70312) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=Auto channels=1 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=3 menu_open=false acq=(1250000000.0, 70312) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/Auto-1ch-5us/settled.png",
       "provenance": "fixture=m1-v1;source=raw;dots=Auto;channels=1;tdiv=5 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -25711,10 +25711,10 @@
           480
         ]
       ],
-      "rgb_sha256": "430489366ef4805f2ec39ca19930c5bb29f37dc666f58409c7273922cd363959",
+      "rgb_sha256": "17e2764a484f6480ef202dff03c889a0f4005b766066614d585f91a0a66ea865",
       "script_sha256": "71e2b56ea5d70c703c4f4e6ab9ce75a0747a9a87869ec550bc9f18caa3c940d3",
-      "settings": "settings dots=Auto channels=1 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=278 menu_open=false acq=(1250000000.0, 70312) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=Auto channels=1 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=22 menu_open=false acq=(1250000000.0, 70312) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
@@ -25826,7 +25826,7 @@
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/Auto-1ch-200us/first.png",
       "provenance": "fixture=m1-v1;source=raw;dots=Auto;channels=1;tdiv=200 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -25839,14 +25839,14 @@
           480
         ]
       ],
-      "rgb_sha256": "60dc2de17479e194a93c541ff5abfeda087b9343c0112a0d29f195e5ad2ace8e",
+      "rgb_sha256": "78cfb657cce195160efac5584b59eeab461c9dce8fe09ed86fd914e8771dc187",
       "script_sha256": "1057012e41e8fb62469fbadde7d2e687c0a4ef09736f1ea87c96c3bc600e711a",
-      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=17 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=3 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/Auto-1ch-200us/settled.png",
       "provenance": "fixture=m1-v1;source=raw;dots=Auto;channels=1;tdiv=200 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -25859,10 +25859,10 @@
           480
         ]
       ],
-      "rgb_sha256": "588b58f278e5e06e0d8f6a51c70677c5422ab974f1a0c926383797dfea18f771",
+      "rgb_sha256": "c3d901f064c181bb77db56810f3afdbab1ed757b7f69a8b926e7182cd0339292",
       "script_sha256": "1057012e41e8fb62469fbadde7d2e687c0a4ef09736f1ea87c96c3bc600e711a",
-      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=278 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=22 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
@@ -25974,7 +25974,7 @@
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/Auto-4ch-5us/first.png",
       "provenance": "fixture=m1-v1;source=raw;dots=Auto;channels=4;tdiv=5 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -25987,14 +25987,14 @@
           480
         ]
       ],
-      "rgb_sha256": "b0c06334f7e77a6ddabe77c296c574211d95269b5041bd2dab5407e5606e6e58",
+      "rgb_sha256": "0488d299d252d72a45b7a602d40d213ce482bb9ce763783b94eba85e21b22d9e",
       "script_sha256": "ea7c2955e49981fb9ec085d686fb6cbc2fcc7f798a3bdb8236a48970f14a731c",
-      "settings": "settings dots=Auto channels=4 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=17 menu_open=false acq=(312500000.0, 17584) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=Auto channels=4 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=3 menu_open=false acq=(312500000.0, 17584) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/Auto-4ch-5us/settled.png",
       "provenance": "fixture=m1-v1;source=raw;dots=Auto;channels=4;tdiv=5 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -26007,10 +26007,10 @@
           480
         ]
       ],
-      "rgb_sha256": "fece4591fed1e157dd2ce8bb73eea766af5766a183becd57a87c9bc08e15a79f",
+      "rgb_sha256": "722f4c3050e7a1419243c7cf97b3836a4ff9ce34ff2a30ce48a8d77da2030832",
       "script_sha256": "ea7c2955e49981fb9ec085d686fb6cbc2fcc7f798a3bdb8236a48970f14a731c",
-      "settings": "settings dots=Auto channels=4 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=278 menu_open=false acq=(312500000.0, 17584) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=Auto channels=4 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=22 menu_open=false acq=(312500000.0, 17584) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
@@ -26122,7 +26122,7 @@
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/Auto-4ch-200us/first.png",
       "provenance": "fixture=m1-v1;source=raw;dots=Auto;channels=4;tdiv=200 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -26135,14 +26135,14 @@
           480
         ]
       ],
-      "rgb_sha256": "0c45cc73b3b3beb438da2d75e34ef6b0b963e591e3d8350f8b8cb9a867b92020",
+      "rgb_sha256": "d8e8541f9dae3ed2f7ff1e1654f167d4bc0a9c22c9e75ca80b1748246ae6b996",
       "script_sha256": "60614c7c3e1614f9b3f2ec4518a1bf1304a863f44113ef0d9e2f215801e3830e",
-      "settings": "settings dots=Auto channels=4 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=17 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=Auto channels=4 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=3 records=3 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {
-      "decode_route": "records-decoded",
+      "decode_route": "decoded",
       "height": 600,
       "path": "batch/average/Auto-4ch-200us/settled.png",
       "provenance": "fixture=m1-v1;source=raw;dots=Auto;channels=4;tdiv=200 us;measurements=off;settings=menu Acquire;set Mode = Average;set Averages = 16;;recipe=later",
@@ -26155,10 +26155,10 @@
           480
         ]
       ],
-      "rgb_sha256": "648cc380234af3ec533f697701173404ec115571cfc0c699727ddd3475a80aa2",
+      "rgb_sha256": "d1cb5dd853bb33507ca59cd1ca4fb81317cf67d0882de4b61931ab901afbe2c6",
       "script_sha256": "60614c7c3e1614f9b3f2ec4518a1bf1304a863f44113ef0d9e2f215801e3830e",
-      "settings": "settings dots=Auto channels=4 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=278 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
-      "source_route": "records",
+      "settings": "settings dots=Auto channels=4 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=22 menu_open=false acq=(31250000.0, 100000) envelope=false roll=false scan=false partial=false hw_avg=false",
+      "source_route": "workers",
       "width": 1024
     },
     {

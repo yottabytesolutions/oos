@@ -23,37 +23,48 @@ const ROW_LIMIT: i32 = 1 << 29;
 type Phases = [Taps; PHASES + 1];
 
 fn kernel(edge: usize) -> &'static Phases {
-    static KERNELS: [OnceLock<Phases>; TAPS] = [const { OnceLock::new() }; TAPS];
-    KERNELS[edge].get_or_init(|| {
-        let sinc = |x: f64| {
-            let radians = std::f64::consts::PI * x;
-            if x == 0.0 {
-                1.0
-            } else {
-                radians.sin() / radians
-            }
-        };
-        let (start, end) = if edge < 8 { (edge, TAPS) } else { (0, TAPS - (edge - 7)) };
-        std::array::from_fn(|phase| {
-            let pivot = (7 + usize::from(phase > PHASES / 2)).min(end - 1);
-            if edge == TAPS - 1 {
-                // At the last captured sample the only used phase is zero.
-                let mut taps = [0; TAPS];
-                taps[pivot] = COEFFICIENT_UNIT as i16;
-                return taps;
-            }
-            let fraction = phase as f64 / PHASES as f64;
-            let mut weights = [0.0; TAPS];
-            for (j, w) in weights.iter_mut().enumerate().take(end).skip(start) {
-                let x = fraction + 7.0 - j as f64;
-                *w = sinc(x) * sinc(x / 8.0);
-            }
-            let scale = f64::from(COEFFICIENT_UNIT) / weights.iter().sum::<f64>();
-            let mut taps = weights.map(|w| (w * scale).round() as i16);
-            let residue = COEFFICIENT_UNIT - taps.iter().map(|&w| i32::from(w)).sum::<i32>();
-            taps[pivot] += residue as i16;
-            taps
-        })
+    cached_kernel(edge, COEFFICIENT_UNIT, 0)
+}
+
+fn cached_kernel(edge: usize, unit: i32, pivot_bias: i32) -> &'static Phases {
+    static KERNELS: [[OnceLock<Phases>; TAPS]; 2] = [const { [const { OnceLock::new() }; TAPS] }; 2];
+    KERNELS[usize::from(pivot_bias != 0)][edge].get_or_init(|| build_kernel(edge, unit, pivot_bias))
+}
+
+fn pivot(phase: usize) -> usize {
+    7 + usize::from(phase > PHASES / 2)
+}
+
+fn build_kernel(edge: usize, unit: i32, pivot_bias: i32) -> Phases {
+    let sinc = |x: f64| {
+        let radians = std::f64::consts::PI * x;
+        if x == 0.0 {
+            1.0
+        } else {
+            radians.sin() / radians
+        }
+    };
+    let (start, end) = if edge < 8 { (edge, TAPS) } else { (0, TAPS - (edge - 7)) };
+    std::array::from_fn(|phase| {
+        let pivot = pivot(phase).min(end - 1);
+        if edge == TAPS - 1 {
+            // At the last captured sample the only used phase is zero.
+            let mut taps = [0; TAPS];
+            taps[pivot] = (unit - pivot_bias) as i16;
+            return taps;
+        }
+        let fraction = phase as f64 / PHASES as f64;
+        let mut weights = [0.0; TAPS];
+        for (j, w) in weights.iter_mut().enumerate().take(end).skip(start) {
+            let x = fraction + 7.0 - j as f64;
+            *w = sinc(x) * sinc(x / 8.0);
+        }
+        let scale = f64::from(unit) / weights.iter().sum::<f64>();
+        let mut taps = weights.map(|w| (w * scale).round() as i32);
+        let residue = unit - taps.iter().sum::<i32>();
+        taps[pivot] += residue - pivot_bias;
+        debug_assert!(taps.iter().map(|w| w.abs()).sum::<i32>() <= i32::from(u16::MAX));
+        taps.map(|w| i16::try_from(w).expect("the stored Lanczos coefficients fit i16"))
     })
 }
 

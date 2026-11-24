@@ -109,13 +109,24 @@ fn a_group_without_shown_pictures_cannot_be_compared() {
 }
 
 #[test]
-fn needs_target_refresh_counts_in_every_window_and_prints_group_percentages() {
+fn needs_target_refresh_counts_and_prints_gauges_beside_late_percentages() {
     let mut reference = report(10.0, 100, 300, 3);
-    let result = report(10.0, 100, 300, 6);
+    let mut result = report(10.0, 100, 300, 6);
+    for (report, late, targets) in [(&mut reference, 3, [2; 3]), (&mut result, 6, [3, 2, 3])] {
+        let report_group = report.groups.get_mut("dense").unwrap();
+        report_group.expected_windows = targets.len();
+        report_group.windows.clear();
+        for target in targets {
+            let mut window = group((10.0, 100, 300, 300, late)).windows.remove(0);
+            let WindowSample::Valid(sample) = &mut window.sample else { panic!("expected valid window") };
+            sample.sections.get_mut(PRESENTATION).unwrap().insert(FLIP_TARGET.into(), target.to_string());
+            report_group.windows.push(window);
+        }
+        report_group.summarize().unwrap();
+    }
     let table = table(&compare(&reference, &result, 0.95).unwrap());
     let row = table.lines().nth(1).unwrap();
-    assert!(row.contains("1.00%"));
-    assert!(row.contains("2.00%"));
+    assert_eq!(row.split_ascii_whitespace().skip(8).take(4).collect::<Vec<_>>(), ["1.00%", "2", "2.00%", "2/3"]);
     let WindowSample::Valid(sample) = &mut reference.groups.get_mut("dense").unwrap().windows[0].sample else {
         panic!("expected a valid window");
     };

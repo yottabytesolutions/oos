@@ -53,7 +53,7 @@ impl Intake {
             }
             if let Some(bytes) = execute(&mut active.program, &mut active.reservation) {
                 self.parked = Some(active.reply(bytes));
-            } else if active.read_closed() {
+            } else if active.program.capture.is_none() && active.read_closed() {
                 self.parked = Some(Reply::new(active.request.id(), Vec::new(), active.reservation));
             } else {
                 active.reservation.retain(active.program.output.as_ref().map_or(0, crate::netport::Output::capacity));
@@ -133,6 +133,21 @@ impl super::Scpi {
         program: &mut Program,
         reservation: &mut Reservation,
     ) -> Option<Vec<u8>> {
+        if let Some((request, _)) = &mut program.capture {
+            let readback = self.readback.as_ref().expect("display requests belong to a device interpreter");
+            if !request.ready(readback) {
+                return None;
+            }
+            if !reservation.expand_available(super::message::display_scratch(cv)) {
+                self.push_err("-363,\"Output capacity exhausted; remaining commands dropped\"".into());
+                program.capture = None;
+                program.commands.clear();
+                return Some(std::mem::take(&mut program.out));
+            }
+            if let Some(output) = &mut program.output {
+                output.set_limit(reservation.capacity());
+            }
+        }
         if let Some(fence) = &program.waiting {
             match fence.state(ui) {
                 crate::ui::OperationState::Pending => return None,

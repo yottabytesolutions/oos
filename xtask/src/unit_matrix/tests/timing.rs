@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+use super::super::state::{FLIP_TARGET, PRESENTATION};
 use super::*;
 use crate::unit_tools::scpi::TimedReply;
 
@@ -53,6 +54,8 @@ fn pacing_before_the_first_write_does_not_widen_window_bounds() {
         assert_eq!(sample.rates.first_records_per_s, 100.0 / midpoint);
         assert_eq!(sample.rates.read_per_s, 130.0 / midpoint);
         assert_eq!(sample.rates.late_flips, 2);
+        assert_eq!(sample.sections[PRESENTATION][FLIP_TARGET], "2");
+        assert!(!sample.delta.contains_key(FLIP_TARGET));
         assert_eq!(sample.delta["records.recovered"], 1);
         assert_eq!(sample.fallback_delta, [("decoded_lines".into(), 3)].into());
         assert!(scpi.inner.replies.is_empty());

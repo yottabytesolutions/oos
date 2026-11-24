@@ -156,7 +156,7 @@ pub fn stat_text(ui: &Ui) -> String {
     let e = ui.fast_edges;
     let gpu = ui.t_gpu.map_or(String::new(), |t| {
         format!(
-            " gpu layers {:.1} copy {:.1} wait {:.1} (upload {:.1} draw {:.1} read {:.1}) ms",
+            " gpu layers {:.1} copy {:.1} wait {:.1} (upload {:.1} draw {:.1}) last_read {:.1} ms",
             t[0], t[1], t[2], t[3], t[4], t[5]
         )
     });

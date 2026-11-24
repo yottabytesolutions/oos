@@ -80,6 +80,8 @@ mod tests {
             acl: Default::default(),
             acl_shared: Default::default(),
             offer: Default::default(),
+            screens: Default::default(),
+            gpu_canvas: false,
         };
         {
             let mut state = http.shots.lock();

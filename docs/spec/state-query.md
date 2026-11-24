@@ -26,7 +26,7 @@ The envelope, in producer order, is:
 fps F frames N records N run R status S t T step X ms (acq A draw D)
 render X ms present X ms edges A B C D off SUM MAX
 parts meas X analyse X pane X max X ms
-[gpu layers X copy X wait X (upload X draw X read X) ms]
+[gpu layers X copy X wait X (upload X draw X) last_read X ms]
 route=ROUTE interp MODE acquired N used N dropped N measured N compress k K
 deep reads N dma X decode X record X measure X ms (N pts)
 [gpu panel X [monitor X] ms]
@@ -133,7 +133,7 @@ the section entirely.
 | state-query-24 | `gpu.wait` | optional f1, ms | ui.t_gpu[2]; last panel helper frame wait timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
 | state-query-25 | `gpu.upload` | optional f1, ms | ui.t_gpu[3]; last panel helper frame upload timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
 | state-query-26 | `gpu.draw` | optional f1, ms | ui.t_gpu[4]; last panel helper frame draw timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
-| state-query-27 | `gpu.read` | optional f1, ms | ui.t_gpu[5]; last panel helper frame readback timing; block absent if t_gpu=None | `ui/src/cmd.rs:143` |
+| state-query-27 | `gpu.last_read` | optional f1, ms | ui.t_gpu[5], the last completed helper pixel read duration. Zero before the current helper's first read. The block appears when t_gpu is present. | `ui/src/cmd.rs:159` |
 | state-query-28 | `route=` | enum batch/batch-funded/records/stopped/replay | current picture route | `ui/src/ui/step_draw.rs` |
 | state-query-29 | `interp` | enum Exact/Fast | switches.interp; sparse interpolation policy | `ui/src/sparse.rs:161` |
 | state-query-30 | `acquired` | u64, frames | drawpipe::Counters.acquired; process aggregate of frames acquired | `ui/src/drawpipe.rs:320` |

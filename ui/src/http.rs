@@ -29,6 +29,7 @@ use crate::ui::Ui;
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
 mod listener;
+mod screen;
 mod shutdown;
 use crate::placement::lower_priority;
 
@@ -134,7 +135,14 @@ impl Shots {
     }
 
     /// The answer to one `GET /screen.png` (`have`: the ETag of If-None-Match); the frame loop never encodes here.
-    fn request(self: &Arc<Self>, s: &Response, have: Option<String>, cv: &Canvas, jpeg: bool) {
+    fn request(
+        self: &Arc<Self>,
+        s: &Response,
+        have: Option<String>,
+        cv: &Canvas,
+        jpeg: bool,
+        canvas_current: bool,
+    ) -> bool {
         let mut st = self.lock();
         st.waiting.retain(|(reply, ..)| !reply.closed());
         st.asked = Some(Instant::now());
@@ -153,18 +161,22 @@ impl Shots {
         {
             let tag = st.tag.clone();
             drop(st);
-            return answer_shot(s, have.as_deref(), png, &tag);
+            answer_shot(s, have.as_deref(), png, &tag);
+            return true;
         }
         if st.waiting.len() >= SHOT_WAITING {
             drop(st);
-            return busy_answer(s);
+            busy_answer(s);
+            return true;
         }
         if !st.thread {
             let me = self.clone();
             if self.tasks.spawn("web-png", move || me.encoder()).is_err() {
-                // no thread: the old way, in the frame loop
                 drop(st);
-                return answer_shot(s, None, crate::store::png_of(cv).into(), "");
+                if canvas_current {
+                    answer_shot(s, None, crate::store::png_of(cv).into(), "");
+                }
+                return canvas_current;
             }
             st.thread = true;
         }
@@ -173,6 +185,7 @@ impl Shots {
         st.waiting.push((c, have, Instant::now(), want));
         drop(st);
         self.tick(cv);
+        true
     }
 
     /// Every frame: a copy for the encoder when the time has come and somebody waits, or asked within `SHOT_AHEAD` (the
@@ -198,10 +211,10 @@ impl Shots {
         let long_poll = st.long_poll.unwrap_or(LONG_POLL);
         #[cfg(not(test))]
         let long_poll = LONG_POLL;
-        let (old, keep): (Vec<_>, Vec<_>) =
-            std::mem::take(&mut st.waiting).into_iter().partition(|w| now - w.2 >= long_poll);
-        st.waiting = keep;
-        if !old.is_empty() {
+        if st.waiting.iter().any(|request| now - request.2 >= long_poll) {
+            let (old, keep): (Vec<_>, Vec<_>) =
+                std::mem::take(&mut st.waiting).into_iter().partition(|request| now - request.2 >= long_poll);
+            st.waiting = keep;
             let (png, tag) = (st.png.clone().unwrap_or_else(|| Arc::from(&[][..])), st.tag.clone());
             let fit = |w: bool| Self::fits(w, st.pic_jpeg, st.no_jpeg);
             let fits: Vec<bool> = old.iter().map(|w| fit(w.3)).collect();
@@ -401,6 +414,8 @@ pub struct Http {
     acl_shared: Arc<Mutex<crate::netacl::Shared>>,
     /// the addresses the identification page names
     offer: Offer,
+    screens: screen::Requests,
+    gpu_canvas: bool,
 }
 
 impl Drop for Http {
@@ -477,6 +492,8 @@ impl Http {
             acl_shared: Arc::new(Mutex::new(acl.clone())),
             acl,
             offer: Offer::default(),
+            screens: Default::default(),
+            gpu_canvas: false,
         };
         h.start(port, sw.ipv6);
         h
@@ -508,6 +525,7 @@ impl Http {
                 }
                 // the readers waiting for the frame loop answer 503 when they give up
                 self.inbox.ports.requests().clear(false);
+                self.screens.clear();
             }
         }
     }
@@ -515,6 +533,7 @@ impl Http {
     /// Call right before rendering the next screen: hands the shown one to the live picture (`Shots::hand_over`).
     /// `whole`: the render draws every pixel.
     pub fn before_render(&mut self, cv: &mut Canvas, whole: bool) {
+        self.gpu_canvas = false;
         self.shots.hand_over(cv, whole);
     }
 
@@ -522,15 +541,16 @@ impl Http {
     /// (`picture_read_back`), `tick` copies none and nothing is swapped. `cv` holds the last picture read back, not
     /// one drawn every frame: a buffer swapped out of it would stay in it, an older picture, until the next read.
     pub fn before_gpu_frame(&mut self) {
+        self.gpu_canvas = true;
         self.shots.lock().frames = true;
     }
 
     /// System > Graphics = GPU: `cv` was just read back whole; a copy goes to the encoder when it wants one.
     pub fn picture_read_back(&self, cv: &Canvas) {
         let mut st = self.shots.lock();
-        let watched = st.asked.is_some_and(|t| t.elapsed() < SHOT_AHEAD);
+        st.waiting.retain(|(reply, ..)| !reply.closed());
         let now = Instant::now();
-        if Shots::wanted(&st, now, watched) {
+        if Shots::wanted(&st, now, false) {
             Shots::give_copy(&mut st, cv, now);
             self.shots.wake.notify_one();
         }
@@ -538,23 +558,34 @@ impl Http {
 
     /// The live picture would take the next screen (System > Graphics = GPU: read it back for it).
     pub fn picture_wanted(&self) -> bool {
-        let st = self.shots.lock();
-        let watched = st.asked.is_some_and(|t| t.elapsed() < SHOT_AHEAD);
-        Shots::wanted(&st, Instant::now(), watched)
+        let mut st = self.shots.lock();
+        st.waiting.retain(|(reply, ..)| !reply.closed());
+        Shots::wanted(&st, Instant::now(), false)
     }
 
     /// Accepts connections, answers complete requests; text commands are returned for the caller to run.
     pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -> Vec<String> {
         let mut cmds = Vec::new();
+        self.screens.poll(ui, cv, scpi);
         self.shots.tick(cv);
-        for Req { reply, head: text, body, peer } in self.inbox.take() {
-            // only the header as text: the body may be a 31 MB binary package
-            let path = text.split_whitespace().nth(1).unwrap_or("/").to_string();
-            let (route, query) = path.split_once('?').unwrap_or((&path, ""));
-            let mut req_body = body;
+        for request in self.inbox.take() {
+            // The body can be an update package. Only parse the header as text here.
+            let text = &request.head;
+            let path = text.split_whitespace().nth(1).unwrap_or("/");
+            let (route, query) = path.split_once('?').unwrap_or((path, ""));
             let post = text.starts_with("POST ");
-            // what changes the scope beyond keys and knobs: only from the allowed prefixes (also at the head)
-            let peer_ok = self.acl.permits_peer(Ok(peer));
+            let restricted = route == "/mcp" || (route == "/update" && post);
+            if foreign(text, route, post) || (restricted && !self.acl.permits_peer(Ok(request.peer))) {
+                if !request.reply.content("403 Forbidden", "text/plain", b"refused".to_vec()) {
+                    busy_answer(&request.reply);
+                }
+                continue;
+            }
+            if self.serve_screen(route, &request, ui, cv, scpi) {
+                continue;
+            }
+            let mut req_body = request.body;
+            let reply = request.reply;
             // an answer that is text for the page to show, not the data asked for
             let mut failed = false;
             let mut csv = |r: Result<String, String>| match r {
@@ -565,8 +596,6 @@ impl Http {
                 }
             };
             let (ctype, body): (&str, Vec<u8>) = match route {
-                _ if foreign(&text, route, post) => ("text/plain", b"refused".to_vec()),
-                "/update" | "/mcp" if (post || route == "/mcp") && !peer_ok => ("text/plain", b"refused".to_vec()),
                 "/ui-state" if !post => ("application/json", ui.workflow_state().into_bytes()),
                 "/waveform" if post => {
                     let slot = query
@@ -599,11 +628,6 @@ impl Http {
                         }
                     }
                 }
-                "/screen.png" | "/screen.jpg" => {
-                    let have = header(&text, "if-none-match").map(str::to_string);
-                    self.shots.request(&reply, have, cv, route == "/screen.jpg");
-                    continue;
-                }
                 // the scope's local time for the names of the page's downloads; empty while its clock is not set
                 "/stamp" => ("text/plain", ui.file_stamp().unwrap_or_default().into_bytes()),
                 "/wave.csv" => csv(ui.web_wave_csv()),
@@ -622,11 +646,6 @@ impl Http {
                 }
                 "/update" => ("text/html; charset=utf-8", ui.update_page().into_bytes()),
                 "/lxi/identification" => ("text/xml", lxi_identification(&self.offer).into_bytes()),
-                "/mcp" => match mcp(&String::from_utf8_lossy(req_body.bytes()), ui, cv, scpi) {
-                    Some(r) => ("application/json", r.into_bytes()),
-                    None => ("", Vec::new()),
-                },
-                "/screen.bmp" => ("image/bmp", crate::scpi::bmp(cv)),
                 "/cmd" => {
                     let mut refused = false;
                     for kv in query.split('&') {
@@ -655,6 +674,49 @@ impl Http {
             }
         }
         cmds
+    }
+    fn serve_screen(
+        &mut self,
+        route: &str,
+        request: &Req,
+        ui: &mut Ui,
+        cv: &Canvas,
+        scpi: &mut crate::scpi::Scpi,
+    ) -> bool {
+        let reply = &request.reply;
+        let (status, mime, body) = match route {
+            "/screen.png" | "/screen.jpg" => {
+                let have = header(&request.head, "if-none-match").map(str::to_string);
+                if !self.shots.request(reply, have, cv, route == "/screen.jpg", !self.gpu_canvas) {
+                    if let Some(readback) = scpi.readback() {
+                        self.screens.push(reply.clone(), screen::Pending::RawPng(readback.request()));
+                    } else {
+                        busy_answer(reply);
+                    }
+                }
+                return true;
+            }
+            "/screen.bmp" => {
+                if let Some(readback) = scpi.readback() {
+                    self.screens.push(reply.clone(), screen::Pending::Bmp(readback.request()));
+                    return true;
+                }
+                ("200 OK", "image/bmp", crate::scpi::bmp(cv))
+            }
+            "/mcp" => match screen::mcp_reply(&String::from_utf8_lossy(request.body.bytes()), ui, cv, scpi) {
+                screen::McpReply::Now(Some(result)) => ("200 OK", "application/json", result.into_bytes()),
+                screen::McpReply::Now(None) => ("202 Accepted", "", Vec::new()),
+                screen::McpReply::Later(pending) => {
+                    self.screens.push(reply.clone(), pending);
+                    return true;
+                }
+            },
+            _ => return false,
+        };
+        if !reply.content(status, mime, body) {
+            busy_answer(reply);
+        }
+        true
     }
 }
 
@@ -699,82 +761,7 @@ pub fn base64(d: &[u8]) -> String {
     o
 }
 
-/// One MCP JSON-RPC message; None for notifications (answered with 202 and no body).
-pub fn mcp(body: &str, ui: &mut Ui, cv: &Canvas, scpi: &mut crate::scpi::Scpi) -> Option<String> {
-    use crate::json::{parse, J};
-    let err = |id: J, code: f64, msg: &str| {
-        J::obj(&[
-            ("jsonrpc", J::s("2.0")),
-            ("id", id),
-            ("error", J::obj(&[("code", J::Num(code)), ("message", J::s(msg))])),
-        ])
-        .to_string()
-    };
-    let Some(req) = parse(body) else { return Some(err(J::Null, -32700.0, "parse error")) };
-    let id = req.get("id").cloned()?;
-    let method = req.get("method").and_then(J::str).unwrap_or("");
-    let params = req.get("params").cloned().unwrap_or(J::Null);
-    let text = |s: &str| J::obj(&[("content", J::Arr(vec![J::obj(&[("type", J::s("text")), ("text", J::s(s))])]))]);
-    let result = match method {
-        "initialize" => {
-            let ver = params.get("protocolVersion").and_then(J::str).unwrap_or("2025-06-18").to_string();
-            J::obj(&[
-                ("protocolVersion", J::Str(ver)),
-                ("capabilities", J::obj(&[("tools", J::obj(&[]))])),
-                ("serverInfo", J::obj(&[("name", J::s("oos-ui")), ("version", J::s(env!("CARGO_PKG_VERSION")))])),
-                ("instructions", J::s("Rigol DHO924S running OOS. Use the scpi tool with Rigol-style commands (e.g. :TIM:SCAL 1e-3, :CHAN1:SCAL 0.5, :MEAS:ITEM? VPP,CHAN1, :WAV:DATA?) and screenshot to see the screen.")),
-            ])
-        }
-        "ping" => J::obj(&[]),
-        "tools/list" => {
-            let schema = |props: J, req: Vec<J>| {
-                J::obj(&[("type", J::s("object")), ("properties", props), ("required", J::Arr(req))])
-            };
-            J::obj(&[(
-                "tools",
-                J::Arr(vec![
-                    J::obj(&[
-                        ("name", J::s("scpi")),
-                        ("description", J::s("Run one SCPI program message on the oscilloscope (commands separated by ';'); returns the response of the queries.")),
-                        ("inputSchema", schema(J::obj(&[("command", J::obj(&[("type", J::s("string"))]))]), vec![J::s("command")])),
-                    ]),
-                    J::obj(&[
-                        ("name", J::s("screenshot")),
-                        ("description", J::s("The current oscilloscope screen as a PNG image.")),
-                        ("inputSchema", schema(J::obj(&[]), vec![])),
-                    ]),
-                ]),
-            )])
-        }
-        "tools/call" => match params.get("name").and_then(J::str) {
-            Some("scpi") => {
-                let c = params.get("arguments").and_then(|a| a.get("command")).and_then(J::str).unwrap_or("");
-                match scpi.exec_message_checked(ui, cv, c) {
-                    Ok((r, has_reply)) => text(if r.is_empty() && !has_reply {
-                        "ok"
-                    } else {
-                        std::str::from_utf8(&r).unwrap_or("(binary response)")
-                    }),
-                    Err(error) => J::obj(&[
-                        ("isError", J::Bool(true)),
-                        ("content", J::Arr(vec![J::obj(&[("type", J::s("text")), ("text", J::s(error))])])),
-                    ]),
-                }
-            }
-            Some("screenshot") => J::obj(&[(
-                "content",
-                J::Arr(vec![J::obj(&[
-                    ("type", J::s("image")),
-                    ("mimeType", J::s("image/png")),
-                    ("data", J::Str(base64(&crate::store::png_of(cv)))),
-                ])]),
-            )]),
-            _ => return Some(err(id, -32602.0, "unknown tool")),
-        },
-        _ => return Some(err(id, -32601.0, "method not found")),
-    };
-    Some(J::obj(&[("jsonrpc", J::s("2.0")), ("id", id), ("result", result)]).to_string())
-}
+pub use screen::mcp;
 
 #[cfg(test)]
 mod tests {
@@ -1471,9 +1458,7 @@ setTimeout(() => {
         assert!(Shots::fits(true, false, true), "the VPU failed: PNG for everyone");
     }
 
-    /// System > Graphics = GPU: the canvas changes only when a picture comes back from the GPU (here every third
-    /// frame). Nothing is swapped out of it (a swapped-in buffer stayed until the next read: the web page went back
-    /// and forth between the new and an older screen), and the picture is one that came back.
+    /// The GPU viewer accepts a picture only when it is waiting for one.
     #[test]
     fn live_picture_with_the_gpu_is_a_picture_read_back() {
         let wait = crate::ui::lifecycle::test_wait::Wait::new("GPU screenshot response");
@@ -1491,6 +1476,8 @@ setTimeout(() => {
             let _ = c.read_to_end(&mut out);
             out
         });
+        h.before_gpu_frame();
+        assert!(!h.picture_wanted());
         let mut read_back = Vec::new();
         let mut frame = 0u32;
         while !t.is_finished() {
@@ -1499,7 +1486,7 @@ setTimeout(() => {
             h.before_gpu_frame();
             assert!(cv.px == before, "the canvas keeps the last picture read back");
             frame += 1;
-            if frame % 3 == 0 {
+            if h.picture_wanted() {
                 cv.clear(crate::gfx::rgb(frame % 256, 40, 90));
                 read_back.push(cv.px.clone());
                 h.picture_read_back(&cv);

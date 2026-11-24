@@ -2,13 +2,13 @@
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
 507 file ui/src/drm.rs
 649 file ui/src/gfx.rs
-599 file ui/src/gpu.rs
-657 file ui/src/http.rs
+531 file ui/src/gpu.rs
+647 file ui/src/http.rs
 438 file ui/src/main.rs
 460 file ui/src/measures/jitter.rs
 514 file ui/src/measures/power.rs
 516 file ui/src/measures/standard.rs
-3262 file ui/src/scpi.rs
+3200 file ui/src/scpi.rs
 1464 file ui/src/store.rs
 8197 file ui/src/ui.rs
 1485 file ui/src/ui/analysis.rs
@@ -36,11 +36,9 @@
 83 fn ui/src/cmd.rs execute
 103 fn ui/src/drm.rs Display::on_fd
 63 fn ui/src/framestats.rs cheap_results
-224 fn ui/src/gpu.rs Gpu::submit
 71 fn ui/src/hislip.rs on_program_message
 108 fn ui/src/http.rs Http::poll
 88 fn ui/src/http.rs Shots::encoder
-75 fn ui/src/http.rs mcp
 73 fn ui/src/input.rs Inputs::read_touch
 77 fn ui/src/json.rs value
 77 fn ui/src/main.rs hdmi_gpu_frame

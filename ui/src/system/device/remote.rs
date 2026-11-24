@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Device process wiring, extracted from main.
+#[cfg(target_os = "linux")]
+use crate::system::readback;
 use crate::*;
 use std::time::Instant;
 
@@ -36,6 +38,11 @@ impl Remote {
         let mut web = http::Http::open(web_port, sw);
         let mut scpi =
             scpi::Scpi::open_with_runtime(scpi_port, sw.ipv6, net6::host_or_exit(web.io_runtime()), web.wake_handle());
+        #[cfg(target_os = "linux")]
+        {
+            scpi.use_readback(Default::default());
+            web.before_gpu_frame();
+        }
         let mut vxi = vxi11::Server::closed(net6::host_or_exit(scpi.io_runtime()), web.wake_handle());
         vxi.set_open(scope, sw.ipv6);
         let hislip_port = arg(args, "--hislip-port").and_then(|p| p.parse().ok()).unwrap_or(hislip::PORT);
@@ -78,6 +85,14 @@ impl Remote {
     }
     pub(super) fn wake(&self) -> &system::intake::Wake {
         self.web.wake()
+    }
+    #[cfg(target_os = "linux")]
+    pub(super) fn screens(&mut self) -> (&mut http::Http, &readback::Readback) {
+        (&mut self.web, self.scpi.readback().expect("device SCPI owns the pixel demand"))
+    }
+    #[cfg(target_os = "linux")]
+    pub(super) fn screen_deadline(&self, now: Instant) -> Option<Instant> {
+        self.vxi.screen_deadline(now)
     }
     fn switch(&mut self, sys: &sysconf::SysConf, sw: &sysconf::Switches) {
         // the services follow their switches: the ports were opened above, SSH (oos-ssh) is started by rcS

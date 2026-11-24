@@ -294,14 +294,20 @@ counts each transition to the timer.
 The device publishes the period and the next predicted step deadline for acquisition pacing. While a step
 is deferred, the published deadline is the current time. `:SYSTem:STATe?`
 reports the startup switches, `pacing.period_us`, `pacing.pipeline_budget_us` and `fps` measured from step intervals.
-`present.v2` reports the completed panel flip rate in `flip.hz`. It counts superseded helper-deferred
-steps in `helper.skipped`. On-time pictures flip at the target refresh, normally two refreshes
-after the step vblank and three refreshes apart. Early pictures can wait one additional refresh
-compared with immediate submission.
+`present.v2` reports the completed panel flip rate in `flip.hz`, superseded helper-deferred steps
+in `helper.skipped` and the current target in `flip.target_refreshes`. With divisor three,
+on-time pictures flip three refreshes apart, at a fixed two- or three-refresh latency for the
+view. The clock selects the latency using recent seal-to-ready measurements.
 See the [frame counter reference](frame-counters.md#presentv2) for
 `seal_flip`, `done_flip` and `flip.late` observation points.
 With private picture counts enabled, the `fresh.v1` counters and elapsed nanoseconds give the observed fresh rate
 over a query window.
+
+Remote pixel requests for one picture share an immutable snapshot. The last request to release it frees the
+pixels. A retained snapshot leaves later captures free to complete. At most 40 such snapshots can be live:
+eight raw SCPI continuations, 16 VXI-11 links, eight HiSLIP continuations and eight HTTP requests.
+Each snapshot holds four bytes per panel pixel, for at most 93.75 MiB of snapshot pixels on a 1024 × 600 panel.
+The helper copies pixels on demand after render completion. A staged panel flip takes priority over delivery.
 
 ### RUN clock floors
 

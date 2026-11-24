@@ -88,11 +88,14 @@ fn helper_completion_queues_its_own_picture_and_uses_the_event_timestamp() {
     );
     assert_eq!(script.history.trigger_flip, [30000.0, 30000.0]);
     let mut text = String::from(" stage.v1 trigger_composed=7/8/9");
-    script.history.write(&mut text, 3);
+    script.history.write(&mut text, 3, 2);
     assert!(text.starts_with(" stage.v1 trigger_composed=7/8/9 present.v2 flip.shown=2 flip.late=0"));
     assert!(text.contains("flip.hz=33.3 helper.skipped=3"));
+    assert!(text.contains("flip.target_refreshes=2"));
     assert!(text.contains("done_flip=6000/6000/6000"));
 }
+
+mod cadence;
 
 #[test]
 fn a_busy_drm_slot_keeps_the_same_picture_until_retry_or_modeset() {

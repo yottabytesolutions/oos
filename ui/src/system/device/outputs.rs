@@ -20,13 +20,7 @@ impl Outputs {
     }
     pub(super) fn cpu_hdmi(&mut self, ui: &mut Ui, cv: &Canvas, hdmi_frame: bool) {
         if let Some(h) = self.hdmi.as_mut().filter(|_| hdmi_frame) {
-            // the monitor's picture: its own layout, the workspace, or the panel's
-            let size = match ui.m.hdmi {
-                model::HdmiMode::Layout => ui::Screen::for_monitor(h.width, h.height),
-                model::HdmiMode::Waveform if !ui.hdmi_snap.is_empty() => Some(ui::Screen { w: h.width, h: h.height }),
-                _ => None,
-            };
-            match size {
+            match monitor_screen(ui, h) {
                 Some(s) => {
                     let hc = self.hdmi_cv.get_or_insert_with(|| Canvas::new(s.w, s.h));
                     if (hc.w, hc.h) != (s.w, s.h) {
@@ -76,5 +70,16 @@ impl Outputs {
             h.close();
         }
         self.disp.restore();
+    }
+}
+
+/// The CPU monitor can draw a layout or workspace locally. Otherwise it mirrors the panel's pixels.
+pub(super) fn monitor_screen(ui: &Ui, monitor: &drm::Display) -> Option<ui::Screen> {
+    match ui.m.hdmi {
+        model::HdmiMode::Layout => ui::Screen::for_monitor(monitor.width, monitor.height),
+        model::HdmiMode::Waveform if !ui.hdmi_snap.is_empty() => {
+            Some(ui::Screen { w: monitor.width, h: monitor.height })
+        }
+        _ => None,
     }
 }

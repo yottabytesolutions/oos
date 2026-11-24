@@ -16,8 +16,18 @@ impl Scpi {
             error_serial: 0,
             last_error: None,
             opc_events: Vec::new(),
+            readback: None,
             acl: crate::netacl::Shared::default(),
         }
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn use_readback(&mut self, readback: crate::system::readback::Readback) {
+        self.readback = Some(readback);
+    }
+
+    pub(crate) fn readback(&self) -> Option<&crate::system::readback::Readback> {
+        self.readback.as_ref()
     }
 
     /// A response message includes its terminator even when a query's current list is empty; `None`: no query.
@@ -50,15 +60,120 @@ impl Scpi {
         line: &str,
     ) -> Result<(Vec<u8>, bool), &'static str> {
         let mut program = Program::new(line);
-        match self.poll_program(ui, cv, &mut program) {
-            Some(response) => Ok((response, program.has_reply)),
+        self.poll_message(ui, cv, &mut program).unwrap_or(Err("Display capture pending"))
+    }
+
+    /// HTTP can await display pixels in its own request. *OPC? retains its
+    /// existing immediate error contract on this transport.
+    pub(crate) fn poll_message(
+        &mut self,
+        ui: &mut Ui,
+        cv: &Canvas,
+        program: &mut Program,
+    ) -> Option<Result<(Vec<u8>, bool), &'static str>> {
+        match self.poll_program(ui, cv, program) {
+            Some(response) => Some(Ok((response, program.has_reply))),
+            None if program.capture.is_some() => None,
             None => {
                 let error = "Operation pending; use raw TCP or HiSLIP for *OPC?";
                 self.push_err(format!("-221,\"{}\"", error));
                 self.normalize_errors();
-                Err(error)
+                Some(Err(error))
             }
         }
+    }
+
+    /// Advance a bounded per-client message without waiting on the UI thread.
+    /// The continuation owns its earlier replies and remaining commands: no write is replayed.
+    pub fn poll_program(&mut self, ui: &mut Ui, cv: &Canvas, program: &mut Program) -> Option<Vec<u8>> {
+        let response = crate::ui::change::intake(ui, |ui| self.advance_program(ui, cv, program));
+        self.transport.reply_limit = RESP_MAX;
+        self.normalize_errors();
+        response
+    }
+
+    fn advance_program(&mut self, ui: &mut Ui, cv: &Canvas, program: &mut Program) -> Option<Vec<u8>> {
+        self.poll_events(ui);
+        if program.invalid {
+            self.push_err("-363,\"Program message too large or too many commands\"".into());
+            return Some(Vec::new());
+        }
+        if let Some((mut request, format)) = program.capture.take() {
+            let readback = self.readback.as_ref().expect("display requests belong to a device interpreter");
+            let Some(response) = request.pixels(readback).map(|pixels| format.encode(pixels)) else {
+                program.capture = Some((request, format));
+                return None;
+            };
+            if !self.append_program_reply(program, response) {
+                return Some(std::mem::take(&mut program.out));
+            }
+        }
+        self.advance_commands(ui, cv, program)
+    }
+
+    fn advance_commands(&mut self, ui: &mut Ui, cv: &Canvas, program: &mut Program) -> Option<Vec<u8>> {
+        if let Some(fence) = &program.waiting {
+            match fence.state(ui) {
+                crate::ui::OperationState::Pending => return None,
+                crate::ui::OperationState::Complete => {
+                    program.waiting = None;
+                    if !self.append_program_reply(program, b"1".to_vec()) {
+                        return Some(std::mem::take(&mut program.out));
+                    }
+                }
+                crate::ui::OperationState::Cancelled => {
+                    self.push_err("-410,\"OPC query interrupted by cancelled operation\"".into());
+                    program.commands.clear();
+                    program.out.clear();
+                    if program.output.is_some() {
+                        program.output = Some(Default::default());
+                    }
+                    program.has_reply = false;
+                    program.waiting = None;
+                    return Some(Vec::new());
+                }
+            }
+        }
+        while let Some((command, new_line)) = program.commands.pop_front() {
+            if new_line && program.has_reply {
+                program.separator = b'\n';
+            }
+            if program.out.len() >= RESP_MAX {
+                self.push_err("-363,\"Input buffer overrun\" rest of the line dropped".into());
+                program.commands.clear();
+                break;
+            }
+            if !self.prepare_program_output(program, &command, cv) {
+                break;
+            }
+            program.before(ui, &command);
+            if command.eq_ignore_ascii_case("*OPC?") {
+                let fence = ui.scpi_operations();
+                if fence.state(ui) == crate::ui::OperationState::Pending {
+                    program.waiting = Some(fence);
+                    return None;
+                }
+                if !self.append_program_reply(program, b"1".to_vec()) {
+                    break;
+                }
+            } else if let Some((request, format)) = self.display_capture(&command) {
+                program.capture = Some((request, format));
+                return None;
+            } else if let Some(response) = self.exec(ui, cv, &command) {
+                if !self.append_program_reply(program, response) {
+                    break;
+                }
+            }
+        }
+        self.transport.reply_limit = RESP_MAX;
+        program.settle(ui);
+        Some(std::mem::take(&mut program.out))
+    }
+
+    fn display_capture(&self, command: &str) -> Option<(crate::system::readback::Request, display::Format)> {
+        let readback = self.readback.as_ref()?;
+        let format = display::capture_format(command)?;
+        Some((readback.request(), format))
     }
 
     pub(super) fn logic_block(&mut self, words: &[u16]) -> Option<Vec<u8>> {
@@ -79,11 +194,11 @@ impl Scpi {
         let remaining = program.output.as_ref().map_or(RESP_MAX, |output| output.remaining());
         let header = command.split_whitespace().next().unwrap_or("");
         let nodes: Vec<_> = header.trim_start_matches(':').split(':').collect();
-        let display = nodes.len() == 2 && kw(nodes[0], "DISPlay") && kw(nodes[1].trim_end_matches('?'), "DATA");
+        let display = display::data_header(header);
         let waveform = nodes.len() == 2 && kw(nodes[0], "WAVeform") && kw(nodes[1].trim_end_matches('?'), "DATA");
         // PNG's raw, deflate and container buffers overlap; BMP may reallocate its block header.
         let scratch = if display {
-            cv.px.len().saturating_mul(24).saturating_add(1 << 20)
+            display_scratch(cv)
         } else if waveform {
             256
         } else {
@@ -125,6 +240,10 @@ impl Scpi {
             self.push_err("-350,\"Queue overflow\"".into());
         }
     }
+}
+
+pub(super) fn display_scratch(cv: &Canvas) -> usize {
+    cv.px.len().saturating_mul(24).saturating_add(1 << 20)
 }
 
 /// SCPI is sequential (IEEE 488.2): a query sees the settings and resets of every command before it, and a

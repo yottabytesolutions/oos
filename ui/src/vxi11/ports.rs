@@ -2,7 +2,17 @@
 //! Frame-owned RPC requests, link ownership, continuations and parked replies.
 use super::*;
 use crate::netport::{Envelope, Output, Ports, RemoteRequest, Reply, Wake};
-use std::sync::{atomic::Ordering, Arc};
+use std::{
+    collections::VecDeque,
+    sync::{atomic::Ordering, Arc},
+    time::{Duration, Instant},
+};
+
+struct ScreenRead {
+    request: Envelope,
+    link: usize,
+    deadline: Instant,
+}
 
 pub struct Server {
     endpoint: crate::netio::Endpoint,
@@ -10,6 +20,7 @@ pub struct Server {
     pub acl: crate::netacl::Shared,
     parked: Option<Reply>,
     pending: Option<Envelope>,
+    screen_reads: VecDeque<ScreenRead>,
 }
 impl Server {
     pub fn closed(runtime: crate::netio::Runtime, wake: Arc<Wake>) -> Self {
@@ -19,6 +30,7 @@ impl Server {
             acl: Default::default(),
             parked: None,
             pending: None,
+            screen_reads: VecDeque::new(),
         }
     }
     pub fn host(runtime: crate::netio::Runtime, wake: Arc<Wake>) -> std::io::Result<Self> {
@@ -38,6 +50,7 @@ impl Server {
             self.links.clear();
             self.parked = None;
             self.pending = None;
+            self.screen_reads.clear();
         }
     }
     pub fn service_port(&self) -> Option<u16> {
@@ -51,15 +64,19 @@ impl Server {
             link.out = Vec::new();
         }
     }
+    pub(crate) fn screen_deadline(&self, now: Instant) -> Option<Instant> {
+        self.screen_reads.iter().map(|read| read.deadline).filter(|&deadline| deadline > now).min()
+    }
     pub fn poll_async(&mut self, exec: &mut dyn FnMut(&mut crate::scpi::Program) -> Option<Vec<u8>>) {
         let Some(ports) = self.endpoint.ports(&self.acl) else { return };
-        let start = std::time::Instant::now();
-        self.poll(&ports, || start.elapsed(), exec);
+        let start = Instant::now();
+        self.poll(&ports, start, || start.elapsed(), exec);
     }
     fn poll(
         &mut self,
         ports: &Ports,
-        mut elapsed: impl FnMut() -> std::time::Duration,
+        now: Instant,
+        mut elapsed: impl FnMut() -> Duration,
         exec: &mut dyn FnMut(&mut crate::scpi::Program) -> Option<Vec<u8>>,
     ) {
         for link in &mut self.links {
@@ -68,15 +85,20 @@ impl Server {
             }
         }
         for _ in 0..8 {
-            if elapsed() >= std::time::Duration::from_micros(500) {
+            if elapsed() >= Duration::from_micros(500) {
                 ports.notify_frame();
                 break;
             }
             if !ports.flush(&mut self.parked) {
                 break;
             }
+            let retry = self.pending.is_some();
             let Some(request) = self.pending.take().or_else(|| ports.requests().take(1).pop()) else { break };
             if request.cancelled() {
+                continue;
+            }
+            if let Some((link, deadline)) = (!retry).then(|| self.screen_read(&request, now)).flatten() {
+                self.screen_reads.push_back(ScreenRead { request, link, deadline });
                 continue;
             }
             if !self.dispatch(request, ports, exec) {
@@ -86,8 +108,51 @@ impl Server {
         for link in self.links.iter_mut().flatten() {
             pump_link(link, exec);
         }
+        self.resume_screen_reads(ports, now, exec);
         if self.parked.is_some() {
             ports.notify_frame();
+        }
+    }
+
+    fn screen_read(&self, request: &Envelope, now: Instant) -> Option<(usize, Instant)> {
+        let RemoteRequest::Vxi11 { record, channel: Channel::Core, .. } = request.request() else { return None };
+        let call = parse_call(record)?;
+        if call.prog != CORE_PROG || call.vers != 1 || call.proc_ != 12 {
+            return None;
+        }
+        let mut args = Xdr::new(call.args);
+        let index = args.u32()? as usize;
+        let _size = args.u32()?;
+        let timeout = Duration::from_millis(u64::from(args.u32()?));
+        let link = self.links.get(index)?.as_ref()?;
+        let waiting = link.programs.front().is_some_and(crate::scpi::Program::waiting_for_pixels);
+        (link.out.is_empty() && waiting && !timeout.is_zero()).then_some((index, now + timeout))
+    }
+
+    fn resume_screen_reads(
+        &mut self,
+        ports: &Ports,
+        now: Instant,
+        exec: &mut dyn FnMut(&mut crate::scpi::Program) -> Option<Vec<u8>>,
+    ) {
+        for _ in 0..self.screen_reads.len() {
+            if self.pending.is_some() || !ports.flush(&mut self.parked) {
+                break;
+            }
+            let Some(read) = self.screen_reads.pop_front() else { break };
+            if read.request.cancelled() {
+                continue;
+            }
+            let waiting = self
+                .links
+                .get(read.link)
+                .and_then(Option::as_ref)
+                .is_some_and(|link| link.out.is_empty() && !link.programs.is_empty());
+            if waiting && now < read.deadline {
+                self.screen_reads.push_back(read);
+            } else if !self.dispatch(read.request, ports, exec) {
+                break;
+            }
         }
     }
     fn dispatch(

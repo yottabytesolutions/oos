@@ -31,17 +31,53 @@ pub(super) fn exec(
     super::undefined(scpi, cmd)
 }
 
+#[derive(Clone, Copy)]
+pub(super) enum Format {
+    Bmp,
+    Png,
+}
+
+impl Format {
+    fn parse(arg: &str) -> Result<Self, &str> {
+        let kind = arg.split_whitespace().next().unwrap_or("");
+        let up = kind.to_ascii_uppercase();
+        if up.starts_with("PNG") {
+            Ok(Self::Png)
+        } else if up.is_empty() || up.starts_with("BMP") {
+            Ok(Self::Bmp)
+        } else {
+            Err(kind)
+        }
+    }
+
+    pub(super) fn encode(self, cv: &Canvas) -> Vec<u8> {
+        block(match self {
+            Self::Bmp => bmp(cv),
+            Self::Png => crate::store::png_of(cv),
+        })
+    }
+}
+
 fn data(scpi: &mut Scpi, cv: &Canvas, arg: &str) -> Option<Vec<u8>> {
-    let kind = arg.split_whitespace().next().unwrap_or("").trim();
-    let up = kind.to_ascii_uppercase();
-    if up.starts_with("PNG") {
-        return Some(block(crate::store::png_of(cv)));
+    match Format::parse(arg) {
+        Ok(format) => Some(format.encode(cv)),
+        Err(kind) => {
+            scpi.push_err(format!("-224,\"Illegal parameter value\" {kind}"));
+            None
+        }
     }
-    if up.is_empty() || up.starts_with("BMP") {
-        return Some(block(bmp(cv)));
-    }
-    scpi.push_err(format!("-224,\"Illegal parameter value\" {}", kind));
-    None
+}
+
+pub(super) fn data_header(header: &str) -> bool {
+    header.trim_start_matches(':').split_once(':').is_some_and(|(root, leaf)| {
+        (root.eq_ignore_ascii_case("DISP") || root.eq_ignore_ascii_case("DISPLAY"))
+            && leaf.trim_end_matches('?').eq_ignore_ascii_case("DATA")
+    })
+}
+
+pub(super) fn capture_format(command: &str) -> Option<Format> {
+    let (header, arg) = command.split_once(char::is_whitespace).unwrap_or((command, ""));
+    (header.ends_with('?') && data_header(header)).then(|| Format::parse(arg).ok()).flatten()
 }
 
 fn views(scpi: &mut Scpi, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
@@ -83,4 +119,38 @@ fn view(scpi: &mut Scpi, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8>>
         None => scpi.push_err(format!("-224,\"Illegal parameter value\" {}", arg)),
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::system::readback::Readback;
+
+    #[test]
+    fn display_queries_resume_in_order_with_one_fresh_picture_each() {
+        let mut scpi = Scpi::disconnected();
+        scpi.use_readback(Readback::default());
+        let mut ui = Ui::for_tests(crate::wave::Source::Demo { t: 0.0 });
+        let mut cv = Canvas::new(2, 2);
+        let mut program = Program::new(":DISP:DATA? BMP;:DISPLAY:DATA? PNG;*ESR?");
+        assert!(scpi.poll_program(&mut ui, &cv, &mut program).is_none());
+        let first = scpi.readback().unwrap().take().unwrap();
+        assert!(scpi.readback().unwrap().take().is_none());
+        assert!(scpi.poll_program(&mut ui, &cv, &mut program).is_none());
+
+        cv.clear(0x23_45_67);
+        first.complete(&cv);
+        let mut expected = Format::Bmp.encode(&cv);
+        assert!(scpi.poll_program(&mut ui, &cv, &mut program).is_none());
+        let second = scpi.readback().unwrap().take().unwrap();
+        assert!(scpi.readback().unwrap().take().is_none());
+
+        cv.clear(0x12_34_56);
+        second.complete(&cv);
+        expected.push(b';');
+        expected.extend(Format::Png.encode(&cv));
+        expected.extend_from_slice(b";0");
+        assert_eq!(scpi.poll_program(&mut ui, &cv, &mut program), Some(expected));
+        assert!(scpi.readback().unwrap().take().is_none());
+    }
 }

@@ -194,6 +194,50 @@ fn request(sequence: u64, procedure: u32, args: &[u8]) -> Envelope {
 }
 
 #[test]
+fn device_read_waits_for_pixels_within_its_requested_timeout() {
+    let mut server = Server::closed(crate::netio::Runtime::new().unwrap(), Arc::new(Wake::new().unwrap()));
+    server.links.push(Some(Link::default()));
+    let ports = Ports::bounded(server.endpoint.wake.clone(), crate::netport::MAX_CLIENTS, REPLY_BYTES).unwrap();
+    let mut ui = crate::Ui::for_tests(crate::Source::Demo { t: 0.0 });
+    let mut scpi = crate::scpi::Scpi::disconnected();
+    scpi.use_readback(Default::default());
+    let cv = crate::gfx::Canvas::new(2, 2);
+    let start = Instant::now();
+    for (index, ready) in [true, false].into_iter().enumerate() {
+        let now = start + Duration::from_secs(index as u64);
+        let sequence = index as u64 * 2;
+        let write = request(sequence + 1, 11, &args(&[0, 1000, 0, 8], Some(b":DISP:DATA?")));
+        let read = request(sequence + 2, 12, &args(&[0, 1024, 100, 0, 0, 0], None));
+        for rpc in [write, read] {
+            ports.requests().submit(rpc.id(), rpc, 64).ok().unwrap();
+        }
+        server.poll(&ports, now, || Duration::ZERO, &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        assert_eq!(ports.replies().take(2).len(), 1, "only device_write has answered");
+        assert_eq!(server.screen_deadline(now), Some(now + Duration::from_millis(100)));
+        if ready {
+            let demand = scpi.readback().unwrap();
+            demand.take().unwrap().complete(&cv);
+        }
+        let elapsed = Duration::from_millis(if ready { 25 } else { 100 });
+        server.poll(&ports, now + elapsed, || Duration::ZERO, &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        server.poll(&ports, now + elapsed, || Duration::ZERO, &mut |p| scpi.poll_program(&mut ui, &cv, p));
+        let replies = ports.replies().take(2);
+        assert_eq!(replies.len(), 1);
+        assert_eq!(replies[0].id().request(), sequence + 2);
+        let reply: Vec<u8> = replies[0].output().chunks().flatten().copied().collect();
+        let mut payload = Xdr::new(&reply[28..]); // RPC record header and accept reply.
+        assert_eq!(payload.u32(), Some(if ready { 0 } else { 15 }));
+        assert_eq!(payload.u32(), Some(if ready { 4 } else { 0 }));
+        let bytes = payload.opaque().unwrap();
+        if ready {
+            assert_eq!(&bytes[11..13], b"BM");
+        } else {
+            assert!(bytes.is_empty());
+        }
+    }
+}
+
+#[test]
 fn reply_backpressure_and_injected_deadline_never_repeat_a_setter() {
     let mut server = Server::closed(crate::netio::Runtime::new().unwrap(), Arc::new(Wake::new().unwrap()));
     server.links.push(Some(Link::default()));
@@ -209,14 +253,14 @@ fn reply_backpressure_and_injected_deadline_never_repeat_a_setter() {
             vec![]
         }))
     };
-    server.poll(&ports, || std::time::Duration::from_micros(500), &mut exec);
+    server.poll(&ports, Instant::now(), || std::time::Duration::from_micros(500), &mut exec);
     assert!(!ports.requests().is_empty());
-    server.poll(&ports, || std::time::Duration::ZERO, &mut exec);
+    server.poll(&ports, Instant::now(), || std::time::Duration::ZERO, &mut exec);
     assert!(server.parked.is_some());
-    server.poll(&ports, || std::time::Duration::ZERO, &mut exec);
+    server.poll(&ports, Instant::now(), || std::time::Duration::ZERO, &mut exec);
     assert!(server.parked.is_some());
     drop(ports.replies().take(1));
-    server.poll(&ports, || std::time::Duration::ZERO, &mut exec);
+    server.poll(&ports, Instant::now(), || std::time::Duration::ZERO, &mut exec);
     assert!(server.parked.is_none());
     assert_eq!(executions, 1);
     assert_eq!(ports.replies().take(1)[0].id().request(), 1);
@@ -231,12 +275,12 @@ fn exhausted_reply_budget_defers_interpretation_and_cancellation_releases_it() {
     let request = request(1, 10, &[]);
     let credit = request.credit(ports.clone());
     ports.requests().submit(request.id(), request, 40).ok().unwrap();
-    server.poll(&ports, || std::time::Duration::ZERO, &mut |_| panic!("no SCPI expected"));
+    server.poll(&ports, Instant::now(), || std::time::Duration::ZERO, &mut |_| panic!("no SCPI expected"));
     assert!(server.pending.is_some());
     assert!(server.links.is_empty(), "a resource wait must not create a link");
     drop(credit);
     drop(held);
-    server.poll(&ports, || std::time::Duration::ZERO, &mut |_| panic!("cancelled request"));
+    server.poll(&ports, Instant::now(), || std::time::Duration::ZERO, &mut |_| panic!("cancelled request"));
     assert!(server.pending.is_none());
     assert!(server.links.is_empty());
     assert!(ports.replies().is_empty());

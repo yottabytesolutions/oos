@@ -192,6 +192,8 @@ The per-window `records.deposited` delta can be negative when previously pending
 Older reports use the raw worker placement and direct draw total, so raw deposit deltas across the two
 accounting methods have different meanings. The `compare` metrics use first-use, fresh-picture and flip
 counters. Sampling and comparison require `present.v2` target-refresh counters in every window.
+Beside each late percentage, `compare` lists the distinct `flip.target_refreshes` values sampled
+at the ends of the group's windows. A dash indicates a report without target values for that group.
 A missing `watchdog ok` aborts sampling. The tool restores setup in two passes with offsets last and
 verifies each saved key and RUN/STOP once. A snapshot value resembling an address or hostname causes
 the tool to skip that key and print its name. After three consecutive SCPI transport failures,

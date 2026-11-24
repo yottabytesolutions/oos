@@ -63,13 +63,30 @@ impl BatchState {
         );
         let next = self.successor(io, &handoff, pipe, (out, switches), &obsolete);
         let request = handoff.capture.request;
-        let held = stop::held_request(
-            &lock(out),
-            handoff.plan,
-            (request.want.as_ref(), request.mode),
-            count,
-            self.armed.is_some(),
-        );
+        let (stale, held) = if handoff.plan.serial() {
+            let mut g = lock(out);
+            let stale = publication::boundary(Some(request.pair()), g.acquisition.identity());
+            let held = if stale {
+                if g.hold {
+                    // The accepted boundary discarded the final record. Complete any pending STOP request.
+                    g.final_ack = g.final_ack.max(g.final_req);
+                }
+                None
+            } else {
+                let asked = (request.want.as_ref(), request.mode);
+                stop::held_request(&g, handoff.plan, asked, count, self.armed.is_some())
+            };
+            (stale, held)
+        } else {
+            (false, None)
+        };
+        if stale {
+            drawpipe::counters().discard(drawpipe::Lost::Settings, selection.avail as u64);
+            if let Some((pipe, spare)) = pipe.zip(next.ok().flatten()) {
+                pipe.return_buffer(Box::new(spare));
+            }
+            return Published::Rejected;
+        }
         if let Some(final_req) = held {
             self.publish_held(io, handoff, &selection, (out, switches.board.header_probe), (seq, final_req));
             if let Some((pipe, spare)) = pipe.zip(next.ok().flatten()) {
@@ -80,7 +97,7 @@ impl BatchState {
         let Ok(next) = next else {
             drawpipe::counters().discard(drawpipe::Lost::Settings, selection.avail as u64);
             publication::finish_batch(out, Vec::new(), handoff.capture.settings.mode, |g| {
-                handoff.readout.readings.publish(g, io.state.mask_cols.as_deref(), None);
+                handoff.readout.readings.publish(g, request.identity, io.state.mask_cols.as_deref(), None);
             });
             return Published::Rejected;
         };
@@ -103,7 +120,7 @@ impl BatchState {
         // Trigger status and raw availability must be visible before the pool can hand off a deposit.
         let mut readings = Some(readings);
         if let Some(readings) = pipe.and_then(|_| readings.take()) {
-            readings.publish(&mut lock(out), io.state.mask_cols.as_deref(), Some((count, 0)));
+            readings.publish(&mut lock(out), request.identity, io.state.mask_cols.as_deref(), Some((count, 0)));
         }
         let (mut frames, skip) = self.dispatch(
             (&selection, &completed),
@@ -127,7 +144,7 @@ impl BatchState {
         if readings.is_some() || !frames.is_empty() {
             publication::finish_batch(out, frames, b.mode, |g| {
                 if let Some(readings) = readings {
-                    readings.publish(g, io.state.mask_cols.as_deref(), Some((count, skip)));
+                    readings.publish(g, request.identity, io.state.mask_cols.as_deref(), Some((count, skip)));
                 }
             });
         }
@@ -168,7 +185,12 @@ impl BatchState {
         });
         let skipped = avail.saturating_sub(1);
         drawpipe::counters().discard(drawpipe::Lost::Settings, skipped as u64);
-        readings.publish(&mut lock(out), io.state.mask_cols.as_deref(), Some((completed.count, skipped)));
+        readings.publish(
+            &mut lock(out),
+            request.identity,
+            io.state.mask_cols.as_deref(),
+            Some((completed.count, skipped)),
+        );
         self.single_done = single::progress(b, self.single_done, request.pair(), false, u32::from(frame.is_some())).0;
         publication::publish_held(out, frame, final_req);
     }

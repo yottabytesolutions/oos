@@ -111,7 +111,7 @@ fn check(command: Command, race: bool, single: bool) {
         let completion = result.recv_timeout(HANG_GUARD);
         // Failure cleanup invalidates admission, without releasing any of the held grants.
         if completion.is_err() {
-            pipe.hold_taps(true);
+            stop_waiting(pipe);
         }
         worker.join().unwrap();
         assert!(checkpoint.is_ok(), "Readout must check the actual source predicate");
@@ -121,6 +121,11 @@ fn check(command: Command, race: bool, single: bool) {
     assert_eq!(dma.as_ref().unwrap().bytes(), original, "source still owns the untouched completed read");
     assert_eq!(pipe.tap_count(), 0);
     assert!(!pipe.has_tap_plan(id, [0; 6]));
+}
+
+fn stop_waiting(pipe: &crate::drawpipe::Pipe) {
+    pipe.stage_tap_hold(true);
+    crate::drawpipe::wake_source();
 }
 
 fn dispatch_canceled<T: RawBatch + 'static>(

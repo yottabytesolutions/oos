@@ -16,6 +16,7 @@ mod picture;
 mod raw;
 mod record_selection;
 mod ring_validity;
+mod run_order;
 mod side_service;
 mod sim;
 mod stopped_pass;
@@ -172,6 +173,23 @@ fn requested(want: &Settings, identity: Identity, deposit: bool) -> HwShared {
         g.acquisition = crate::board::identity::Publication::new(identity, deposit);
     }
     out
+}
+
+fn source(out: &HwShared, io: &Io<sim::Sim>) -> (AcqLoop<FixedPacing>, std::time::Instant) {
+    let switches = Switches::parse(&|_| None, "acq.work_budget_ms = 12", "acq.frame0 = keep", Default::default());
+    let mask = lock(out).want.as_ref().unwrap().mask;
+    let options = Spawn { mask, program_afe: false, cal_dir: String::new(), start_up: None };
+    let started = io.clock.now();
+    (AcqLoop::new(options, switches, out.clone(), Service::default(), None, started, FixedPacing), started)
+}
+
+fn snapshot(
+    out: &HwShared,
+    io: &Io<sim::Sim>,
+    trace: &std::cell::RefCell<sim::Trace>,
+    started: std::time::Instant,
+) -> Outcome {
+    Outcome::snapshot(&mut trace.borrow_mut(), &lock(out), io.clock.now().duration_since(started))
 }
 
 fn drive(

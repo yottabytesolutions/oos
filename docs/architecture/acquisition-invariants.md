@@ -83,3 +83,24 @@ slot rules, including a stop pulse that clears DONE after a record completes.
 [Calibration and held startup traces](../../ui/src/board/dho/hw/acq/tests/calibration_hold.rs) ·
 [Side service](../../ui/src/board/dho/hw/acq/tests/side_service.rs)
 
+Shared's `hold` is the source's sole run/hold authority. The UI prepares the worker view, including
+its keys and zoom projection, before taking Shared. The view and tap state, settings, identity, route,
+segment command, queue filtering and hold are committed under Shared, taking the pipe locks inside it.
+The source and tap-command waiters are notified after staging the transaction. The source applies
+changed settings before arming and checks the generation and epoch before DMA admission. Late DMA
+or worker output from a superseded pair is rejected. A rejected change leaves the previous
+publication and hold in force.
+[RUN traces](../../ui/src/board/dho/hw/acq/tests/run_order.rs)
+
+A stopped-view request can yield a raw window tagged with the original capture identity
+while the complete record remains the source's latest frame. The UI can install that window as its latest
+record. A replay completing after RUN or a change of the requested generation or epoch is discarded.
+[Stopped view trace](../../ui/src/board/dho/hw/acq/tests/stopped_raw.rs) ·
+[UI consumer](../../ui/src/ui/capture_memory.rs#L314-L331)
+
+The software hold acknowledgement can advance without a hardware STOPPED acknowledgement or final record.
+Clear during an in-flight serial STOP read discards the stale record and acknowledges the request at completion.
+Held roll and scan keep their initial STOP acknowledgement. Held segments poll every 5 ms without arming.
+The virtual-time tests cover the 10 ms disarm poll, serial STOP cancellation after 2 s without a trigger,
+and RUN and SINGLE retry after a missing trigger.
+[Wait traces](../../ui/src/board/dho/hw/acq/tests/bounds.rs)

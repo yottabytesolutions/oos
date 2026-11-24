@@ -63,6 +63,7 @@ struct Prepared {
     clear: bool,
     workers: bool,
     consumed: bool,
+    transitioned: bool,
     reset_views: bool,
     reference_view: bool,
 }
@@ -222,6 +223,7 @@ fn prepare_inner(ui: &mut Ui) {
                 run_edge,
                 workers: true,
                 consumed: false,
+                transitioned: false,
                 reset_views: requests[..n].iter().any(|r| matches!(r, Request::ViewReset | Request::Clear)),
                 reference_view: views::reference_view(&changed, &requests[..n]),
                 single: requests[..n].contains(&Request::Single),

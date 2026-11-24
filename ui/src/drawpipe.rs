@@ -27,7 +27,7 @@ use batch::{Batch, Lease, Message};
 pub use batch::{CodeLayout, CodesInto, DecodeInto, RawBatch};
 #[cfg(any(target_os = "linux", test))]
 pub use decoder::IndexedDecodeInto;
-pub(crate) use feed::same_pair;
+pub(crate) use feed::{same_pair, PreparedView};
 #[cfg(test)]
 pub use frame::draw_frame;
 pub(crate) use frame::draw_frame_reusing;

@@ -2,7 +2,102 @@
 
 use super::*;
 use crate::model::{AcqMode, Model};
+use crate::wave::Source;
 use oos_core::change::{Shadow, UiAcq};
+
+#[test]
+fn clear_during_serial_stop_dma_acknowledges_the_discarded_final_record() {
+    let _scope = Scope::new();
+    let want = settings();
+    let model = crate::model::Model::default();
+    let config = crate::model::config();
+    let mut shadow = oos_core::change::Shadow::new(&model, Default::default(), &config).unwrap();
+    let old = shadow.identity();
+    let out = requested(&want, old, false);
+    {
+        let mut g = lock(&out);
+        g.record_flow.cost.set_identity(old);
+        g.record_flow.cost.observe(old, 1, Duration::from_millis(50), Duration::ZERO);
+    }
+    let (mut io, trace) = sim::fixture(&want, out.clone(), (Run::StopDuring, 1, false), None);
+    let (mut source, started) = source(&out, &io);
+    let shared = out.clone();
+    io.c2h.on_dma(move |_| {
+        let mut g = lock(&shared);
+        assert!(g.hold && g.record_flow.serial);
+        assert_eq!((g.final_req, g.final_ack), (7, 0));
+        let clear = shadow
+            .observe(&model, Default::default(), &[oos_core::change::Request::Clear], &config)
+            .unwrap()
+            .identity();
+        assert_ne!(clear.epoch(), old.epoch());
+        g.acquisition = crate::board::identity::Publication::new(clear, false);
+        g.record_flow.wake();
+    });
+    capture(&mut source, &mut io);
+    // Observe the DMA completion itself, before another source pass can acknowledge STOP.
+    let result = snapshot(&out, &io, &trace, started);
+    assert_eq!(result.counters.read, 1);
+    assert_eq!(result.counters.loss("lost.settings"), 1);
+    assert!(result.queue.is_empty() && result.latest.is_none());
+    assert_eq!(result.final_ack, 7);
+}
+
+#[test]
+fn stopped_view_discards_a_replay_completed_after_run() {
+    twice(|| obsolete_stopped_replay(true));
+}
+
+#[test]
+fn stopped_view_rejects_a_reply_for_an_older_settings_generation_in_the_same_epoch() {
+    twice(|| obsolete_stopped_replay(false));
+}
+
+fn obsolete_stopped_replay(resume: bool) -> Outcome {
+    use crate::board::identity::Publication;
+    use oos_core::change::Request;
+
+    let _scope = Scope::new();
+    let want = Settings { tdiv: 10e-6, depth: 14_000, ..settings() };
+    let mut model = Model::default();
+    let config = crate::model::config();
+    let mut shadow = Shadow::new(&model, UiAcq::default(), &config).unwrap();
+    let old = shadow.identity();
+    let out = requested(&want, old, false);
+    let (mut io, trace) = sim::fixture(&want, out.clone(), (Run::Selection, 4, false), None);
+    let (mut source, started) = source(&out, &io);
+    capture(&mut source, &mut io);
+    io.clock.stop();
+    let view = Some((1e-6, 0.0));
+    lock(&out).stop_view = view;
+    let shared = out.clone();
+    io.c2h.on_dma(move |trace| {
+        let mut g = lock(&shared);
+        assert!(g.hold && g.stop_view == view);
+        let requests = if resume {
+            Source::stage_hold(&mut g, false, 7);
+            g.stop_view = None;
+            trace.events.push(Event::Run);
+            &[Request::Run][..]
+        } else {
+            model.tscale += 1;
+            g.want.as_mut().unwrap().tdiv *= 2.0;
+            &[]
+        };
+        let id = shadow.observe(&model, UiAcq::default(), requests, &config).unwrap().identity();
+        assert_eq!(id.epoch() != old.epoch(), resume);
+        assert_eq!(id.gen() != old.gen(), !resume);
+        g.acquisition = Publication::new(id, false);
+        g.record_flow.wake();
+    });
+    capture(&mut source, &mut io);
+    assert!(lock(&out).replay.is_none());
+    assert!(source.replay.replayed.is_none());
+    let result = snapshot(&out, &io, &trace, started);
+    assert_eq!(result.events.iter().filter(|e| matches!(e, Event::Dma(_))).count(), 2);
+    assert_eq!(result.latest, Some(Frame::stamp(4, 3)));
+    result
+}
 
 #[test]
 fn stopped_view_returns_a_raw_window_without_replacing_the_source_record() {

@@ -90,24 +90,27 @@ impl Source {
         None
     }
 
-    /// Hardware segments: tells the thread the recording number and whether the acquisition runs; returns phase,
-    /// segments asked for, recorded and read back, and whether frames are still queued. None without the hardware
-    /// source.
-    pub fn seg_sync(&self, run: u64, running: bool) -> Option<SegView> {
-        let Source::Hw { shared, .. } = self else { return None };
-        let mut g = crate::perfguard::deep::ui_lock(shared);
+    /// Stage the segment command under the acquisition publication lock.
+    pub(crate) fn stage_segments(g: &mut crate::board::Shared, run: u64, running: bool) {
         (g.seg.run, g.seg.running) = (run, running);
-        let current = g.seg.done_run == run;
-        if !current || g.seg.phase == crate::board::SegPhase::Idle {
+        if g.seg.done_run != run || g.seg.phase == crate::board::SegPhase::Idle {
             (g.seg.want, g.seg.shown) = (None, None);
         }
-        Some(SegView {
+    }
+
+    /// Read back segment progress and the accepted run flag.
+    pub(crate) fn seg_status(&self) -> Option<(SegView, bool)> {
+        let Source::Hw { shared, .. } = self else { return None };
+        let g = crate::perfguard::deep::ui_lock(shared);
+        let current = g.seg.done_run == g.seg.run;
+        let view = SegView {
             phase: if current { g.seg.phase } else { crate::board::SegPhase::Idle },
             total: g.seg.total,
             recorded: g.seg.recorded,
             read: g.seg.read,
             queued: !g.queue.is_empty(),
-        })
+        };
+        Some((view, g.seg.running))
     }
 
     /// Hardware segments: the trigger times read back so far (seconds since the first trigger).

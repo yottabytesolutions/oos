@@ -233,7 +233,15 @@ impl<T: PacingPolicy> AcqLoop<T> {
                         self.switches.board.header_probe,
                         cores.then_some(&mut self.batch.raw.cores),
                     );
-                    lock(&self.out).replay = Some(batch.view(frame, point));
+                    let mut g = lock(&self.out);
+                    if g.hold
+                        && g.stop_view == Some(view)
+                        && !publication::boundary(Some(request.pair()), g.acquisition.identity())
+                    {
+                        g.replay = Some(batch.view(frame, point));
+                    } else {
+                        self.replay.replayed = None;
+                    }
                 }
                 Err(e) => status(&self.out, format!("STOP read: {}", e)),
             }

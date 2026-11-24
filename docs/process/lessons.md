@@ -65,6 +65,8 @@ pull request that fixes a mistake: what happened, then the rule.
 
 - A cancellation test counted reads on its source thread's counters and losses on the pipe. Use the pipe's
   injected instance for both sides of the conservation check, even when dispatch runs on another thread.
+- Rejecting a serial STOP read after Clear also skipped the final acknowledgement. Check completion at the
+  end of the stale DMA handoff, before the next held poll can acknowledge it.
 
 - A zero-allocation check assumed eight warm-up passes set up the reply channel's waiter storage. With replies
   already queued, `recv` skipped that setup, and the first waiting receive allocated inside the measured pass.

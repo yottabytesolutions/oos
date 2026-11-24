@@ -21,7 +21,7 @@ Single scan only).
   A source started in STOP can still show its first record.
 - The normal batch path disarms any tracked successor on entering hold. On a pass without a stopped view,
   acquisition can reach configuration before its batch hold check. Calibration, generator updates, the hardware
-  counter, XADC and LA probe checks continue in STOP. RUN releases the hold before publishing the new epoch and
+  counter, XADC and LA probe checks continue in STOP. RUN publishes the new epoch before releasing hold and
   preserves the picture across the transition.
 - A serial capture already armed at STOP can finish. Its first-record wait is capped at two seconds from the first
   poll that sees STOP, within the UI's three-second wait. A trigger timeout disarms via the acquisition counter,

@@ -185,7 +185,7 @@ final request is acknowledged and the decoded-record queue drains, or until thre
 A stopped view can request a reread of the stored frame. Calibration, generator updates and side
 readings continue during the hold.
 
-RUN releases the hold before publishing the new acquisition epoch. RUN itself leaves the phosphor
+RUN publishes the new acquisition epoch before releasing the hold. RUN itself leaves the phosphor
 and window contents to the usual picture rules. Pending deposits and queued records are subject to
 the published identity. SCPI `*OPC?` tracks an armed SINGLE through its completion receipt. STOP and
 RUN have no operation tokens. See [STOP behavior](../fork/stop-exact.md).

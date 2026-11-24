@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::{admission, counters, feed, funding, route, same_pair, shutdown, Counters, Message, RawBatch, SourceWake};
+use super::{
+    admission, counters, feed, funding, route, shutdown, Counters, Message, PreparedView, RawBatch, SourceWake,
+};
 #[cfg(test)]
 use super::{stage, test_scope, Accepted, Stats};
 use crate::board::{Frame, PictureEligibility, QueuedFrame};
@@ -24,7 +26,7 @@ pub(super) struct View {
     pub(super) zoom: Option<route::ZoomView>,
 }
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub(super) struct ViewState {
     pub(super) view: Option<Arc<View>>,
     pub(super) spare: Option<Arc<View>>,
@@ -62,7 +64,7 @@ impl Pipe {
     }
 
     pub fn set_view(&self, m: Option<&Model>, w: usize, h: usize, interp: Interp) {
-        feed::set_view(self, m, (w, h), interp, None, None);
+        feed::set_view(self, m, (w, h), interp, None);
     }
 
     #[cfg(test)]
@@ -70,6 +72,7 @@ impl Pipe {
         self.publish_picture_view(m, (w, h), interp, identity, None);
     }
 
+    #[cfg(test)]
     pub(crate) fn publish_picture_view(
         &self,
         m: &Model,
@@ -78,18 +81,35 @@ impl Pipe {
         identity: Identity,
         zoom: Option<route::ZoomView>,
     ) {
-        feed::set_view(self, Some(m), size, interp, Some(identity), zoom);
+        if feed::set_view(self, Some(m), size, interp, Some((identity, zoom))) {
+            self.source.notify();
+            self.slot.wake_tap_commands();
+        }
+    }
+
+    /// Only the UI publisher writes view state. Workers can keep reading the old view during preparation.
+    pub(crate) fn prepare_picture_view(
+        &self,
+        m: &Model,
+        size: (usize, usize),
+        interp: Interp,
+        identity: Identity,
+        zoom: Option<route::ZoomView>,
+    ) -> PreparedView {
+        feed::prepare_view(self, m, size, interp, identity, zoom)
+    }
+
+    /// Install the prepared view and stage tap invalidation before the Shared publisher wakes the source.
+    pub(crate) fn stage_picture_view(&self, prepared: &mut PreparedView, active: bool, identity: Identity) {
+        feed::stage_view(self, prepared, active, identity);
     }
 
     pub fn set_identity(&self, identity: Identity) {
         let mut view = oos_hal::sync::lock(&self.view);
-        if !same_pair(view.identity, Some(identity)) {
-            self.counters.metrics.set_identity(identity);
-            self.admission.set_identity(identity);
+        if feed::stage_identity(self, &mut view, identity, true) {
             self.source.notify();
+            self.slot.wake_tap_commands();
         }
-        view.identity = Some(identity);
-        self.slot.set_tap_identity(identity);
     }
 
     pub fn accepting(&self) -> bool {
@@ -99,6 +119,11 @@ impl Pipe {
     #[cfg(any(target_os = "linux", test))]
     pub(crate) fn source_generation(&self) -> u64 {
         self.source.generation()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn command_generations(&self) -> (u64, u64) {
+        (self.source_generation(), self.slot.tap_command_generation())
     }
 
     /// Return on DMA release or a new command. A deadline keeps the acquisition thread's

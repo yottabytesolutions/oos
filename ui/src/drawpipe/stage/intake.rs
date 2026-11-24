@@ -17,7 +17,7 @@ pub(in crate::drawpipe) fn work(
     let mut statistics = None;
     loop {
         if wake_pending.swap(false, Ordering::AcqRel) {
-            current = current.and_then(|d| slot.put(d).err());
+            current = current.and_then(|d| owner::publish_pending(slot, d, view, counters));
         }
         let Ok(message) = rx.recv() else { break };
         let dequeued = Instant::now();

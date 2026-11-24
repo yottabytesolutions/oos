@@ -10,6 +10,7 @@ use crate::{
     drawpipe::{clock::StageClock, TapReservation},
     perfguard::deep::acq_lock as lock,
 };
+use oos_core::change::Identity;
 use oos_hal::dho::{
     bus::{Bus, DmaBuf},
     hz, mask,
@@ -71,7 +72,16 @@ pub(super) struct Readings {
 }
 
 impl Readings {
-    pub(super) fn publish(self, g: &mut Shared, cols: Option<&[mask::Column]>, stats: Option<(u32, usize)>) {
+    pub(super) fn publish(
+        self,
+        g: &mut Shared,
+        identity: Identity,
+        cols: Option<&[mask::Column]>,
+        stats: Option<(u32, usize)>,
+    ) {
+        if super::publication::boundary(Some((identity.gen(), identity.epoch())), g.acquisition.identity()) {
+            return;
+        }
         g.trig_fired = Some((g.trig_fired.map_or(1, |old| old.0 + 1), self.fired));
         g.deep_ok = self.deep_ok;
         let cols = cols.filter(|_| self.mask.is_some());
@@ -111,7 +121,7 @@ impl BatchState {
         let changed = || wait.canceled(&lock(out), plan, asked, (b.auto, reserved), io.clock.now());
         let started = io.clock.now();
         let fill_ms = pacing.fill_ms(&mut self.fill, started);
-        let allowed = |count| capture_read_allowed(plan, out, &mut self.record_wait, asked, count, clock);
+        let allowed = |count| capture_read_allowed(plan, out, &mut self.record_wait, request, count, clock);
         // The HAL owns the fill, ring readout and C2H sequence as one cancellation-aware operation.
         let count = lifecycle::batch(b.single, ahead, || {
             seq::time::acquire_batch_observed(
@@ -226,10 +236,11 @@ fn capture_read_allowed(
     plan: &super::super::dma_source::ArmPlan<'_>,
     out: &HwShared,
     record_wait: &mut super::publication::RecordWait,
-    asked: stop::Asked<'_>,
+    request: &Request,
     count: u32,
     clock: &impl LoopClock,
 ) -> bool {
+    let asked = (request.want.as_ref(), request.mode);
     let interrupted = || stop::admission_interrupted(&lock(out), plan, asked);
     if plan.read_ahead() && plan.uses_record_queue() {
         while record_wait.poll(out, None, clock, interrupted, |message| status(out, message)) {
@@ -238,7 +249,12 @@ fn capture_read_allowed(
             }
         }
     }
-    let allowed = plan.read_allowed(clock, interrupted, || stop::read_obsolete(&lock(out), plan, asked));
+    let allowed = if plan.serial() {
+        plan.read_allowed(clock, interrupted, || stop::read_obsolete(&lock(out), plan, asked))
+    } else {
+        // Overlapping reads still finish on a plain STOP, but a new pair supersedes the completed fill.
+        !super::publication::boundary(Some(request.pair()), lock(out).acquisition.identity())
+    };
     if !allowed {
         crate::drawpipe::counters().metrics.source_capture_discarded(count);
     }

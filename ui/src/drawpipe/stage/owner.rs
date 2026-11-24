@@ -148,7 +148,7 @@ pub(super) fn publish_completed(
 ) -> Option<Deposit> {
     let flight = oos_hal::sync::lock(&b.header.flight).take();
     if flight.is_none() && !slot.owner_enabled() {
-        let current = slot.put(d).err();
+        let current = publish_pending(slot, d, view, counters);
         drop(b);
         return current;
     }
@@ -156,7 +156,7 @@ pub(super) fn publish_completed(
     #[cfg(test)]
     let injected = b.clock.pool_override().is_some();
     drop(b);
-    let result = slot.send_timed(d, flight.is_some());
+    let result = slot.send_timed(d);
     match result {
         Ok(publication) => {
             if let Some(flight) = flight {
@@ -171,6 +171,23 @@ pub(super) fn publish_completed(
         }
     }
     None
+}
+
+pub(super) fn publish_pending(
+    slot: &Handoff,
+    d: Deposit,
+    view: &Mutex<ViewState>,
+    counters: &Counters,
+) -> Option<Deposit> {
+    let d = slot.put(d).err()?;
+    let identity = oos_hal::sync::lock(view).identity;
+    if same_pair(d.identity, identity) {
+        Some(d)
+    } else {
+        d.reject(identity, counters);
+        slot.recycle(d);
+        None
+    }
 }
 
 #[cfg(test)]

@@ -500,7 +500,7 @@ pub struct Shared {
     pub dvm_want: Option<DvmWant>,
     pub dvm: Option<DvmRead>,
     /// STOP (docs/fork/stop-exact.md): the UI is stopped and the thread arms nothing; `final_req` is raised for a STOP
-    /// that wants the newest frame read raw, `final_ack` is the request done (its frame queued before)
+    /// that wants the newest frame read raw, `final_ack` is the request done (its frame queued or discarded)
     pub hold: bool,
     pub final_req: u64,
     pub final_ack: u64,

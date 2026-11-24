@@ -2,6 +2,9 @@
 
 use std::sync::Arc;
 
+#[cfg(test)]
+pub(crate) type CommandGenerations = (u64, Option<(u64, u64)>);
+
 #[derive(Default)]
 pub(crate) struct RecordFlow {
     pub(crate) cost: crate::drawpipe::admission::Cost,
@@ -9,6 +12,10 @@ pub(crate) struct RecordFlow {
     pub(crate) shutdown: bool,
     /// The source may have a serial capture in flight that a plain STOP needs to drain.
     pub(crate) serial: bool,
+    #[cfg(test)]
+    pub(crate) acquisition_commit: Option<(oos_core::change::Identity, CommandGenerations)>,
+    #[cfg(test)]
+    pub(crate) acquisition_commit_allocations: usize,
     segments: Option<SoftwareSegments>,
 }
 
@@ -48,6 +55,11 @@ impl RecordFlow {
     pub(crate) fn wake(&self) {
         self.source.notify();
         crate::drawpipe::wake_source();
+    }
+
+    #[cfg(test)]
+    pub(crate) fn command_generations(&self) -> CommandGenerations {
+        (self.source.generation(), crate::drawpipe::pipe().map(crate::drawpipe::Pipe::command_generations))
     }
 
     pub(crate) fn drained(&self) {

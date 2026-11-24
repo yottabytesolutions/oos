@@ -206,13 +206,18 @@ impl Handoff {
         Some(TapOrder { handoff: Arc::downgrade(self), number, pending: AtomicBool::new(true) })
     }
 
-    pub(crate) fn set_tap_identity(&self, identity: Identity) {
+    pub(crate) fn stage_tap_view(&self, identity: Identity, active: bool) {
         let mut state = lock(&self.state);
-        if !crate::drawpipe::same_pair(state.taps.identity, Some(identity)) {
-            state.taps.identity = Some(identity);
+        if !active || !crate::drawpipe::same_pair(state.taps.identity, Some(identity)) {
             state.taps.admission.plan = None;
-            self.space.notify_all();
         }
+        state.taps.identity = Some(identity);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_tap_identity(&self, identity: Identity) {
+        self.stage_tap_view(identity, true);
+        self.wake_tap_commands();
     }
 
     #[cfg(test)]
@@ -232,6 +237,7 @@ impl Handoff {
             let mut state = lock(&self.state);
             if state.closed
                 || submitted < state.reset_before
+                || !state.taps.accepts_deposit(tap.identity)
                 || samples > charge.samples
                 || !std::ptr::eq(self, charge.handoff.as_ptr())
                 || charge.plan.as_ref().is_some_and(|p| tap.identity.is_none_or(|id| !p.identity(id)))
@@ -245,7 +251,7 @@ impl Handoff {
             state
         } else {
             // The worker can publish an already submitted waveform while the source is held.
-            let mut state = self.wait_for_tap(samples, submitted, None, None, false)?;
+            let mut state = self.wait_for_tap(samples, submitted, tap.identity, None, false)?;
             state.taps.samples += samples;
             state
         };

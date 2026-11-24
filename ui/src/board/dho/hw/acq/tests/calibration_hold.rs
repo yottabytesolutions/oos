@@ -45,6 +45,69 @@ fn stopped_view_after_calibration_services_dvm_and_levels_without_rereading() {
 }
 
 #[test]
+fn acquisition_calibration_labels_the_displayed_capture_with_a_stale_or_missing_view() {
+    for _ in 0..2 {
+        for draining in [false, true] {
+            check_ui_calibration(draining);
+        }
+    }
+}
+
+fn check_ui_calibration(draining: bool) {
+    use crate::{model::RunState, ui::Ui, wave::Source};
+
+    let _scope = Scope::new();
+    let want = settings();
+    let out = HwShared::default();
+    let mut ui = Ui::for_tests(Source::Hw { shared: out.clone(), seen: 0 });
+    ui.m = picture::model(want.tdiv);
+    ui.step(0.02);
+    {
+        let mut g = lock(&out);
+        g.want = Some(want.clone());
+        g.acquisition = crate::board::identity::Publication::new(g.acquisition.identity(), false);
+    }
+    let fixture = sim::fixture(&want, out.clone(), (Run::Selection, 4, false), None);
+    let shared = out.clone();
+    let mut final_sample = None;
+    let outcome = drive(&out, fixture, move |_, pause| match pause {
+        Pause::Park => {
+            let pending = draining.then(|| lock(&shared).queue.pop_back().unwrap());
+            ui.step(0.02);
+            lock(&shared).record_flow.serial = draining;
+            ui.m.run = RunState::Stop;
+            ui.step(0.02);
+            assert!(ui.test_calibration_note().is_none());
+            {
+                let mut g = lock(&shared);
+                assert!(g.hold);
+                if let Some(frame) = pending {
+                    assert!(g.stop_view.is_none(), "the final serial record has yet to drain");
+                    final_sample = Some(frame.ch[0][0]);
+                    g.queue.push_back(frame);
+                } else {
+                    let view = g.stop_view.as_mut().expect("the held capture requested a view");
+                    view.capture += 1;
+                }
+                std::sync::Arc::make_mut(&mut g.frame).seq += 1;
+            }
+            ui.selfcal_remote("1", true);
+            assert!(lock(&shared).cal_req.is_some());
+        }
+        Pause::Wait(HELD_POLL) => {
+            ui.step(0.02);
+            if let Some(sample) = final_sample {
+                assert_eq!(ui.raw_volts(0).unwrap()[0], sample);
+            }
+            assert_eq!(ui.test_calibration_note(), Some("Captured before calibration. RUN for new data."));
+            lock(&shared).record_flow.shutdown = true;
+        }
+        Pause::Wait(_) => {}
+    });
+    assert!(outcome.events.iter().any(|event| matches!(event, Event::Calibration(_))));
+}
+
+#[test]
 fn a_second_calibration_restores_settings_again_while_held() {
     let outcome = twice(|| calibrate_held(After::Again));
     let held: Vec<_> = outcome.events.split(|event| matches!(event, Event::Calibration(_))).collect();
@@ -142,7 +205,7 @@ fn calibrate_held(after: After) -> Outcome {
             clock.stop();
             stopped = true;
             if after == After::View {
-                assert!(source.hw_stop(Some((1e-6, 0.0))).is_none());
+                assert!(source.hw_stop(Some(StopView { capture: 0, scale: 1e-6, delay: 0.0 })).1.is_none());
             }
         }
         Pause::Wait(HELD_POLL | VIEW_POLL) => {
@@ -151,7 +214,7 @@ fn calibrate_held(after: After) -> Outcome {
             match passes {
                 1 => {
                     if after == After::View {
-                        assert!(g.replay.is_some(), "the first stopped view rereads the captured batch");
+                        assert!(g.stop_replies.frame.is_some(), "the first stopped view rereads the captured batch");
                     }
                     g.cal_req = Some((vec![0], true, false));
                     g.want.as_mut().unwrap().level = 0.5;
@@ -161,9 +224,9 @@ fn calibrate_held(after: After) -> Outcome {
                     }
                 }
                 2 if after == After::View => {
-                    assert!(g.replay.is_none());
+                    assert!(g.stop_replies.frame.is_none());
                     drop(g);
-                    assert!(source.hw_stop(Some((1e-6, 1e-6))).is_none());
+                    assert!(source.hw_stop(Some(StopView { capture: 0, scale: 1e-6, delay: 1e-6 })).1.is_none());
                 }
                 2 if after == After::Run => {
                     drop(g);
@@ -174,7 +237,7 @@ fn calibrate_held(after: After) -> Outcome {
                     g.want.as_mut().unwrap().level = -0.5;
                 }
                 _ => {
-                    assert!(g.replay.is_none());
+                    assert!(g.stop_replies.frame.is_none());
                     if after == After::View {
                         assert!(matches!(g.slots, Some((1, Some(_)))));
                     }
@@ -202,14 +265,14 @@ fn configure_error_after_calibration() -> Outcome {
             let mut g = lock(&shared);
             if held {
                 assert_eq!(g.final_ack, 8);
-                assert!(g.replay.is_none());
+                assert!(g.stop_replies.frame.is_none());
                 g.record_flow.shutdown = true;
             } else {
                 assert_eq!(g.final_ack, 7);
                 held = true;
                 g.cal_req = Some((vec![0], true, false));
                 g.final_req = 8;
-                g.stop_view = Some((1e-6, 0.0));
+                g.stop_view = Some(StopView { capture: 0, scale: 1e-6, delay: 0.0 });
                 g.want.as_mut().unwrap().trig_src = 2;
                 g.dvm_want = Some(DvmWant { ch: 0, lane: None });
             }
@@ -218,7 +281,7 @@ fn configure_error_after_calibration() -> Outcome {
             let mut g = lock(&shared);
             assert_eq!(g.status.latest(), "settings: channel mask 1..0xf with the trigger source enabled");
             assert_eq!(g.final_ack, 7);
-            assert!(g.replay.is_none());
+            assert!(g.stop_replies.frame.is_none());
             failures += 1;
             if failures == 2 {
                 g.want.as_mut().unwrap().trig_src = want.trig_src;
@@ -244,12 +307,12 @@ fn calibrate_completed_single() -> Outcome {
             let mut g = lock(&shared);
             assert_eq!(g.final_ack, 7);
             if calibrated {
-                assert!(g.replay.is_none());
+                assert!(g.stop_replies.frame.is_none());
                 g.record_flow.shutdown = true;
             } else {
                 calibrated = true;
                 g.cal_req = Some((vec![0], true, false));
-                g.stop_view = Some((1e-6, 0.0));
+                g.stop_view = Some(StopView { capture: 0, scale: 1e-6, delay: 0.0 });
             }
         }
         Pause::Park => panic!("a completed SINGLE waits for the UI hold"),

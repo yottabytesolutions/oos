@@ -125,12 +125,12 @@ fn stopped_view_with(side: Side) -> (Outcome, Option<DvmRead>, Option<SlotDump>)
     let outcome = drive(&out, fixture, move |clock, pause| match pause {
         Pause::Park => {
             clock.stop();
-            lock(&shared).stop_view = Some((1e-6, 0.0));
+            lock(&shared).stop_view = Some(StopView { capture: 0, scale: 1e-6, delay: 0.0 });
         }
         Pause::Wait(VIEW_POLL) => {
             passes += 1;
             let mut g = lock(&shared);
-            assert!(g.replay.is_some());
+            assert!(g.stop_replies.frame.is_some());
             match (passes, side) {
                 (1, Side::Dvm) => {
                     let want = g.want.as_mut().unwrap();
@@ -140,7 +140,7 @@ fn stopped_view_with(side: Side) -> (Outcome, Option<DvmRead>, Option<SlotDump>)
                 }
                 (1, Side::Levels) => {
                     g.slots_want = Some(1);
-                    g.stop_view = Some((1e-6, 1e-6));
+                    g.stop_view = Some(StopView { capture: 0, scale: 1e-6, delay: 1e-6 });
                 }
                 (2, Side::Dvm) => {
                     let samples = 1_u64 << dvm::EXP;
@@ -338,4 +338,48 @@ fn sim_source(want: &Settings, out: &HwShared, conf: &str) -> (AcqLoop<FixedPaci
     let source =
         AcqLoop::new(options, switches, out.clone(), Service::default(), None, fixture.0.clock.now(), FixedPacing);
     (source, fixture)
+}
+
+#[test]
+fn held_side_unit_disarms_before_the_view_can_reread_a_dropped_slot() {
+    let (outcome, retained, replied) = twice(disarm_during_held_view);
+    let stop = outcome.events.iter().position(|e| *e == Event::Stop).unwrap();
+    let held = &outcome.events[stop + 1..];
+    let disarm = held.iter().position(|e| matches!(e, Event::Write(0x4004, v) if v >> 31 != 0)).unwrap();
+    let start = dvm::start(0, dvm::EXP)[0];
+    let unit = held.iter().position(|e| *e == Event::Write(start.0, start.1)).unwrap();
+    assert!(disarm < unit);
+    assert!(!held.iter().any(|e| matches!(e, Event::Dma(_))));
+    assert_eq!(held.last(), Some(&Event::Wait(HELD_POLL)));
+    assert!(!retained && !replied);
+    assert_eq!(outcome.latest, Some(Frame::stamp(4, 3)));
+}
+
+fn disarm_during_held_view() -> (Outcome, bool, bool) {
+    let _scope = Scope::new();
+    let want = Settings { tdiv: 10e-6, depth: 14_000, ..settings() };
+    let out = requested(&want, Identity::default(), false);
+    let (mut source, (mut io, trace)) = sim_source(&want, &out, "acq.prearm = on");
+    let started = io.clock.now();
+    capture(&mut source, &mut io);
+    assert!(source.batch.armed.is_some() && source.replay.last_batch.is_some());
+    io.clock.trigger_poll();
+    io.clock.stop();
+    // Enter directly at the held pass with an armed successor to exercise side-unit invalidation.
+    source.replay.paused = true;
+    {
+        let mut g = lock(&out);
+        g.stop_view = Some(StopView { capture: 0, scale: 1e-6, delay: 0.0 });
+        g.dvm_want = Some(DvmWant { ch: 0, lane: None });
+    }
+    let shared = out.clone();
+    io.clock.drive(move |_, pause| {
+        if matches!(pause, Pause::Wait(HELD_POLL | VIEW_POLL)) {
+            lock(&shared).record_flow.shutdown = true;
+        }
+    });
+    source.run(&mut io);
+    let g = lock(&out);
+    let outcome = Outcome::snapshot(&mut trace.borrow_mut(), &g, io.clock.now().duration_since(started));
+    (outcome, source.replay.last_batch.is_some(), g.stop_replies.frame.is_some())
 }

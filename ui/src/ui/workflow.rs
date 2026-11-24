@@ -722,7 +722,7 @@ impl Ui {
             }
         }
         self.m.floor_live_tdiv();
-        self.last[0] = None;
+        (self.last[0], self.stop_capture, self.stop_pic) = (None, None, None);
         self.cleared = false;
         change::replay(self);
         restored

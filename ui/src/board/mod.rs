@@ -458,9 +458,9 @@ pub struct Shared {
     /// Frames awaiting drawing, oldest first.
     pub(crate) queue: std::collections::VecDeque<Arc<Frame>>,
     /// STOP: the view the UI shows (time per div, delay); the thread acquires nothing and reads the last record again
-    /// for it when it changes, into `replay` (`hw::stop_window`)
-    pub stop_view: Option<(f64, f64)>,
-    pub replay: Option<Frame>,
+    /// for it when it changes, into `stop_replies` (`hw::stop_window`)
+    pub(crate) stop_view: Option<identity::StopView>,
+    pub(crate) stop_replies: identity::StopReplies,
     /// frames decoded, and those dropped from the queue unseen because the screen fell behind (`:SYSTem:STATe?`)
     pub decoded: u64,
     pub dropped: u64,

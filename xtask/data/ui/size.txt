@@ -10,7 +10,7 @@
 516 file ui/src/measures/standard.rs
 3265 file ui/src/scpi.rs
 1464 file ui/src/store.rs
-8354 file ui/src/ui.rs
+8244 file ui/src/ui.rs
 1495 file ui/src/ui/analysis.rs
 504 file ui/src/ui/autoset.rs
 826 file ui/src/ui/bode.rs
@@ -80,12 +80,12 @@
 117 fn ui/src/ui.rs Ui::knob
 76 fn ui/src/ui.rs Ui::menu_title
 100 fn ui/src/ui.rs Ui::multi_touch
-251 fn ui/src/ui.rs Ui::new
+250 fn ui/src/ui.rs Ui::new
 76 fn ui/src/ui.rs Ui::pointer_wheel_motion
-135 fn ui/src/ui.rs Ui::render_layers
+132 fn ui/src/ui.rs Ui::render_layers
 121 fn ui/src/ui.rs Ui::set_dec_proto
 133 fn ui/src/ui.rs Ui::set_trig_type
-237 fn ui/src/ui.rs Ui::step
+207 fn ui/src/ui.rs Ui::step
 204 fn ui/src/ui.rs Ui::tap
 66 fn ui/src/ui.rs Ui::tap_menu
 409 fn ui/src/ui.rs Ui::touch_in
@@ -162,7 +162,7 @@
 14 struct ui/src/pacing.rs State
 18 struct ui/src/sysconf.rs SysConf
 13 struct ui/src/ui.rs TouchState
-214 struct ui/src/ui.rs Ui
+213 struct ui/src/ui.rs Ui
 19 struct ui/src/ui/analysis.rs RefMeasureKey
 49 struct ui/src/ui/analysis.rs State
 16 struct ui/src/ui/autoset.rs AutoRun

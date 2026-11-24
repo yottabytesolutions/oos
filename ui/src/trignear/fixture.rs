@@ -146,7 +146,7 @@ fn replay(fixture: &Fixture, mode: u8) -> Option<PerMap<Phosphor>> {
     let accepted = Owner::default().compose_picture(
         &pipe,
         PerMap::new(&mut main, detail.as_mut()),
-        &mut true,
+        &mut crate::picture::FirstDraw::Minimum,
         Stats { edges: &mut [0; 4], off: &mut (0.0, 0.0) },
         None,
     );

@@ -170,7 +170,7 @@ fn stage(
     g.record_flow.cost.set_identity(id);
     g.acquisition.replace(hardware.publication, hardware.started);
     if running {
-        (g.stop_view, g.replay) = (None, None);
+        (g.stop_view, g.stop_replies.frame) = (None, None);
     }
     for (slot, gen) in g.afg.iter_mut().zip(hardware.afg) {
         if gen.is_some() {

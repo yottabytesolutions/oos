@@ -117,7 +117,7 @@ fn ui_takes_single(expired: bool) -> Vec<Event> {
     assert!(rig.request().run.hold);
     assert_eq!(rig.state().contains(MISSED), expired);
     // Exercise the final acknowledgement independently of a requested stopped-view reread.
-    assert!(rig.ui.src.hw_stop(None).is_none());
+    assert!(rig.ui.src.hw_stop(None).1.is_none());
     rig.ui.src.hw_hold(true, 7);
     assert!(rig.poll(&rig.request()).is_none());
     rig.ui.step(0.04);

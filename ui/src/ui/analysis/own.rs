@@ -155,7 +155,7 @@ impl Ui {
             match key.source {
                 WaveId::Ref(i) => MeasureSamples::Owned(self.refs.get(i)?.as_ref()?.v[k.lo..k.hi].to_vec()),
                 WaveId::Ch(c) => {
-                    let record = self.last[0].as_ref()?;
+                    let record = self.measurement_record()?;
                     let (values, _, _) = self.measurement_channel_samples(record, c)?;
                     if let Some(raw) = record.raw.as_ref().filter(|raw| {
                         let original = &raw.frame.ch[c];

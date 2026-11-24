@@ -5,7 +5,8 @@
 
 #[cfg(test)]
 use crate::picture::deposit::standard::fast_deposit;
-use crate::picture::deposit::standard::{add_frame_band, fast_plan};
+#[cfg(test)]
+use crate::picture::deposit::standard::fast_plan;
 
 use crate::board::{board, Board, PictureEligibility};
 use crate::font::{Font, Fonts};
@@ -1279,13 +1280,9 @@ pub struct Ui {
     /// (`stat`, trigger.md 8)
     pub fast_edges: [u64; 4],
     pub fast_off: (f64, f64),
-    /// STOP: the software trigger of the record shown at the stop (s from the hardware trigger point), kept for the
-    /// records read again (`stop_replay`)
-    stop_ti_off: Option<f64>,
-    /// STOP: the raw record shown at the stop (the final frame of a deep or live-compressed record), and the min/max
-    /// pair record the thread read again for the view when that came as pairs. The pairs are drawn; the raw record
-    /// stays `last[0]`, the record measured and read out (`stop_replay`, docs/fork/stop-exact.md)
-    stop_raw: Option<Record>,
+    /// The accepted STOP record and its source sequence, which remains stable across rereads.
+    stop_capture: Option<(Record, u64)>,
+    /// The displayed pairs when a reread overlays an originally raw capture.
     stop_pic: Option<Record>,
     pub t_fast: f32,
     pub t_fast_ab: (f32, f32),
@@ -1644,8 +1641,7 @@ impl Ui {
             zone_hw_clear: 0,
             fast_edges: [0; 4],
             fast_off: (0.0, 0.0),
-            stop_ti_off: None,
-            stop_raw: None,
+            stop_capture: None,
             stop_pic: None,
             t_fast: 0.0,
             t_fast_ab: (0.0, 0.0),
@@ -2433,6 +2429,7 @@ impl Ui {
             // the second picture (HDMI layout): rectangles of its own, the maps of the panel
             self.grid = g;
         } else if g != self.grid || self.layout_zoom != self.m.zoom || self.wins.first() != Some(&w0) {
+            self.batch_picture.layout_changed = true;
             self.grid = g;
             self.layout_zoom = self.m.zoom;
             if self.m.zoom {
@@ -2445,6 +2442,9 @@ impl Ui {
                 self.phz = Phosphor::new(1, 1);
             }
             change::mapping_observed(self, change::oracle::Row::Layout);
+        }
+        if !self.view_pass && self.wins != wins {
+            self.batch_picture.layout_changed = true;
         }
         self.wins = wins;
         self.cur_win = 0;
@@ -2672,15 +2672,12 @@ impl Ui {
     /// RAW read-out: (points, dt, t0) of the entire retained native acquisition; `None` when the
     /// screen record is all there is.
     pub fn raw_info(&self, c: usize) -> Option<(usize, f64, f64)> {
-        let r = self.last[0].as_ref()?.raw.as_ref()?;
-        let v = r.frame.ch.get(c)?;
-        // a compressed frame holds min/max pairs, not samples: then the screen record is the answer
-        (!v.is_empty() && !r.frame.envelope).then(|| (v.len(), r.frame.dt, r.t0 - r.i0 as f64 * r.frame.dt))
+        Self::raw_record_info(self.raw_read_record()?, c)
     }
 
     /// The samples of `raw_info`.
     pub fn raw_volts(&self, c: usize) -> Option<Vec<f32>> {
-        let r = self.last[0].as_ref()?.raw.as_ref()?;
+        let r = self.raw_read_record()?.raw.as_ref()?;
         let v = r.frame.ch.get(c)?;
         (!r.frame.envelope).then(|| v.iter().map(|x| if x.is_finite() { *x } else { 0.0 }).collect())
     }
@@ -2695,7 +2692,7 @@ impl Ui {
     /// The samples a `:WAVeform` read uses. `memory` is RAW, or MAXimum while stopped: the deep record when the
     /// acquisition kept one, otherwise the screen record.
     fn channel_view(&self, c: usize, memory: bool) -> Option<(&[f32], f64, f64)> {
-        let rec = self.last[0].as_ref()?;
+        let rec = if memory { self.raw_read_record() } else { self.last[0].as_ref() }?;
         if memory {
             if let Some(raw) = rec.raw.as_ref().filter(|r| !r.frame.envelope) {
                 if let Some(v) = raw.frame.ch.get(c) {
@@ -2772,6 +2769,7 @@ impl Ui {
         (self.vmax, self.vmaxz, self.vmax_cg, self.vmaxz_cg) = ([1; NCH], [1; NCH], 1, 1);
         // without a last record there is nothing to redraw in STOP, average with, compute math / decode / search on
         self.last[0] = None;
+        (self.stop_capture, self.stop_pic) = (None, None);
         self.hist_pos = None;
         self.cleared = true;
         self.toast("Display cleared");
@@ -2823,20 +2821,24 @@ impl Ui {
             }
         }
         if self.m.run == RunState::Stop && !self.record_mode() {
-            self.refresh_capture_view();
+            if !change::proposals::acquiring(self) {
+                self.refresh_capture_view();
+            }
             self.refresh_stopped_measurements();
         }
         let live = self.m.n_on() > 0 || self.m.la_on();
         // a source started in STOP (replay) still shows its first record, unless the screen was cleared
         if !self.record_mode() && live && change::proposals::acquiring(self) {
-            if self.m.run == RunState::Run {
-                self.stop_ti_off = None;
-                (self.stop_raw, self.stop_pic) = (None, None);
-            }
             // minimum persistence: replace the picture when a new record arrives, not every frame (at large depths
             // the hardware delivers fewer records than frames, and clearing each frame made the trace flicker)
-            let mut clear_pending = persist == 0.0 && !picture_cleared;
-            if persist > 0.0 {
+            let mut first = if self.batch_picture.replacement_pending {
+                crate::picture::FirstDraw::Replace
+            } else if persist == 0.0 && !picture_cleared {
+                crate::picture::FirstDraw::Minimum
+            } else {
+                crate::picture::FirstDraw::Keep
+            };
+            if persist > 0.0 && !first.waiting() {
                 let started = std::time::Instant::now();
                 let f = (-dt_wall / persist as f64).exp() as f32;
                 self.ph.decay(f);
@@ -2857,7 +2859,7 @@ impl Ui {
             let mut raw_rec: Option<Record> = None;
             let mut window_frames = None;
             if fast {
-                let f = step_draw::fast(self, &sw, &mut clear_pending, keep_window, &mut composition, &mut draw);
+                let f = step_draw::fast(self, &sw, &mut first, keep_window, &mut composition, &mut draw);
                 (got, td, window_frames, raw_rec) = (f.frames, f.ms, f.window_frames, f.raw);
             }
             let queued_fast_records = composition.deposit.saturating_sub(composition.merged as usize);
@@ -2873,23 +2875,7 @@ impl Ui {
                     break;
                 }
                 match r {
-                    Some((mut rec, ..)) if !crate::zone::pass(&self.m.zones, &rec.ch, rec.t0, rec.dt) => {
-                        // zone trigger: not a qualifying record
-                        let _ = &mut rec;
-                        self.zone_drops += 1;
-                    }
-                    // protocol trigger, Normal and Single: the hardware fires on every edge of the line, only the decoder
-                    // decides; Single waits on for the record that holds the event
-                    Some((rec, ..))
-                        if self.m.trig_type == TrigType::Bus
-                            && !self.mixed_bus_mode()
-                            && self.m.trig_mode != TrigMode::Auto
-                            && !rec.triggered
-                            && !rec.partial
-                            && self.bus_can_match(&rec) =>
-                    {
-                        self.m.status = TrigStatus::Wait;
-                    }
+                    Some((rec, eligibility, _)) if composition.filter_record(self, &rec, eligibility, &first) => {}
                     Some((mut rec, eligibility, tap)) => {
                         self.bus_candidate_committed();
                         self.m.status = if rec.triggered { TrigStatus::Triggered } else { TrigStatus::Auto };
@@ -2905,7 +2891,7 @@ impl Ui {
                         }
                         // the FPGA averaged the frame already: blending would average the average
                         let hw_avg = rec.raw.as_ref().is_some_and(|r| r.frame.hw_avg);
-                        if self.m.acq == AcqMode::Average && !hw_avg {
+                        if self.m.acq == AcqMode::Average && !hw_avg && !first.waiting() {
                             if let Some(prev) = &self.last[0] {
                                 let a = 1.0 / self.m.avg_count as f32;
                                 for c in 0..NCH {
@@ -2919,16 +2905,8 @@ impl Ui {
                                 }
                             }
                         }
-                        // minimum persistence: the picture of this step is every frame of it (the fast path's and this
-                        // record), cleared once before the first of them
-                        if clear_pending && eligibility.draws() {
-                            step_draw::reset_window(self);
-                            self.ph.clear();
-                            self.phz.clear();
-                            clear_pending = false;
-                        }
                         let t1 = std::time::Instant::now();
-                        got += composition.draw_record(self, &rec, sw.interp, drawing_input, eligibility);
+                        got += composition.draw_record(self, &rec, sw.interp, drawing_input, eligibility, &mut first);
                         td += record_draw.placed(bill_record, t1.elapsed()).as_secs_f32() * 1000.0;
                         if self.history.len() >= if hw_seg { HISTORY } else { HISTORY.max(self.seg_count()) } {
                             self.history.pop_front();
@@ -2971,7 +2949,8 @@ impl Ui {
                     break;
                 }
             }
-            got += if fast { step_draw::replay(self, &sw, &mut clear_pending, &mut composition) } else { 0 };
+            got += if fast { step_draw::replay(self, &sw, &mut first, &mut composition) } else { 0 };
+            self.batch_picture.replacement_pending = first.waiting();
             draw[3] += t_records.elapsed();
             change::acquisition::record_progress(self, record_draw.records, record_draw.elapsed);
             // WAIT only when the whole frame brought nothing (the hardware source delivers a new record only every
@@ -3017,7 +2996,8 @@ impl Ui {
             if received_record || raw_rec.is_some() {
                 deep_draw::update_readers(self, raw_rec);
             }
-        } else if !self.record_mode() {
+        } else if !self.record_mode() && (self.m.run == RunState::Stop || !self.batch_picture.replacement_pending) {
+            self.batch_picture.replacement_pending = false;
             let started = std::time::Instant::now();
             step_draw::stopped(self);
             draw[3] += started.elapsed();
@@ -3048,26 +3028,6 @@ impl Ui {
         self.pane_tick();
         let p4 = std::time::Instant::now();
         self.prof_add(2, p4 - p3);
-        let p5 = std::time::Instant::now();
-        // brightest pixel per channel: the trace brightness is graded relative to it
-        // (follow upwards at once, downwards slowly: no flicker)
-        let (full, fullz) = self.grade_refs();
-        self.prof_add(3, p5.elapsed());
-        // long or infinite persistence: halve the maps before the counts saturate (keeps the density ratios)
-        if full {
-            self.ph.halve();
-            self.vmax.iter_mut().for_each(|v| *v = (*v / 2).max(1));
-            self.vmax_cg = (self.vmax_cg / 2).max(1);
-        }
-        draw[4] += p5.elapsed();
-        change::finish_step(self);
-        let halve_zoom = std::time::Instant::now();
-        if fullz {
-            self.phz.halve();
-            self.vmaxz.iter_mut().for_each(|v| *v = (*v / 2).max(1));
-            self.vmaxz_cg = (self.vmaxz_cg / 2).max(1);
-        }
-        draw[4] += halve_zoom.elapsed();
         step_draw::finish(self, draw, got);
     }
 
@@ -3118,101 +3078,6 @@ impl Ui {
             && m.z_src.is_none()
             && (!m.zones.iter().any(|z| z.usable()) || self.zone_hw_active())
             && board().slow_mode(m) == crate::board::Slow::Off
-    }
-
-    /// Draw the decoded batch fallback up to its newest record. Place in parallel (trigger, columns or
-    /// screen record, statistics of each frame), then the maps filled in bands, channel by band on several cores.
-    /// Returns the frames that counted as triggered.
-    fn draw_queued_prefix(&mut self, frames: Vec<std::sync::Arc<crate::board::Frame>>) -> usize {
-        let (w, h) = (self.ph.w, self.ph.h);
-        let m = &self.m;
-        // the statistics of every frame for the voltage measurements, once the measurements of the record have set
-        // up their rows
-        let rows_ready = self.mstat.len() == m.meas.len() + m.meas2.len();
-        let fold: [bool; NCH] = std::array::from_fn(|c| {
-            rows_ready
-                && m.ch[c].on
-                && m.meas.iter().any(|&(k, mc)| mc == WaveId::Ch(c) && crate::fastdraw::Fold::covers(k))
-        });
-        let t0 = std::time::Instant::now();
-        let placed = step_draw::place_records(&frames, |f| fast_plan(m, w, h, f, fold));
-        let t1 = std::time::Instant::now();
-        let mut trig = 0;
-        for (p, f) in placed.iter().zip(&frames) {
-            trig += p.triggered as usize;
-            if let Some(outcome) = p.plan.outcome() {
-                crate::drawpipe::Stats { edges: &mut self.fast_edges, off: &mut self.fast_off }.record(outcome);
-            }
-            // as the deposit workers (`framestats::fold_frame`): nothing of live-compression pairs (the raw newest
-            // frame of the batch counts), of other min/max pairs only what pairs give (Max, Min, Pk-pk)
-            if rows_ready && !crate::compress::live(f) {
-                for (i, &(k, src)) in self.m.meas.iter().enumerate() {
-                    let Some(c) = src.ch() else { continue };
-                    if f.envelope && crate::framestats::needs_samples(k) {
-                        continue;
-                    }
-                    if let Some(v) = p.plan.fold(c).and_then(|f| f.get(k)).filter(|v| v.is_finite()) {
-                        self.mstat[i].add(v);
-                    }
-                }
-            }
-        }
-        if self.ph.is_wide()
-            || placed.iter().any(|p| p.plan.format() == crate::picture::deposit::count::CountFormat::Wide)
-        {
-            for (p, f) in placed.iter().zip(&frames) {
-                crate::picture::deposit::standard::wide_frame(&mut self.ph, f, &p.plan);
-            }
-            return trig;
-        }
-        self.draw_queued_bands(&frames, &placed, (t0, t1));
-        trig
-    }
-
-    fn draw_queued_bands(
-        &mut self,
-        frames: &[std::sync::Arc<crate::board::Frame>],
-        placed: &[crate::picture::deposit::standard::FastFrame],
-        (t0, t1): (std::time::Instant, std::time::Instant),
-    ) {
-        let (w, h) = (self.ph.w, self.ph.h);
-        let m = &self.m;
-        // the maps: each channel's frames collected as differences (`fastdraw::diff_span`), in bands of columns so one
-        // channel alone also spreads over the cores, then summed into the map once
-        let on: Vec<usize> = (0..NCH).filter(|&c| m.ch[c].on).collect();
-        for &c in &on {
-            if self.acc_t[c].len() != w * (h + 1) {
-                self.acc_t[c] = vec![0; w * (h + 1)];
-            }
-        }
-        let bands =
-            if frames.len() < 2 || on.is_empty() { 1 } else { (crate::fastdraw::helpers() + 1).div_ceil(on.len()) };
-        let band_cols = w.div_ceil(bands).max(1);
-        let mut jobs: Vec<(usize, usize, &mut [u16])> = Vec::new();
-        for (c, acc) in self.acc_t.iter_mut().enumerate() {
-            if on.contains(&c) {
-                jobs.extend(acc.chunks_mut(band_cols * (h + 1)).enumerate().map(|(b, band)| (c, b * band_cols, band)));
-            }
-        }
-        crate::fastdraw::par_each(jobs, |(c, c_lo, band)| {
-            for (f, p) in frames.iter().zip(placed) {
-                add_frame_band(c, band, c_lo, f, &p.plan);
-            }
-        });
-        // the rows the frames touched, per channel: only those are added (a trace covers a part of the height)
-        let rows: [(usize, usize); NCH] = std::array::from_fn(|c| {
-            placed.iter().fold((usize::MAX, 0), |(a, b), p| {
-                let (x, y) = p.plan.rows(c);
-                (a.min(x), b.max(y))
-            })
-        });
-        let t2 = std::time::Instant::now();
-        self.ph.fold_rows(&mut self.acc_t, &on, band_cols, rows);
-        let (a, b) = ((t1 - t0).as_secs_f32() * 1e3, t1.elapsed().as_secs_f32() * 1e3);
-        self.t_fast_ab.0 += 0.05 * (a - self.t_fast_ab.0);
-        self.t_fast_ab.1 += 0.05 * (b - self.t_fast_ab.1);
-        self.t_fast_fold += 0.05 * (t2.elapsed().as_secs_f32() * 1e3 - self.t_fast_fold);
-        self.fast_n += 0.05 * (frames.len() as f32 - self.fast_n);
     }
 
     // ------------------------------------------------------------------ rendering
@@ -3358,10 +3223,7 @@ impl Ui {
             self.capture_hdmi(l);
         }
         let cv = l.over();
-        if !self.full_on() {
-            self.draw_top(cv);
-            self.draw_bottom(cv);
-        }
+        self.draw_frame_chrome(cv);
         self.draw_menu(cv);
         self.draw_meas_cfg(cv);
         self.draw_toast(cv);
@@ -3369,6 +3231,14 @@ impl Ui {
         self.workspace_draw(cv);
         self.frames += 1;
         change::timing_mut(self).draw_render(started.elapsed(), view);
+    }
+
+    fn draw_frame_chrome(&self, cv: &mut Canvas) {
+        if !self.full_on() {
+            self.draw_top(cv);
+            self.draw_bottom(cv);
+        }
+        self.draw_capture_calibration_note(cv);
     }
 
     /// The traces of a plot window: drawn now on one canvas, a job for the GPU with layers. `zoom`: the zoom
@@ -9276,8 +9146,10 @@ mod tests {
     use producer::Producer as _;
     mod deep_intake;
     mod roll;
+    mod run_presentation;
     mod shadow;
     mod stop_serial;
+    mod stopped_capture;
     mod trigger_sweep;
 
     use super::axis_label;
@@ -11314,7 +11186,13 @@ mod tests {
                 }
             }
             ui.ph.clear();
-            assert_eq!(ui.draw_queued_prefix(frames.iter().cloned().map(std::sync::Arc::new).collect()), 40);
+            assert_eq!(
+                step_draw::prefix::draw_queued_prefix(
+                    &mut ui,
+                    frames.iter().cloned().map(std::sync::Arc::new).collect()
+                ),
+                40
+            );
             for c in 0..NCH {
                 assert!(want.maps()[c].iter().any(|&x| x > 0), "{} s/div CH{}: nothing drawn", tdiv, c + 1);
                 assert!(ui.ph.maps()[c] == want.maps()[c], "{} s/div CH{}: maps differ", tdiv, c + 1);
@@ -11382,7 +11260,7 @@ mod tests {
                     fast_deposit(0, &mut want, 0, &f, &p.plan);
                 }
                 ui.ph.clear();
-                ui.draw_queued_prefix(frames.into_iter().map(std::sync::Arc::new).collect());
+                step_draw::prefix::draw_queued_prefix(&mut ui, frames.into_iter().map(std::sync::Arc::new).collect());
                 assert!(want.iter().filter(|&&x| x > 0).count() > w / 2, "{} s/div dots {}: little drawn", tdiv, dots);
                 assert!(ui.ph.maps()[0] == want, "{} s/div dots {}: maps differ", tdiv, dots);
             }
@@ -11544,14 +11422,14 @@ mod tests {
         ui.m.run = RunState::Stop;
         ui.step(0.05);
         assert!(shared.lock().unwrap().stop_view.is_some(), "the UI asks for the view read again");
-        shared.lock().unwrap().replay = Some(replay(2, 1.0));
+        shared.lock().unwrap().inject_stop_reply(replay(2, 1.0));
         ui.step(0.05);
         assert_eq!(ui.mstat[0].n, 1, "the record of the STOP counted again");
         // a new view: the statistics start over, the record read again for it is shown and measured, not counted
         for (k, top) in [(1, 1.5), (-1, 2.0)] {
             ui.adjust(Item::HScale, k);
             ui.step(0.05);
-            shared.lock().unwrap().replay = Some(replay(3, top));
+            shared.lock().unwrap().inject_stop_reply(replay(3, top));
             ui.step(0.05);
             assert_eq!(ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| r.frame.seq), Some(3));
             assert!((ui.meas(0, Meas::Vmax) - top as f64).abs() < 1e-3, "Vmax {}", ui.meas(0, Meas::Vmax));
@@ -11633,7 +11511,7 @@ mod tests {
         // the view of the STOP read again as pairs: drawn, while the raw frame stays the record measured
         steps(&mut ui, 1);
         assert!(shared.lock().unwrap().stop_view.is_some(), "the UI asks for the view read again");
-        shared.lock().unwrap().replay = Some(view(3, true, pairs.clone()));
+        shared.lock().unwrap().inject_stop_reply(view(3, true, pairs.clone()));
         steps(&mut ui, 2);
         check(&ui, "the view read as pairs");
         assert_eq!(ui.mstat[0].n, counted, "the view counted in the statistics");
@@ -11645,7 +11523,7 @@ mod tests {
         for d in [-1, 1] {
             ui.adjust(Item::HScale, d);
             steps(&mut ui, 1);
-            shared.lock().unwrap().replay = Some(view(4, true, pairs.clone()));
+            shared.lock().unwrap().inject_stop_reply(view(4, true, pairs.clone()));
             steps(&mut ui, 2);
             check(&ui, "a new view read as pairs");
             assert!(ui.mstat.iter().all(|s| s.n == 0), "the record of the STOP counted for the view");
@@ -11655,7 +11533,7 @@ mod tests {
         // far zoomed in the thread reads every sample of the view: that window is the record measured, as before
         ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 10e-6).abs() < 1e-11).unwrap();
         steps(&mut ui, 1);
-        shared.lock().unwrap().replay = Some(view(5, false, vec![3.0; n]));
+        shared.lock().unwrap().inject_stop_reply(view(5, false, vec![3.0; n]));
         steps(&mut ui, 2);
         assert_eq!(measured(&ui), Some(5));
         assert_eq!(drawn(&ui), None, "the raw window is drawn as the record shown");
@@ -11663,7 +11541,7 @@ mod tests {
         // zoomed out again: pairs, measured from the raw frame of the STOP again
         ui.m.tscale = tscales().iter().position(|&t| (t as f64 - 1e-3).abs() < 1e-9).unwrap();
         steps(&mut ui, 1);
-        shared.lock().unwrap().replay = Some(view(6, true, pairs.clone()));
+        shared.lock().unwrap().inject_stop_reply(view(6, true, pairs.clone()));
         steps(&mut ui, 2);
         assert_eq!((measured(&ui), drawn(&ui)), (Some(2), Some((6, true))));
         check(&ui, "pairs after the raw window");
@@ -11672,7 +11550,7 @@ mod tests {
         ui.m.run = RunState::Run;
         push(&ui, frame(7, true, pairs.clone()));
         steps(&mut ui, 2);
-        assert!(ui.stop_raw.is_none() && ui.stop_picture().is_none());
+        assert!(ui.stop_capture.is_none() && ui.stop_picture().is_none());
     }
 
     // Break it catches: Clear in STOP releasing the hold (the hold asked for a record shown): the thread armed while

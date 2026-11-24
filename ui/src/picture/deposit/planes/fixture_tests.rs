@@ -31,7 +31,7 @@ fn replay(fixture: &Fixture) -> Option<(u64, Option<u64>)> {
     let accepted = Owner::default().compose_picture(
         &pipe,
         PerMap::new(&mut main, detail.as_mut()),
-        &mut true,
+        &mut crate::picture::FirstDraw::Minimum,
         Stats { edges: &mut [0; 4], off: &mut (0.0, 0.0) },
         None,
     );
@@ -49,7 +49,7 @@ fn captured_count_planes_match_baseline() {
     });
 }
 
-// Captured using the count planes on d60a21d after composing each plain fixture.
+// Expected count-plane hashes after composing each plain fixture.
 fn expected(name: &str) -> (u64, Option<u64>) {
     let index = name
         .strip_prefix("batch-")

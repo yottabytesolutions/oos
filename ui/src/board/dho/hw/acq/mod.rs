@@ -82,21 +82,23 @@ struct Io<P: Port> {
 pub(super) struct Replay {
     fresh: bool,
     last_batch: Option<replay::Batch>,
-    replayed: Option<(f64, f64)>,
+    replayed: Option<crate::board::identity::StopView>,
     paused: bool,
 }
 
 impl Replay {
-    fn discard(&mut self, out: &HwShared) {
+    fn discard(&mut self) {
         (self.last_batch, self.replayed, self.fresh) = (None, None, false);
-        crate::perfguard::deep::acq_lock(out).replay = None;
     }
 
     pub(super) fn invalidate(&mut self, out: &HwShared, count: u32) {
         // Every arm starts at slot zero and can write its full programmed range.
         if self.last_batch.as_ref().is_some_and(|batch| batch.index < count) {
             crate::drawpipe::counters().acquisition.disarms().drop_replay();
-            self.discard(out);
+            self.discard();
+            let mut g = crate::perfguard::deep::acq_lock(out);
+            let sequence = g.stop_view.map_or(g.frame.seq, |view| g.frame.seq.max(view.capture));
+            g.stop_replies.lost_through(sequence);
         }
     }
 

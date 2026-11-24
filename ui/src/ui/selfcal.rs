@@ -161,6 +161,23 @@ impl Ui {
         }
     }
 
+    pub(super) fn calibration_capture_note(&self) -> Option<&'static str> {
+        let (_, sequence) = self.stopped_capture()?;
+        (self.src.hw_stop_loss(sequence) == Some(crate::board::identity::ReplayLoss::Calibration))
+            .then_some("Captured before calibration. RUN for new data.")
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_calibration_note(&self) -> Option<&'static str> {
+        self.calibration_capture_note()
+    }
+
+    pub(super) fn draw_capture_calibration_note(&self, cv: &mut Canvas) {
+        if let Some(note) = self.calibration_capture_note() {
+            backed_text(cv, &self.fonts().s, self.grid.x + 8, self.grid.y + 15, note, AMBER);
+        }
+    }
+
     /// Progress banner over the plot while a run is active.
     pub(super) fn draw_cal_banner(&self, cv: &mut Canvas) {
         let Some(sh) = self.cal_shared() else { return };

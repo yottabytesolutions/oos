@@ -68,7 +68,7 @@ fn obsolete_stopped_replay(resume: bool) -> Outcome {
     let (mut source, started) = source(&out, &io);
     capture(&mut source, &mut io);
     io.clock.stop();
-    let view = Some((1e-6, 0.0));
+    let view = Some(StopView { capture: 0, scale: 1e-6, delay: 0.0 });
     lock(&out).stop_view = view;
     let shared = out.clone();
     io.c2h.on_dma(move |trace| {
@@ -91,7 +91,7 @@ fn obsolete_stopped_replay(resume: bool) -> Outcome {
         g.record_flow.wake();
     });
     capture(&mut source, &mut io);
-    assert!(lock(&out).replay.is_none());
+    assert!(lock(&out).stop_replies.frame.is_none());
     assert!(source.replay.replayed.is_none());
     let result = snapshot(&out, &io, &trace, started);
     assert_eq!(result.events.iter().filter(|e| matches!(e, Event::Dma(_))).count(), 2);
@@ -185,11 +185,11 @@ fn stop_at_boundary(prearm: bool) -> (Outcome, RawFrame, Option<RawFrame>) {
     {
         let mut g = lock(&out);
         Edit::Timebase.publish(&mut g, model, shadow);
-        g.stop_view = Some((1e-6, 0.0));
+        g.stop_view = Some(StopView { capture: 0, scale: 1e-6, delay: 0.0 });
     }
     capture(&mut source, &mut io);
     let g = lock(&out);
-    let frames = (raw_frame(&g.frame), g.replay.as_ref().map(raw_frame));
+    let frames = (raw_frame(&g.frame), g.stop_replies.frame.as_ref().map(|(_, frame)| raw_frame(frame)));
     let outcome = Outcome::snapshot(&mut trace.borrow_mut(), &g, io.clock.now().duration_since(started));
     (outcome, frames.0, frames.1)
 }
@@ -231,7 +231,7 @@ fn stopped_edited_view(edit: Option<Edit>) -> (Outcome, RawFrame, RawFrame) {
     let shared = out.clone();
     let mut edit = edit.map(|edit| (edit, model, shadow));
     let mut source = crate::wave::Source::Hw { shared: out.clone(), seen: 0 };
-    let view = Some((1e-6, 0.0));
+    let view = Some(StopView { capture: 0, scale: 1e-6, delay: 0.0 });
     let outcome = drive(&out, fixture, move |clock, pause| match pause {
         Pause::Park => {
             clock.stop();
@@ -242,12 +242,12 @@ fn stopped_edited_view(edit: Option<Edit>) -> (Outcome, RawFrame, RawFrame) {
                 edit.publish(&mut g, model, shadow);
             }
         }
-        Pause::Wait(HELD_POLL) => assert!(source.hw_stop(view).is_none()),
+        Pause::Wait(HELD_POLL) => assert!(source.hw_stop(view).1.is_none()),
         Pause::Wait(delay) if delay == Duration::from_millis(20) => lock(&shared).record_flow.shutdown = true,
         Pause::Wait(_) => {}
     });
     let g = lock(&out);
-    (outcome, raw_frame(&g.frame), raw_frame(g.replay.as_ref().unwrap()))
+    (outcome, raw_frame(&g.frame), raw_frame(&g.stop_replies.frame.as_ref().unwrap().1))
 }
 
 fn raw_frame(frame: &crate::board::Frame) -> RawFrame {
@@ -268,17 +268,17 @@ fn stop_with_view() -> (Outcome, RawFrame, RawFrame) {
     let fixture = sim::fixture(&want, out.clone(), (Run::Selection, 4, false), None);
     let mut source = crate::wave::Source::Hw { shared: out.clone(), seen: 0 };
     let shared = out.clone();
-    let view = Some((1e-6, 0.0));
+    let view = Some(StopView { capture: 0, scale: 1e-6, delay: 0.0 });
     let outcome = drive(&out, fixture, move |clock, pause| match pause {
         Pause::Park => {
             clock.stop();
-            assert!(source.hw_stop(view).is_none());
+            assert!(source.hw_stop(view).1.is_none());
         }
         Pause::Wait(delay) if delay == Duration::from_millis(20) => lock(&shared).record_flow.shutdown = true,
         Pause::Wait(_) => {}
     });
     let mut source = crate::wave::Source::Hw { shared: out.clone(), seen: 0 };
-    let reread = source.hw_stop(view).unwrap();
+    let reread = source.hw_stop(view).1.unwrap();
     let g = lock(&out);
     assert_eq!(g.frame.ch[0].len(), g.frame.acq.1);
     (outcome, raw_frame(&g.frame), raw_frame(&reread))

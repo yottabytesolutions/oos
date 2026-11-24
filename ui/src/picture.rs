@@ -10,6 +10,24 @@ use std::collections::VecDeque;
 
 const MAX_DEPOSITS: usize = 3;
 
+/// Clearing is paid by the first write, never by an empty composition.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FirstDraw {
+    Keep,
+    Minimum,
+    Replace,
+}
+
+impl FirstDraw {
+    pub(crate) fn waiting(self) -> bool {
+        self == Self::Replace
+    }
+
+    pub(crate) fn begin(&mut self) -> bool {
+        std::mem::replace(self, Self::Keep) != Self::Keep
+    }
+}
+
 /// Values for the overview and for the optional zoom detail of the same picture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct PerMap<T> {

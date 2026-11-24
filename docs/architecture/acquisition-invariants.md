@@ -66,6 +66,13 @@ release without another acquisition.
 
 ## STOP and RUN boundaries
 
+RUN keeps the last picture frozen until the first eligible contribution of the new acquisition.
+Clear and edits that change the axes, channel set, labels or plot size erase the frozen picture
+immediately. Adding the first measurement opens a results area and changes the plot size.
+Changing the trigger source or level, cursors or an existing measurement keeps the picture
+when the plot size stays the same. Intensity edits apply to the frozen traces.
+[Presentation tests](../../ui/src/ui/tests/run_presentation.rs)
+
 The source defers settings edits while held with an applied configuration. A held pass without an applied
 configuration, such as after calibration or at source startup, applies the current request once before
 polling the acquisition side units. The mask/zone fallback status stays with the applied configuration
@@ -86,13 +93,17 @@ trigger remains pending until it completes or is canceled. The next accepted RUN
 missed takeover or unconfirmed STOP from `:SYSTem:STATe?`.
 
 Each calibration invalidates the retained ring batch and pending replay, including during a completed
-SINGLE hold. When restoring configuration fails, the loop retries after 500 ms and can leave a newer
+SINGLE hold. A displayed capture from before calibration carries a note during STOP. When restoring
+configuration fails, the loop retries after 500 ms and can leave a newer
 hold request unacknowledged. The separate UI final-record drain expires 3 s after the UI requests it.
 
-Unapplied edits preserve a valid batch and its capture identity. An eligible stopped view selects a
-window in that batch and reads it using the captured channel layout, memory depth, sample rate and
-acquisition mode. An already armed successor makes the ring reference unsafe even when STOP coincides
-with an identity change. The source keeps the last published frame for that case.
+Unapplied edits preserve a valid batch and its capture identity. The stream boundary clears buffered
+stream samples once per requested identity, even while a held edit is waiting to be applied. An eligible
+stopped view reads a window using the batch's captured channel layout, memory depth, sample rate and
+acquisition mode. The reply must match the requested geometry and capture sequence at intake. Full-record
+measurements and RAW readout use the accepted STOP capture while the view changes. Calibration and successor
+ring loss project that capture at the requested view for display and Screen-gate measurements.
+[Stopped capture tests](../../ui/src/ui/tests/stopped_capture.rs)
 
 Both STOP rereads use the newest retained slot. Every batch arms at frame zero and can write its entire
 programmed range, including while the source waits for read admission or polls before disarm. A slot outside
@@ -122,9 +133,10 @@ or worker output from a superseded pair is rejected. A rejected change leaves th
 publication and hold in force.
 [RUN traces](../../ui/src/board/dho/hw/acq/tests/run_order.rs)
 
-A stopped-view request can yield a raw window tagged with the original capture identity
-while the complete record remains the source's latest frame. The UI can install that window as its latest
-record. A replay completing after RUN or a change of the requested generation or epoch is discarded.
+A stopped-view request can yield a raw window tagged with the original capture identity. The
+complete record stays in the source's latest frame. The UI installs the window in `last[0]` and
+retains the accepted capture in one slot. The UI drops a replay that completes after RUN or a
+change of the requested generation or epoch.
 [Stopped view trace](../../ui/src/board/dho/hw/acq/tests/stopped_raw.rs) ·
 [UI consumer](../../ui/src/ui/capture_memory.rs#L314-L331)
 

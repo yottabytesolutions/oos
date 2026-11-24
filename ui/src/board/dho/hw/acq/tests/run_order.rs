@@ -81,8 +81,8 @@ fn resume(changed: bool) -> Outcome {
     };
     {
         let mut g = lock(&out);
-        g.stop_view = Some((want.tdiv, 0.0));
-        g.replay = Some(crate::board::Frame::default());
+        g.stop_view = Some(StopView { capture: 0, scale: want.tdiv, delay: 0.0 });
+        g.inject_stop_reply(crate::board::Frame::default());
         g.queue.push_back(crate::board::Frame { cfg: old.gen(), stamp: old.epoch(), ..Default::default() }.into());
     }
     let run = Run::Pictures(picture::StopAt::Between);
@@ -100,7 +100,7 @@ fn resume(changed: bool) -> Outcome {
             assert_eq!(g.want.as_ref().unwrap().level, if changed { 0.5 } else { want.level });
             assert_eq!(g.want.as_ref() == Some(&want), !changed);
             assert!(!g.hold);
-            assert!(g.stop_view.is_none() && g.replay.is_none() && g.queue.is_empty());
+            assert!(g.stop_view.is_none() && g.stop_replies.frame.is_none() && g.queue.is_empty());
             for event in events {
                 clock.mark(event);
             }

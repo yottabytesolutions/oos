@@ -229,7 +229,7 @@ fn perf_guard_draw_route_deposit_profile() {
         },
         || {
             route.ui.ph.clear();
-            route.ui.draw_queued_prefix(frames.clone());
+            step_draw::prefix::draw_queued_prefix(&mut route.ui, frames.clone());
         },
     );
     assert!(pixels.maps() == route.ui.ph.maps(), "the per-frame pixel kernel and step span accumulation agree");

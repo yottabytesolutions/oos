@@ -2,7 +2,7 @@
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
 507 file ui/src/drm.rs
 649 file ui/src/gfx.rs
-621 file ui/src/gpu.rs
+599 file ui/src/gpu.rs
 657 file ui/src/http.rs
 438 file ui/src/main.rs
 460 file ui/src/measures/jitter.rs

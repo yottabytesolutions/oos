@@ -233,7 +233,7 @@ the boot reaches OOS's rcS before a power cut.
 | 7 | Console `loglevel=4` (today 7 on a legacy 8250 console written synchronously at 11.5 kB/s) | kernel command line (P1) | stall time of a warning burst | no printk stall in a step |
 | 8 | Preemption: build `PREEMPT_DYNAMIC`, A/B `preempt=full`; HZ stays 250; no `isolcpus`, no `nohz_full`; `rcu_nocbs=4-5` optional | kernel config (P1) | wake latency p99 under DMA, DRM and MMC load | p99 improves, throughput within 2 % |
 | 9 | Persistent DMA mapping in xdma: one streaming mapping, mmapped, `dma_sync_single_for_cpu` over the bytes received, instead of pinning and mapping 1024 pages per 4 MB read (0.5 to 2 ms per 4 MB, inferred). Measured: at 4 channels, 10 M, the C2H read is about 282 ms per acquisition (3.1 acquired/s); the DMA read time, not the CPU, limits that mode, so this task and the link rate are where it can improve | driver task (after M5c) | `read()` wall time minus bytes / link rate; ftrace on `dma_map_sg_attrs` | per-read overhead below 0.2 ms; acquired/s at 4 x 10 M up |
-| 10 | GPU: `glFlush` plus a fence instead of `glFinish`; `glFinish` only on readback; Panfrost stays; GPU floor 400 MHz, 600 MHz optional | helper (M9b) | helper CPU and GPU time per composition; tearing under load | budgets met, no tearing |
+| 10 | GPU: `glFlush` plus a fence instead of `glFinish`; `glFinish` only on readback; Panfrost stays; the system clock adapter owns the 600 MHz RUN floor | helper (M9b) | helper CPU and GPU time per composition; tearing under load | budgets met, no tearing |
 | 11 | HDMI scaling on the VOP win0 scaler (`DRM_IOCTL_MODE_SETPLANE`) instead of on the CPU, when the GPU path is off | display (later) | CPU per HDMI frame | about 8 MB less CPU writes per 1080p frame |
 | 12 | Allocator: pools on the hot paths (ADR 0031 zero allocations); optionally `MADV_HUGEPAGE` on DMA and decode buffers with THP in `madvise` mode | `oos-ui` (data-path steps) | page faults per frame, TLB misses | 0 faults per frame after warm-up |
 
@@ -313,39 +313,57 @@ values are logged and treated as `off`. They do not depend on `perf.place`, and 
 measurement setups do not change them.
 
 Accepted hardware RUN requests policy4 `scaling_min_freq = 1416000` (kHz) and
-the GPU devfreq `min_freq = 600000000` (Hz). Higher prior minima are preserved.
+the GPU devfreq `min_freq = 600000000` (Hz). While drawing in STOP or Demo, the
+controller requests a GPU floor of `400000000` Hz. The earlier unit measurement recorded about 8 ms
+per GPU frame at 200 MHz and 4 ms at 400 MHz. Higher prior minima are preserved.
 The system clock adapter discovers the `.gpu` devfreq node, reads each previous
 minimum first, and writes only values listed in that node's available frequencies.
 Missing nodes, unavailable frequencies and IO failures are reported without
 changing the other device's policy. Successful applied values are logged once
 per device per process as structured `clock_floor` fields.
 
-Before every floor write, saved minima are atomically renamed into the tmpfs
-receipt `/tmp/oos-clock-floors`. STOP, the memory watchdog's hold, worker teardown
-and guard drop restore the saved minima, verify read-back, then remove the receipt.
+Before the first write for a device, its saved minimum is atomically recorded
+in the tmpfs receipt `/tmp/oos-clock-floors`. RUN/STOP transitions keep the GPU's
+original saved minimum in that receipt while changing the active floor. STOP
+and the memory watchdog's hold restore the CPU minimum and select the display
+GPU floor. Worker teardown and guard drop restore both saved minima, verify
+read-back, then remove the receipt.
 The Linux panic hook tries the controller lock without waiting before invoking the
 previous hook; SIGINT/SIGTERM use orderly exit. `oos-ui-loop` restores and logs
 the receipt after every exit, including unclean deaths (SIGKILL, SIGSEGV and
 allocator abort) and clean exits with pending recovery, even without a restart. Startup independently restores it
 before reading new previous minima, including when switches are now off. Failed
 or invalid recovery keeps the receipt and disables new floors for that process.
-Failed STOP/thermal restores retry at most once per second; teardown still
-tries immediately. Only the first restore failure and eventual success are
-logged per device. A reboot discards tmpfs and resets the kernel's clock policy.
+Failed applications and STOP/thermal restores retry after one second if the
+request stays the same. Teardown tries immediately. A matching read-back
+confirms a write even when sysfs returns an error. Only the first restore
+failure and eventual success are logged per device. A reboot discards tmpfs
+and resets the kernel's clock policy.
 
-While RUN requests floors, the adapter samples `cpu-thermal` and `gpu-thermal`
-by type name at most once a second. Each drop limit is the lowest passive trip
-exported by the running DT through sysfs, minus 5000 millidegrees C. For a 70 C
-passive trip this means dropping at 65 C and re-arming below 60 C (5000
-millidegrees hysteresis); these margins are task 0086 policy. Each thermal drop
-and re-arm logs the zone type and temperature, or the read error, once per
-transition. Re-arm reports both zones. Both minima drop if either zone reaches
-its limit or its temperature cannot be read. Missing named zones or passive trips
-disable floors at construction. Linux still owns cooling, governors and maximum
-frequencies. The exact live trips and GPU cooling-map bindings are not yet
-verified for this change; task 0086 records the required unit capture.
+The thermal guard follows each zone's `cdevN` link to the A72 or GPU cooling
+device and uses the matching `cdevN_trip_point` index. Only passive and active
+trips bound to that device count. The names of the zones are used in logs.
+A device with no qualifying binding or unreadable bound trip stays off independently of the other device.
+The GPU helper leaves the minimum to the system clock adapter.
 
-Host fake-filesystem tests cover recovery, thermal inhibition and lifecycle
-contracts. Actual read-backs, web/upload latency and a 10-minute RUN thermal
-check remain pending in task 0086. The earlier measured 1.8 GHz governor
-experiment is evidence for a candidate, not verification of these lower floors.
+While drawing, the adapter samples each requested floor's protecting zones at most once a
+second. It releases that floor if any protecting zone cannot be read or reaches
+its earliest bound trip minus 5 °C. It re-arms when all those zones are below
+their respective release limits by another 5 °C. A bound trip at 70 °C thus
+releases the floor at 65 °C and allows re-arming below 60 °C. The partial release
+also removes just that device from the receipt. Linux owns the governors,
+cooling and maximum frequencies throughout.
+
+The adapter also discovers critical trips across all thermal zones. A critical
+zone releases every floor if its temperature is unreadable or reaches 5 °C
+below its lowest critical trip. This uses the same headroom as the bound-trip
+guard to allow for the one-second sampling interval. Every critical zone must
+cool another 5 °C below its release limit to re-arm. Unreadable critical trip
+data at discovery disables the floors for that process.
+
+The 2026-11-24 unit capture found passive trips at 70 and 85 °C in
+`cpu-thermal`, with cooling maps for both the A72 and GPU. The `gpu-thermal`
+zone had a single critical trip at 115 °C. It releases both floors at 110 °C and
+allows re-arming below 105 °C. Host fixtures verify this layout, independent
+zones, failed writes and recovery. Actual read-backs with this change and the
+10-minute RUN thermal check remain pending.

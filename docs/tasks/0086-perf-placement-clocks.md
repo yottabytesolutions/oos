@@ -15,6 +15,10 @@ changes or governor changes. Review tier: unit. Hardware behavior is not yet ver
 
 ## Plan
 
+On `sweep/p1b-clock-floor-followups`, verify clock writes by read-back, add a
+shared critical-trip guard, and switch between display and RUN GPU minima in
+the existing controller. Use virtual time for the host memory-hold retry test.
+
 Reserved paths: `docs/tasks/0086-perf-placement-clocks.md`, `ui/src/placement.rs`,
 `ui/src/placement/`, `ui/src/http.rs` (accept-thread placement only),
 `ui/src/http/listener.rs` (extract start to keep the existing file within its ratchet),
@@ -26,7 +30,8 @@ Reserved paths: `docs/tasks/0086-perf-placement-clocks.md`, `ui/src/placement.rs
 `hal/tests/rootfs_safe_start.rs` (clock recovery test only),
 `ui/src/ui/host/tests/clocks.rs` (memory hold and non-hardware port tests),
 `docs/architecture/README.md` (Threads, Placement and DMA only),
-`docs/architecture/system.md`, `target/t0086-evidence/`, `target/COMMIT_MSG.txt`.
+`docs/architecture/system.md`, `docs/spec/state-query.md`,
+`target/t0086-evidence/`, `target/p1b-clock-floor-followups/`, `target/COMMIT_MSG.txt`.
 The owner's explicit task assignment authorizes this claim on the supplied base.
 
 1. Read P5/P8 and the 2026-11-15 unit evidence. Keep the GPU helper on cpu4,
@@ -162,6 +167,20 @@ done
 ```
 
 ## Status
+
+- 2026-11-24: clock-floor review follow-up on `sweep/p1b-clock-floor-followups`,
+  base `f8e62078`. Read-back confirms floor writes and failed applications retry
+  on the guard cadence. Critical trips protect both floors with 5 °C of headroom
+  and 5 °C re-arm hysteresis. The sole controller selects 400 MHz while drawing
+  in STOP or Demo and 600 MHz in hardware RUN. Host tests cover the unit's
+  thermal layout, frequency transitions, recovery and virtual-time memory hold.
+  Format and both debug clock suites passed, with 44 tests per suite. The
+  default and private-picture-counts release suites passed 2377 and 2384 tests
+  respectively, including the CPU goldens. Strict standalone Clippy stopped
+  in HAL and DSP on both targets (exit 101). The fast gate passed all 12 steps
+  and the ratcheted Clippy and perf steps passed (exit 0). Evidence is under
+  `target/p1b-clock-floor-followups/`. Hardware verification and cross-vendor
+  review remain pending.
 
 - 2026-11-16: round 3 author handoff ready, uncommitted. P2 and P3.1-P3.6
   addressed, including throttling repeated memory-hold restoration. Final debug

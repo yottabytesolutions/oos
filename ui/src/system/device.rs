@@ -87,12 +87,13 @@ impl Device {
         self.timers.startup_status(&mut self.ui);
         let now = Instant::now();
         let clock = self.sw.perf.pacing_clock == pacing::ClockMode::Flip;
-        let display_fds = [self.outputs.disp.poll_flip_fd(clock, now), self.graphics.reply_fd()];
+        let display_fds = [self.outputs.disp.poll_flip_fd(clock, now), self.graphics.reply_fd(&self.outputs.panel)];
         let deadline = [
             self.outputs.vblank.map(|_| now),
             (self.slot() == pacing::FrameSlot::Ready).then(|| self.frame_clock.wait_until()),
-            self.graphics.deadline(),
+            self.graphics.deadline(&self.outputs.panel),
             self.outputs.panel.wait_until(),
+            self.remote.screen_deadline(now),
         ]
         .into_iter()
         .flatten()
@@ -136,7 +137,14 @@ impl Device {
     }
 
     fn service_graphics(&mut self) {
-        self.graphics.service(&mut self.ui, &mut self.cv, &mut self.outputs, &mut self.remote.web, &mut self.timers);
+        self.graphics.service(
+            &mut self.ui,
+            &mut self.cv,
+            &mut self.outputs,
+            &mut self.remote.web,
+            &mut self.timers,
+            Instant::now,
+        );
     }
 
     fn frame(&mut self, vblank: Option<pacing::Flip>) {
@@ -145,9 +153,13 @@ impl Device {
         if fell_back {
             pacing::note_flip_fallback();
         }
+        if let Some((at, cost)) = elapsed.and_then(|_| self.outputs.panel.take_ready_cost()) {
+            self.frame_clock.observe_ready(at, cost);
+        }
         pacing::publish_deadline(&self.frame_clock, t0);
         let Some(elapsed) = elapsed else { return };
         self.timers.picture(&mut self.ui, t0);
+        self.frame_clock.select_view(pacing::CostView::new(&self.ui.m, self.ui.sys.gpu));
         let mut picture = self.frame_clock.seal();
         pacing::begin_picture();
         self.ui.step(elapsed.as_secs_f64().min(0.2));
@@ -165,8 +177,8 @@ impl Device {
         self.ui.set_hdmi_present(self.outputs.hdmi.is_some());
         let hdmi_frame = self.outputs.hdmi.is_some() && (self.outputs.frame_n + 1).is_multiple_of(2);
         self.ui.hdmi_snap_want = hdmi_frame && self.ui.m.hdmi == model::HdmiMode::Waveform;
-        let drawn =
-            self.graphics.frame(&mut self.ui, &mut self.cv, &mut self.outputs, &mut self.remote.web, &self.sw, picture);
+        let screens = self.remote.screens();
+        let drawn = self.graphics.frame(&mut self.ui, &mut self.cv, &mut self.outputs, screens, &self.sw, picture);
         let t2 = Instant::now();
         self.outputs.frame_n += 1;
         if drawn {
@@ -176,13 +188,7 @@ impl Device {
             let shot = self.ui.shot_request.take();
             self.timers.shot(&mut self.ui, &self.cv, shot);
         }
-        let t3 = Instant::now();
-        self.frame_clock.step_finished(t3);
-        pacing::pass(t0, t1, t2, t3);
-        let a = 0.05;
-        self.ui.t_step += a * ((t1 - t0).as_secs_f32() * 1000.0 - self.ui.t_step);
-        self.ui.t_render += a * ((t2 - t1).as_secs_f32() * 1000.0 - self.ui.t_render);
-        self.ui.t_present += a * ((t3 - t2).as_secs_f32() * 1000.0 - self.ui.t_present);
+        self.record_frame_times([t0, t1, t2, Instant::now()]);
         self.timers.panel(&mut self.ui, &mut self.inp);
         self.power_request = self.ui.power_action.take();
         if self.power_request.is_some() || self.ui.exit_code() != 0 {
@@ -195,6 +201,15 @@ impl Device {
             eprintln!("oos-ui: persist: {}", e);
         }
         self.timers.network(&mut self.ui);
+    }
+
+    fn record_frame_times(&mut self, [started, composed, rendered, finished]: [Instant; 4]) {
+        self.frame_clock.step_finished(finished);
+        pacing::pass(started, composed, rendered, finished);
+        let weight = 0.05;
+        self.ui.t_step += weight * ((composed - started).as_secs_f32() * 1000.0 - self.ui.t_step);
+        self.ui.t_render += weight * ((rendered - composed).as_secs_f32() * 1000.0 - self.ui.t_render);
+        self.ui.t_present += weight * ((finished - rendered).as_secs_f32() * 1000.0 - self.ui.t_present);
     }
 
     fn shutdown(&mut self) {

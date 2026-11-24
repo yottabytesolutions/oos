@@ -36,7 +36,7 @@
 #include <unistd.h>
 
 #define MAGIC 0x47534f4fu /* "OOSG" */
-#define VERSION 3
+#define VERSION 4
 #define MAX_TARGETS 8
 #define MAX_QUADS 4
 #define MAX_JOBS 16
@@ -44,7 +44,7 @@
 #define NONE 0xffffffffu
 #define FOURCC_XRGB8888 0x34325258u /* 'XR24' */
 
-enum { K_HELLO = 1, K_TARGET = 2, K_DROP = 3, K_FRAME = 4, K_DONE = 5 };
+enum { K_HELLO = 1, K_TARGET = 2, K_DROP = 3, K_FRAME = 4, K_DONE = 5, K_READBACK = 6 };
 
 struct hello {
 	uint32_t magic, version, kind, pad;
@@ -158,10 +158,10 @@ static int recv_msg(void *buf, size_t len, int *fd) {
 	return (int)n;
 }
 
-static int send_done(uint32_t status, float up, float draw, float rd) {
+static int send_reply(uint32_t kind, uint32_t status, float up, float draw, float rd) {
 	struct timespec t = {0};
 	clock_gettime(CLOCK_MONOTONIC, &t);
-	struct done d = {MAGIC, K_DONE, status, up, draw, rd, (uint64_t)t.tv_sec * 1000000000 + t.tv_nsec};
+	struct done d = {MAGIC, kind, status, up, draw, rd, (uint64_t)t.tv_sec * 1000000000 + t.tv_nsec};
 	return write(sock, &d, sizeof d) == sizeof d ? 0 : -1;
 }
 
@@ -820,47 +820,49 @@ static int do_frame(const struct frame *f, struct done *d) {
 		glDisable(GL_SCISSOR_TEST);
 	}
 	glFinish();
-	double t2 = now_ms();
-	if (f->readback || t->memory) {
-		size_t n = (size_t)t->w * t->h * 4;
-		if (!in_arena(f->readback_off, n))
-			return 8;
-		/* a scan-out buffer is uncached for the CPU: the GPU copies the picture into a buffer of its own first,
-		 * which Mesa reads through a cached staging copy (a row-by-row read of the scan-out buffer took 150 ms) */
-		GLuint rfb = t->fb;
-		if (!t->memory) {
-			if (!rb_read || rb_w != t->w || rb_h != t->h) {
-				if (rb_read) {
-					glDeleteFramebuffers(1, &fb_read);
-					glDeleteRenderbuffers(1, &rb_read);
-				}
-				glGenRenderbuffers(1, &rb_read);
-				glBindRenderbuffer(GL_RENDERBUFFER, rb_read);
-				glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, t->w, t->h);
-				glGenFramebuffers(1, &fb_read);
-				glBindFramebuffer(GL_FRAMEBUFFER, fb_read);
-				glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rb_read);
-				rb_w = t->w;
-				rb_h = t->h;
-			}
-			glBindFramebuffer(GL_READ_FRAMEBUFFER, t->fb);
-			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fb_read);
-			glBlitFramebuffer(0, 0, t->w, t->h, 0, 0, t->w, t->h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-			rfb = fb_read;
-		}
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, rfb);
-		uint32_t *dst = (uint32_t *)(arena + f->readback_off);
-		glReadPixels(0, 0, t->w, t->h, GL_RGBA, GL_UNSIGNED_BYTE, dst);
-		/* bytes r, g, b, a -> the word 0x00rrggbb */
-		for (size_t i = 0; i < (size_t)t->w * t->h; i++) {
-			uint32_t v = dst[i];
-			dst[i] = (v & 0xff) << 16 | (v & 0xff00) | (v >> 16 & 0xff);
-		}
-	}
-	double t3 = now_ms();
 	d->ms_upload = t1 - t0;
-	d->ms_draw = t2 - t1;
-	d->ms_read = t3 - t2;
+	d->ms_draw = now_ms() - t1;
+	return glGetError() == GL_NO_ERROR ? 0 : 9;
+}
+
+static int read_frame(const struct frame *f, float *ms_read) {
+	const struct tgt *t = &tgts[f->target];
+	double start = now_ms();
+	size_t n = (size_t)t->w * t->h * 4;
+	if (!in_arena(f->readback_off, n))
+		return 8;
+	/* a scan-out buffer is uncached for the CPU: the GPU copies the picture into a buffer of its own first,
+	 * which Mesa reads through a cached staging copy (a row-by-row read of the scan-out buffer took 150 ms) */
+	GLuint rfb = t->fb;
+	if (!t->memory) {
+		if (!rb_read || rb_w != t->w || rb_h != t->h) {
+			if (rb_read) {
+				glDeleteFramebuffers(1, &fb_read);
+				glDeleteRenderbuffers(1, &rb_read);
+			}
+			glGenRenderbuffers(1, &rb_read);
+			glBindRenderbuffer(GL_RENDERBUFFER, rb_read);
+			glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, t->w, t->h);
+			glGenFramebuffers(1, &fb_read);
+			glBindFramebuffer(GL_FRAMEBUFFER, fb_read);
+			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rb_read);
+			rb_w = t->w;
+			rb_h = t->h;
+		}
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, t->fb);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fb_read);
+		glBlitFramebuffer(0, 0, t->w, t->h, 0, 0, t->w, t->h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+		rfb = fb_read;
+	}
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, rfb);
+	uint32_t *dst = (uint32_t *)(arena + f->readback_off);
+	glReadPixels(0, 0, t->w, t->h, GL_RGBA, GL_UNSIGNED_BYTE, dst);
+	/* bytes r, g, b, a -> the word 0x00rrggbb */
+	for (size_t i = 0; i < (size_t)t->w * t->h; i++) {
+		uint32_t v = dst[i];
+		dst[i] = (v & 0xff) << 16 | (v & 0xff00) | (v >> 16 & 0xff);
+	}
+	*ms_read = now_ms() - start;
 	return glGetError() == GL_NO_ERROR ? 0 : 9;
 }
 
@@ -978,7 +980,7 @@ int main(void) {
 	}
 	if (h.version != VERSION) {
 		fprintf(stderr, "oos-gpu: protocol %u, this is %u\n", h.version, VERSION);
-		send_done(100, 0, 0, 0);
+		send_reply(K_DONE, 100, 0, 0, 0);
 		return 1;
 	}
 	arena_size = h.arena_size;
@@ -986,16 +988,16 @@ int main(void) {
 	close(afd);
 	if (arena == MAP_FAILED) {
 		say("arena not mapped");
-		send_done(101, 0, 0, 0);
+		send_reply(K_DONE, 101, 0, 0, 0);
 		return 1;
 	}
 	if (egl_up()) {
 		say("no GPU context");
-		send_done(102, 0, 0, 0);
+		send_reply(K_DONE, 102, 0, 0, 0);
 		return 1;
 	}
 	gl_setup();
-	send_done(0, 0, 0, 0);
+	send_reply(K_DONE, 0, 0, 0, 0);
 	/* the largest message is a frame */
 	static union {
 		uint32_t w[2];
@@ -1037,7 +1039,14 @@ int main(void) {
 		}
 		if (fd >= 0 && m.w[1] != K_TARGET)
 			close(fd);
-		if (send_done(st, d.ms_upload, d.ms_draw, d.ms_read))
+		if (send_reply(K_DONE, st, d.ms_upload, d.ms_draw, 0))
 			return 0;
+		/* Rendering and pixel delivery have separate replies. The panel can already queue this target. */
+		if (m.w[1] == K_FRAME && st == 0 && m.f.readback) {
+			float ms_read = 0;
+			st = read_frame(&m.f, &ms_read);
+			if (send_reply(K_READBACK, st, 0, 0, ms_read))
+				return 0;
+		}
 	}
 }

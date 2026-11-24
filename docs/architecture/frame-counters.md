@@ -44,21 +44,35 @@ completed flips and a separate 300-observation history for trigger-to-flip.
 | `flip.modeset` | Requests | Panel requests that complete via a modeset. |
 | `flip.failed` | Requests | Requests returning failure. A busy request remains staged for retry. |
 | `flip.hz` | Pictures/s | Number of flip intervals divided by elapsed time from the oldest to the latest retained completion. |
+| `flip.target_refreshes` | Refreshes | Current seal-to-flip target, or zero before a device clock publishes it. Each picture keeps its own target through completion. |
 | `helper.skipped` | Picture steps | A later picture-clock period superseded a step deferred while the graphics helper was busy. |
 | `composed_submitted` | µs | End of the UI step to graphics helper submission. |
-| `submitted_done` | µs | Helper submission to helper completion. |
+| `submitted_done` | µs | Helper submission to render completion. Pixel readback has a separate reply. |
 | `done_requested` | µs | Helper completion to the successful queued DRM request. |
 | `requested_flip` | µs | Queued request timestamp to the DRM completion timestamp. |
 | `seal_flip` | µs | Actual start of the UI picture step to DRM completion. |
 | `done_flip` | µs | Ready timestamp to DRM completion, using helper completion or CPU panel staging. |
 | `trigger_flip` | µs | Sampled first-record host observation to DRM completion. The picture carries up to 20 accepted batch timestamps from composition. |
 
-`seal_flip` starts at the actual UI step, including when the helper defers the step. At seal,
-the target is fixed to the step's vblank plus the number of full refreshes in the pipeline
-budget (at least one, normally two with divisor three). A deferred step keeps its original
-vblank. CPU and helper output both wait for the preceding vblank before requesting a
+`seal_flip` starts at the actual UI step, including when the helper defers the step. The
+picture target is fixed at seal, relative to the step vblank. A deferred step keeps its
+original vblank. CPU and helper output both wait for the preceding vblank before requesting a
 next-refresh flip. If that event is lost, the queue can submit half a refresh before the predicted target time.
 An immediate modeset waits for the target itself or the end of its estimated refresh window.
+
+With divisor three, pictures of one view are evenly spaced. The target is two or three
+refreshes. The clock uses the most recent 32 completed renders of the same view, about a
+second on the DHO900. It starts at two refreshes and moves to three when two or more of
+those renders exceed two refreshes less 0.5 ms of queueing margin. One slow render in the
+window is treated as an outlier. It returns to two only after all 32 fit with 1 ms of
+additional headroom. The asymmetry keeps a view on the boundary at an even three instead of
+alternating: measured on the unit, 4-channel views that alternated missed 3 to 7 % of their
+targets. Changes are at least three seconds apart.
+
+View changes reset the sample window and retain the current target while it fills. The panel
+continues to seal every three refreshes. A target transition shifts the phase by one refresh
+for a single interval. Renders beyond the three-refresh deadline still count as misses.
+The timer setting and other divisors use the fixed target derived from the pipeline budget.
 
 Timer steps without a step vblank target the first refresh after the midpoint preceding the
 nominal target time. A completion beyond that one-refresh window is late. Helper completion

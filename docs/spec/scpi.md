@@ -199,7 +199,7 @@ Table conventions apply to every row:
 
 | Requirement | Long / short header | Kind | Parameters, units and limits | Reply | Command/Query mapping | Model field or action; side effects | Transport | Compatibility / disposition | Evidence |
 |---|---|---|---|---|---|---|---|---|---|
-| scpi-101 | `:DISPlay:DATA` | Q | first word: empty/BMP prefix or PNG prefix; invalid -224 | IEEE #9 block: BMP (default) or PNG canvas bytes | Q: tbd at M14 | bmp(cv) / store::png_of(cv), synchronous encoding | T/V/M | changed: PNG and format validation | `ui/src/scpi.rs:2019` |
+| scpi-101 | `:DISPlay:DATA` | Q | first word: empty/BMP prefix or PNG prefix; invalid -224 | IEEE #9 block: BMP (default) or PNG canvas bytes | Device: next eligible panel picture | request then BMP or PNG encoding | T/V/M/H | changed: PNG and format validation | `ui/src/scpi/display.rs` |
 | scpi-102 | `:DISPlay:TYPE` | both | VECTors / DOTS / AUTO | VECT / DOTS / AUTO | C/Q: tbd at M14 | ui.set_dots(m.dots) | T/V/M | Stock VECT/DOTS spellings, OOS AUTO; keep | `ui/src/scpi.rs:3088` |
 | scpi-103 | `:DISPlay:VIEW` | both | decimal usize 1..m.views | decimal active view, 1-based | C/Q: tbd at M14 | view_go; switch saved view | T/V/M | OOS; keep | `ui/src/scpi.rs:2032` |
 | scpi-104 | `:DISPlay:VIEW:COUNt` | both | decimal usize 1..4 | decimal number of views | C/Q: tbd at M14 | views_set(m.views) | T/V/M | OOS; keep | `ui/src/scpi.rs:2032` |
@@ -785,8 +785,9 @@ flags and timeouts and treats each write as a complete program; no cross-write
 fragment assembly. It queues at most 16 programs/link with combined input bytes
 <=MAX_RECORD (1 MiB+4096); resource error 9 on overflow, error 4 invalid link.
 Programs pump in order and retain pending OPC; device_read drains max(1,size)
-bytes, END=4 if drained else REQCNT=1, immediate RPC timeout 15 if no bytes,
-error 4 invalid link. Output pumping stops/clears queued programs once buffered
+bytes, END=4 if drained else REQCNT=1, and error 4 for an invalid link. An empty
+read behind a pending display query waits up to the caller's `io_timeout`.
+Other empty reads return immediate RPC timeout 15. Output pumping stops/clears queued programs once buffered
 output is >=64 MiB; separate programs may take total link output past the cap.
 RPC errors do not enter the SCPI queue (`ui/src/vxi11.rs:113`, `ui/src/vxi11.rs:223`).
 
@@ -801,14 +802,16 @@ and tail without executing it; transport trigger is a no-op. Lock/local/status
 are acknowledgements/stubs, no exclusive lock or SCPI status implementation.
 See `ui/src/hislip.rs:163` and its compatibility tests in `ui/src/scpi.rs:5499`.
 
-MCP POST /mcp tools/call scpi arguments.command uses exec_message_checked.
+MCP POST /mcp tools/call scpi arguments.command uses the SCPI program continuation.
 Immediate completion returns UTF-8 text, invalid UTF-8 `(binary response)`,
 empty successful query empty text, command-only ok. Pending OPC queues -221
 and returns isError=true with text `Operation pending; use raw TCP or HiSLIP
 for *OPC?`; earlier writes remain, remaining program is dropped. VXI-11 also
 supports pending programs despite that diagnostic mentioning only T/H.
-The screenshot tool independently returns base64 PNG; HTTP envelope limits
-also apply (`ui/src/http.rs:1203`). All command rows use this same language.
+Device display queries wait for the next eligible picture on all transports.
+The screenshot tool independently returns base64 PNG from the same request path.
+HTTP envelope limits also apply. All command rows use this same language.
+See [pixel consumers](../../gpu/README.md#pixel-consumers) for capture latency.
 
 Network merge difference: upstream shared ACL rechecked existing clients after
 changes; merged TCP uses Acl::permits at accept only and fork v6/host-port

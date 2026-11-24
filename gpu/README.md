@@ -62,7 +62,7 @@ The helper's GPU time per frame there: the panel 8 to 10 ms, the monitor 12 to 1
   the display's scan-out buffers, which it gets as dma-bufs: the layer under the traces, the traces of each window in
   one pass (all channels, channel 4 first, as the CPU), the layer over them. For the web page, screenshots and SCPI it
   reads the picture back, only when someone wants it. `OOS_GPU_LOG=1`: the GPU time of the layers on stderr.
-- **The protocol** (`ui/src/gpu.rs`): a Unix socket on the helper's stdin and one shared memory arena. Fixed C
+- **The version 4 protocol** (`ui/src/gpu.rs`): a Unix socket on the helper's stdin and one shared memory arena. Fixed C
   structs (`Hello`, `Target`, `Frame`, `Done`, `Cmd`), their sizes checked by a test on both sides. Each output keeps
   its blocks and publication revisions in its half of the arena. Phosphor writes stamp rows during drawing, merge,
   clear, decay and halving once a GPU consumer activates tracking. Worker maps allocate no upload history.
@@ -70,13 +70,39 @@ The helper's GPU time per frame there: the panel 8 to 10 ms, the monitor 12 to 1
   without comparing the whole map with shared memory. Replaced maps, reordered channels and moved blocks receive
   a full first copy. A skipped monitor frame retains all intervening changes; multiple windows retain independent
   revisions. Cleared and newly drawn bands both enter the hull, including the unchanged gap between them.
-  The commands, images and new glyphs lie at the top of the half. Pixel layers retain row comparison.
-- **Presentation**: the UI polls the helper socket and requests a page flip when the panel's reply arrives.
-  Each reply carries a monotonic completion timestamp. Screenshots use the readback from their own frame.
+  The commands, images and new glyphs lie at the top of the half below any pending pixel result.
+  Pixel layers retain row comparison.
+- **Presentation**: `K_DONE` reports the render timestamp after `glFinish`. The UI can schedule
+  the panel flip and reuse the upload region at that point. An explicit read request adds a
+  `K_READBACK` reply after the helper reads and converts the same target. This keeps the read
+  out of that picture's flip dependency and gives the consumer the pixels of its selected frame.
+  The UI queues DRM before copying the result and retains a reusable snapshot for remote replies.
+  The helper still executes GPU jobs in order. A read that overruns the time before the next
+  GPU job can consume some of that job's headroom.
 - **Clock**: the Mali's load governor only sees the short work of each frame and stays at 200 MHz (an 8 ms frame);
   while the helper runs, its lowest step is 400 MHz, which runs at the same voltage.
 - **Fallback**: no Panfrost render node, a helper that does not start, or any failed frame: oos-ui says so and draws
   on the CPU until the setting is changed again.
+
+### Pixel consumers
+
+SCPI `:DISPlay:DATA?`, HTTP `/screen.bmp`, the MCP screenshot tool and local screenshot
+actions request the next eligible panel picture. Simultaneous requests can share one read.
+SCPI keeps its IEEE block with BMP or PNG, and MCP keeps base64 PNG. The web PNG/JPEG viewer
+requests pixels while a viewer is waiting and the encoder can accept another picture.
+It keeps the existing 50 ms minimum copy interval and two-second long-poll limit.
+
+For an idle request path, the wait for an eligible seal is at most one picture period
+(about 31 ms at the default DHO900 cadence). Then pixels arrive after that render and read.
+A read still in flight or a snapshot held by a previous remote reply can defer the next capture.
+The helper reply watchdog is 1.5 seconds from submission and triggers CPU fallback on failure.
+Encoding, transport and file IO add their own latency. The protocol has no real-time
+delivery guarantee under overload.
+
+GPU HDMI targets render directly. CPU HDMI fallback takes panel pixels on its every-other-picture
+mirror schedule, including when a requested layout or workspace falls back to mirroring.
+When the CPU can render the layout or workspace locally, it can use render completion.
+The host memory-target harness requests readback explicitly for pixel comparisons and saved images.
 
 ## What the image has for it
 

@@ -2,6 +2,7 @@
 
 use super::{
     presentation::{Picture, FLIP_TIMEOUT},
+    target::{CostView, Target},
     TIMER_PERIOD,
 };
 use std::sync::{
@@ -64,6 +65,7 @@ struct Cadence {
     divisor: u32,
     period: Duration,
     target_refreshes: u32,
+    adaptive: Option<Target>,
 }
 
 pub(crate) struct FrameClock {
@@ -87,9 +89,10 @@ impl FrameClock {
         let period = if mode == ClockMode::Timer { TIMER_PERIOD } else { refresh * divisor };
         let budget = crate::drawpipe::budget::pipeline_budget(period);
         let target_refreshes = (budget.as_nanos() / refresh.as_nanos()).clamp(1, u128::from(u32::MAX)) as u32;
+        let adaptive = (mode == ClockMode::Flip && divisor == 3).then(Target::default);
         Self {
             mode,
-            cadence: Cadence { refresh, divisor, period, target_refreshes },
+            cadence: Cadence { refresh, divisor, period, target_refreshes, adaptive },
             phase: 0,
             last_step: Step { at: now, vblank: None },
             resume_after: None,
@@ -182,7 +185,23 @@ impl FrameClock {
     }
 
     pub(crate) fn seal(&self) -> Picture {
-        Picture::new(self.last_step.at, self.last_step.vblank, self.cadence.refresh, self.cadence.target_refreshes)
+        Picture::new(self.last_step.at, self.last_step.vblank, self.cadence.refresh, self.target_refreshes())
+    }
+
+    pub(crate) fn select_view(&mut self, view: CostView) {
+        if let Some(target) = &mut self.cadence.adaptive {
+            target.select_view(view);
+        }
+    }
+
+    pub(crate) fn observe_ready(&mut self, at: Instant, cost: Duration) {
+        if let Some(target) = &mut self.cadence.adaptive {
+            target.observe(at, cost, self.cadence.refresh);
+        }
+    }
+
+    fn target_refreshes(&self) -> u32 {
+        self.cadence.adaptive.as_ref().map_or(self.cadence.target_refreshes, Target::refreshes)
     }
 
     pub(crate) fn skipped(&self) -> u64 {
@@ -271,6 +290,7 @@ pub(super) struct ClockPublication {
     fallbacks: AtomicU64,
     skipped: AtomicU64,
     helper_skipped: AtomicU64,
+    target_refreshes: AtomicU64,
 }
 
 impl ClockPublication {
@@ -282,6 +302,7 @@ impl ClockPublication {
             fallbacks: AtomicU64::new(0),
             skipped: AtomicU64::new(0),
             helper_skipped: AtomicU64::new(0),
+            target_refreshes: AtomicU64::new(0),
         }
     }
 
@@ -292,6 +313,7 @@ impl ClockPublication {
         let ns = ns.clamp(1, u128::from(u64::MAX)) as u64;
         self.skipped.store(clock.skipped(), Ordering::Relaxed);
         self.helper_skipped.store(clock.helper_skipped(), Ordering::Relaxed);
+        self.target_refreshes.store(u64::from(clock.target_refreshes()), Ordering::Relaxed);
         self.deadline_ns.store(ns, Ordering::Release);
     }
 
@@ -318,6 +340,10 @@ impl ClockPublication {
 
     pub(super) fn helper_skipped(&self) -> u64 {
         self.helper_skipped.load(Ordering::Relaxed)
+    }
+
+    pub(super) fn target_refreshes(&self) -> u64 {
+        self.target_refreshes.load(Ordering::Relaxed)
     }
 }
 

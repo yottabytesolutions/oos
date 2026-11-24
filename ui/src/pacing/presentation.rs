@@ -88,6 +88,7 @@ pub(crate) struct Panel {
     flipping: Option<(Instant, Picture)>,
     retry: Option<Instant>,
     latest_edge: Option<Flip>,
+    ready_cost: Option<(Instant, Duration)>,
 }
 
 impl Panel {
@@ -98,7 +99,12 @@ impl Panel {
     pub(crate) fn stage(&mut self, back: usize, mut picture: Picture, now: Instant) {
         debug_assert!(self.ready_for_picture());
         picture.ready = picture.helper.map_or(now, |(_, done)| done);
+        self.ready_cost = picture.ready.checked_duration_since(picture.seal).map(|cost| (picture.ready, cost));
         self.ready = Some((back, picture));
+    }
+
+    pub(crate) fn take_ready_cost(&mut self) -> Option<(Instant, Duration)> {
+        self.ready_cost.take()
     }
 
     pub(crate) fn wait_until(&self) -> Option<Instant> {
@@ -230,7 +236,7 @@ impl History {
         }
     }
 
-    fn write(&self, text: &mut String, helper_skipped: u64) {
+    fn write(&self, text: &mut String, helper_skipped: u64, target_refreshes: u64) {
         let hz = self.stages.front().zip(self.stages.back()).map_or(0.0, |(first, last)| {
             let elapsed = last.0.saturating_duration_since(first.0).as_secs_f32();
             if elapsed > 0.0 {
@@ -241,7 +247,7 @@ impl History {
         });
         let _ = write!(
             text,
-            " present.v2 flip.shown={} flip.late={} flip.timeout={} flip.modeset={} flip.failed={} flip.hz={hz:.1} helper.skipped={helper_skipped}",
+            " present.v2 flip.shown={} flip.late={} flip.timeout={} flip.modeset={} flip.failed={} flip.hz={hz:.1} helper.skipped={helper_skipped} flip.target_refreshes={target_refreshes}",
             self.shown, self.late, self.timeout, self.modeset, self.failed
         );
         for (i, name) in
@@ -278,7 +284,7 @@ pub(crate) fn note_picture_triggers(triggers: impl Iterator<Item = Instant>) {
 
 pub(crate) fn append_presentation(text: &mut String) {
     let history = oos_hal::sync::lock(state()).compose.presentation.clone();
-    history.write(text, super::CLOCK.helper_skipped());
+    history.write(text, super::CLOCK.helper_skipped(), super::CLOCK.target_refreshes());
 }
 
 #[cfg(test)]

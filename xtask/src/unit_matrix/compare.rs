@@ -2,11 +2,11 @@
 
 use super::{
     report::{GroupReport, Report},
-    state::require_presentation,
+    state::{require_presentation, FLIP_TARGET, PRESENTATION},
     window::{per_minute, WindowSample},
 };
 use crate::unit_tools::report::{read, same_keys};
-use std::{fmt::Write, path::Path, process::ExitCode};
+use std::{collections::BTreeSet, fmt::Write, path::Path, process::ExitCode};
 
 // On-time groups should miss almost no targets. Allow one miss per 100 shown pictures pending unit runs.
 const LATE_FLIP_LIMIT_DIVISOR: u128 = 100;
@@ -26,6 +26,7 @@ struct Metrics {
     fps: f64,
     late_per_minute: f64,
     flips: Flips,
+    targets: BTreeSet<u32>,
 }
 
 #[derive(Debug, Default)]
@@ -153,6 +154,7 @@ impl Metrics {
             return None;
         }
         let mut flips = Flips::default();
+        let mut targets = BTreeSet::new();
         for window in &group.windows {
             // Presentation deltas are retained in the windows.
             let WindowSample::Valid(sample) = &window.sample else { return None };
@@ -162,17 +164,31 @@ impl Metrics {
                 return None;
             }
             flips.add(&Flips { late: late.into(), shown: shown.into() });
+            if let Some(target) =
+                sample.sections.get(PRESENTATION)?.get(FLIP_TARGET).and_then(|value| value.parse().ok())
+            {
+                targets.insert(target);
+            }
         }
         let metrics = Self {
             first_records_per_s: summary.rates.first_records_per_s,
             fps: *summary.delta.get("fresh")? as f64 / f64::midpoint(low, high),
             late_per_minute: per_minute(flips.late as f64, summary.host_s),
             flips,
+            targets,
         };
         [metrics.first_records_per_s, metrics.fps, metrics.late_per_minute]
             .into_iter()
             .all(|value| value.is_finite() && value >= 0.0)
             .then_some(metrics)
+    }
+
+    fn target_text(&self) -> String {
+        if self.targets.is_empty() {
+            "-".into()
+        } else {
+            self.targets.iter().map(u32::to_string).collect::<Vec<_>>().join("/")
+        }
     }
 }
 
@@ -180,7 +196,7 @@ fn table(comparison: &Comparison<'_>) -> String {
     let rows = &comparison.rows;
     let width = rows.iter().map(|row| row.group.len()).max().unwrap_or_default().max(5);
     let mut text = format!(
-        "{:<width$}  {:>10}  {:>10}  {:>8}  {:>8}  {:>8}  {:>12}  {:>12}  {:>9}  {:>9}  {}\n",
+        "{:<width$}  {:>10}  {:>10}  {:>8}  {:>8}  {:>8}  {:>12}  {:>12}  {:>9}  {:>10}  {:>9}  {:>10}  {}\n",
         "Group",
         "Ref first/s",
         "New first/s",
@@ -190,7 +206,9 @@ fn table(comparison: &Comparison<'_>) -> String {
         "Ref late/min",
         "New late/min",
         "Ref late",
+        "Ref target",
         "New late",
+        "New target",
         "Status"
     );
     for row in rows {
@@ -205,7 +223,7 @@ fn table(comparison: &Comparison<'_>) -> String {
         };
         writeln!(
             text,
-            "{:<width$}  {:>10.1}  {:>10.1}  {:>8.3}  {:>8.2}  {:>8.2}  {:>12.2}  {:>12.2}  {:>9}  {:>9}  {verdict}",
+            "{:<width$}  {:>10.1}  {:>10.1}  {:>8.3}  {:>8.2}  {:>8.2}  {:>12.2}  {:>12.2}  {:>9}  {:>10}  {:>9}  {:>10}  {verdict}",
             row.group,
             old.first_records_per_s,
             new.first_records_per_s,
@@ -215,7 +233,9 @@ fn table(comparison: &Comparison<'_>) -> String {
             old.late_per_minute,
             new.late_per_minute,
             old.flips.percentage_text(),
-            new.flips.percentage_text()
+            old.target_text(),
+            new.flips.percentage_text(),
+            new.target_text()
         )
         .expect("writing to a String succeeds");
     }

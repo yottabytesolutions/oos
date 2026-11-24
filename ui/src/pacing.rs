@@ -235,6 +235,7 @@ pub fn ready_ms() -> f32 {
 }
 
 mod frame_clock;
+mod target;
 #[cfg(test)]
 pub(crate) use frame_clock::with_test_clock;
 use frame_clock::ClockPublication;
@@ -243,6 +244,8 @@ pub(crate) use frame_clock::PictureRate;
 pub(crate) use frame_clock::{step_missed, ClockMode, FlipDivisor};
 #[cfg(any(target_os = "linux", test))]
 pub(crate) use frame_clock::{Flip, FrameClock, FrameSlot};
+#[cfg(any(target_os = "linux", test))]
+pub(crate) use target::CostView;
 
 pub(crate) const TIMER_PERIOD: Duration = Duration::from_nanos(1_000_000_000 / 30);
 

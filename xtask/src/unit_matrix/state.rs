@@ -3,6 +3,7 @@
 use std::{collections::BTreeMap, iter::Peekable};
 
 pub(super) const PRESENTATION: &str = "present.v2";
+pub(super) const FLIP_TARGET: &str = "flip.target_refreshes";
 const SECTIONS: &[&str] = &["stage.v1", "work.v1", "route.v1", "source.v1", "present.v1", PRESENTATION, "fallback.v1"];
 const DISARM_KEYS: [&str; 5] = ["total", "unknown", "no_completed_record", "recorded", "dropped"];
 pub(super) const DEPOSITED: &str = "records.deposited";

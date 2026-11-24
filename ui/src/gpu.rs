@@ -10,7 +10,8 @@
 //! memory and reads the picture back (host tests, and the picture for the web page and screenshots).
 //!
 //! The protocol is a few fixed C structs (`#[repr(C)]` here, the same in oos-gpu.c, sizes checked by a test), each
-//! message answered by a `Done`. Every failure ends the helper: oos-ui then draws on the CPU again.
+//! frame answered by a render completion, followed by a pixel completion when requested.
+//! A failed helper is replaced by CPU rendering.
 
 mod process;
 pub mod recovery;
@@ -23,11 +24,12 @@ use crate::ui::TraceJob;
 use crate::wave::Phosphor;
 
 pub const MAGIC: u32 = 0x4753_4f4f;
-pub const VERSION: u32 = 3;
+pub const VERSION: u32 = 4;
 const K_HELLO: u32 = 1;
 const K_TARGET: u32 = 2;
 const K_FRAME: u32 = 4;
 const K_DONE: u32 = 5;
+const K_READBACK: u32 = 6;
 pub const MAX_QUADS: usize = 4;
 pub const MAX_JOBS: usize = 16;
 const NCH: usize = 4;
@@ -165,12 +167,13 @@ pub struct Quad<'a> {
     pub phz: &'a Phosphor,
 }
 
-/// Times of the last frame (ms): copying into the arena here, and upload, draw and readback in the helper.
+/// Helper timings in milliseconds.
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Times {
     pub copy: f32,
     pub upload: f32,
     pub draw: f32,
+    /// The last completed pixel read, or zero before the first read.
     pub read: f32,
     /// the helper's whole time (upload and draw) of the last frame of the panel and of the monitor
     pub panel: f32,
@@ -210,29 +213,37 @@ impl Ticket {
     }
 }
 
+#[cfg(all(target_os = "linux", test))]
+pub(crate) use imp::tests::HelperFixture;
 #[cfg(target_os = "linux")]
 pub use imp::Gpu;
 
 #[cfg(target_os = "linux")]
 mod imp {
     use super::*;
-    use crate::gfx::{Cmd, CMD_GLYPH, CMD_IMAGE, CMD_IMAGE_KEY};
+    use crate::gfx::{Cmd, Rec, CMD_GLYPH, CMD_IMAGE, CMD_IMAGE_KEY};
     use std::io::{self, Read, Write};
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
-    use upload::UploadData::{self as Source, Pixels};
+    use upload::UploadData as Source;
+
+    #[cfg(test)]
+    pub(crate) mod tests;
 
     pub struct Gpu {
-        child: std::process::Child,
+        child: Option<std::process::Child>,
         stopped: Option<bool>,
         sock: UnixStream,
         arena: *mut u8,
-        /// targets known to the helper: (w, h, in its own memory)
-        targets: [Option<(i32, i32, bool)>; 8],
+        /// Target dimensions known to the helper.
+        targets: [Option<(i32, i32)>; 8],
         /// the blocks of the last frame in each half of the arena (the panel's, the monitor's): while a frame has
         /// the same blocks, only the rows that changed are copied and uploaded
         blocks: [Vec<upload::Block>; 2],
+        spare_blocks: Vec<upload::Block>,
+        /// The reserved arena tail of the one outstanding pixel request, by half and offset.
+        pending_read: Option<(usize, usize)>,
         /// the first of the monitor's targets: the panel's are below it (`monitor_targets_from`)
         monitor_from: usize,
         /// the fonts in the helper's glyph atlas (their alpha bytes, the byte of the atlas they start at) and its
@@ -275,310 +286,62 @@ mod imp {
     }
 
     impl Gpu {
-        /// Starts the helper; it answers once it has a GPU context (a few hundred ms).
-        pub fn start(helper: &str, cpu: Option<usize>) -> Result<Gpu, String> {
+        fn arena_file() -> Result<OwnedFd, String> {
+            // SAFETY: the name is NUL-terminated and only the close-on-exec flag is set.
             let fd = unsafe { libc::memfd_create(c"oos-gpu".as_ptr(), libc::MFD_CLOEXEC) };
             if fd < 0 {
                 return Err(format!("memfd: {}", std::io::Error::last_os_error()));
             }
             // SAFETY: a fresh descriptor we own
             let mem = unsafe { OwnedFd::from_raw_fd(fd) };
+            // SAFETY: fd is the live descriptor owned by mem.
             if unsafe { libc::ftruncate(fd, ARENA as libc::off_t) } != 0 {
                 return Err(format!("arena: {}", std::io::Error::last_os_error()));
             }
-            let (mut child, ours) = lifecycle::spawn(helper, cpu)?;
+            Ok(mem)
+        }
+
+        fn map_arena(mem: &OwnedFd) -> io::Result<*mut u8> {
+            // SAFETY: mem is a live arena descriptor sized for this mapping.
             let arena = unsafe {
-                libc::mmap(std::ptr::null_mut(), ARENA, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0)
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    ARENA,
+                    libc::PROT_READ | libc::PROT_WRITE,
+                    libc::MAP_SHARED,
+                    mem.as_raw_fd(),
+                    0,
+                )
             };
             if arena == libc::MAP_FAILED {
-                let error = std::io::Error::last_os_error();
-                process::stop(&mut child, std::time::Instant::now());
-                return Err(format!("arena map: {}", error));
+                Err(io::Error::last_os_error())
+            } else {
+                Ok(arena.cast())
             }
-            let mut g = Gpu {
-                child,
-                stopped: None,
-                sock: ours,
-                arena: arena as *mut u8,
-                targets: [None; 8],
-                blocks: [Vec::new(), Vec::new()],
-                monitor_from: 2,
-                atlas: Vec::new(),
-                atlas_rows: 0,
-                times: Times::default(),
-            };
+        }
+
+        /// Starts the helper; it answers once it has a GPU context (a few hundred ms).
+        pub fn start(helper: &str, cpu: Option<usize>) -> Result<Gpu, String> {
+            let mem = Self::arena_file()?;
+            let (mut child, ours) = lifecycle::spawn(helper, cpu)?;
+            let arena = Self::map_arena(&mem).map_err(|error| {
+                process::stop(&mut child, std::time::Instant::now());
+                format!("arena map: {error}")
+            })?;
+            let mut g = Self::attach(Some(child), ours, arena);
             let h = Hello { magic: MAGIC, version: VERSION, kind: K_HELLO, pad: 0, arena_size: ARENA as u64 };
             send_fd(&g.sock, bytes(&h), Some(mem.as_raw_fd())).map_err(|e| format!("hello: {}", e))?;
             drop(mem);
             // the helper opens Mesa and the GPU first
-            g.wait(Duration::from_secs(10)).map_err(|e| format!("start: {}", e))?;
+            g.wait(K_DONE, Duration::from_secs(10)).map_err(|e| format!("start: {}", e))?;
             Ok(g)
         }
 
-        fn wait(&mut self, timeout: Duration) -> Result<Duration, String> {
+        fn wait(&mut self, kind: u32, timeout: Duration) -> Result<Duration, String> {
             self.sock.set_read_timeout(Some(timeout)).map_err(|e| e.to_string())?;
             let mut response = response::Response::default();
             self.sock.read_exact(response.remaining()).map_err(|e| format!("no answer: {e}"))?;
-            response.decode(&mut self.times)
-        }
-
-        /// Puts the quads together in target `index`, on `clear` first when given (xrgb); with `back` the picture is
-        /// read back into it (its size must be the target's). `submit` and `collect` in one.
-        pub fn compose(
-            &mut self,
-            index: usize,
-            clear: Option<u32>,
-            quads: &[Quad],
-            back: Option<&mut Canvas>,
-        ) -> Result<(), String> {
-            let t = self.submit(index, clear, quads, back.is_some())?;
-            self.collect(t, back)
-        }
-
-        /// Sends a frame and returns at once. The layers and
-        /// maps are copied now; the arena half of this target must not hold a frame still in work (collect first).
-        pub fn submit(
-            &mut self,
-            index: usize,
-            clear: Option<u32>,
-            quads: &[Quad],
-            read: bool,
-        ) -> Result<Ticket, String> {
-            let t0 = std::time::Instant::now();
-            let (tw, th, memory) = self.targets.get(index).copied().flatten().ok_or("no such target")?;
-            let mut f = FrameMsg {
-                magic: MAGIC,
-                kind: K_FRAME,
-                target: index as u32,
-                clear: clear.map_or(0, |c| 0x0100_0000 | (c & 0xff_ffff)),
-                n_quads: 0,
-                n_jobs: 0,
-                readback: 0,
-                readback_off: 0,
-                atlas_off: 0,
-                atlas_rows: 0,
-                atlas_row: 0,
-                set: 0,
-                q: [QuadMsg::default(); MAX_QUADS],
-                j: [JobMsg::default(); MAX_JOBS],
-            };
-            // the panel's frames use the first half of the arena, the monitor's the second: each keeps its blocks,
-            // and in the helper its own textures
-            let half = (index >= self.monitor_from) as usize;
-            f.set = half as u32;
-            let base = self.arena;
-            let mut at = half * ARENA / 2;
-            if quads.len() > MAX_QUADS {
-                return Err("too many quads".into());
-            }
-            // recorded layers (`Canvas::record`): their commands, images and new fonts from the top of the half down,
-            // apart from the blocks below that keep their places from frame to frame
-            let mut tail = at + ARENA / 2;
-            let mut alloc = |len: usize| -> Result<usize, String> {
-                tail = tail.checked_sub(len).ok_or("frame too large for the arena")? & !63;
-                Ok(tail)
-            };
-            let mut new_fonts: Vec<&[u8]> = Vec::new();
-            for q in quads.iter().filter(|q| !q.reuse) {
-                for c in [q.under, q.over].into_iter().flatten() {
-                    for f in c.rec.iter().flat_map(|r| r.fonts.iter()) {
-                        if !self.atlas.iter().any(|a| a.0 == f.as_ptr() as usize) {
-                            let rows = f.len().div_ceil(ATLAS_W);
-                            if self.atlas_rows + rows > ATLAS_H {
-                                return Err("glyph atlas full".into());
-                            }
-                            self.atlas.push((f.as_ptr() as usize, (self.atlas_rows * ATLAS_W) as u32));
-                            self.atlas_rows += rows;
-                            new_fonts.push(f);
-                        }
-                    }
-                }
-            }
-            if !new_fonts.is_empty() {
-                let rows: usize = new_fonts.iter().map(|f| f.len().div_ceil(ATLAS_W)).sum();
-                let o = alloc(rows * ATLAS_W)?;
-                let mut p = o;
-                for f in &new_fonts {
-                    // SAFETY: inside the mapping (alloc), rows of ATLAS_W bytes per font
-                    unsafe { std::ptr::copy_nonoverlapping(f.as_ptr(), base.add(p), f.len()) };
-                    p += f.len().div_ceil(ATLAS_W) * ATLAS_W;
-                }
-                (f.atlas_off, f.atlas_rows, f.atlas_row) = (o as u32, rows as u32, (self.atlas_rows - rows) as u32);
-            }
-            // per quad: (offset, count) of the commands of under and over (count NONE: pixels), images (offset, rows)
-            let mut recs = [[(NONE, NONE); 3]; MAX_QUADS];
-            for (qi, q) in quads.iter().enumerate().filter(|(_, q)| !q.reuse) {
-                let (u, o) = (q.under.and_then(|c| c.rec.as_deref()), q.over.and_then(|c| c.rec.as_deref()));
-                let n_img = u.map_or(0, |r| r.img.len()) + o.map_or(0, |r| r.img.len());
-                if n_img > 0 {
-                    let rows = n_img.div_ceil(ATLAS_W);
-                    let at = alloc(rows * ATLAS_W * 4)?;
-                    let mut p = at;
-                    for r in [u, o].into_iter().flatten() {
-                        // SAFETY: inside the mapping (alloc)
-                        unsafe { std::ptr::copy_nonoverlapping(r.img.as_ptr(), base.add(p) as *mut u32, r.img.len()) };
-                        p += r.img.len() * 4;
-                    }
-                    // the rest of the last row zero: the helper knows images by a hash of the rows
-                    unsafe { std::ptr::write_bytes(base.add(p), 0, at + rows * ATLAS_W * 4 - p) };
-                    recs[qi][2] = (at as u32, rows as u32);
-                }
-                let mut img0 = 0u32;
-                for (k, r) in [u, o].into_iter().enumerate() {
-                    let Some(r) = r else { continue };
-                    let bases: Vec<u32> = r
-                        .fonts
-                        .iter()
-                        .map(|f| self.atlas.iter().find(|a| a.0 == f.as_ptr() as usize).map_or(0, |a| a.1))
-                        .collect();
-                    let at = alloc(r.cmds.len() * std::mem::size_of::<Cmd>())?;
-                    // SAFETY: inside the mapping (alloc), room for all commands
-                    let dst = unsafe { std::slice::from_raw_parts_mut(base.add(at) as *mut Cmd, r.cmds.len()) };
-                    for (d, c) in dst.iter_mut().zip(&r.cmds) {
-                        *d = *c;
-                        match c.kind & 255 {
-                            CMD_GLYPH => d.off += bases.get((c.kind >> 8) as usize).copied().unwrap_or(0),
-                            CMD_IMAGE | CMD_IMAGE_KEY => d.off += img0,
-                            _ => {}
-                        }
-                    }
-                    recs[qi][k] = (at as u32, r.cmds.len() as u32);
-                    img0 += r.img.len() as u32;
-                }
-            }
-            let mut blocks = Vec::new();
-            let mut known = true;
-            let prev = std::mem::take(&mut self.blocks[half]);
-            // Copy the source's changed rows into the arena and return their band (all rows for a new block).
-            let mut put = |source: Source<'_>, blocks: &mut Vec<upload::Block>| -> Result<(u32, i32, i32), String> {
-                at = (at + 63) & !63;
-                let len = source.bytes().len();
-                if at + len > tail {
-                    return Err("frame too large for the arena".into());
-                }
-                let previous = prev.get(blocks.len());
-                known &= previous.is_some_and(|block| block.matches(at, len));
-                // SAFETY: the block fits the mapping.
-                // collect completed the previous frame using this output's half before submit.
-                let dst = unsafe { std::slice::from_raw_parts_mut(base.add(at), len) };
-                let (block, band) = upload::Block::publish(at, dst, source, previous.filter(|_| known));
-                blocks.push(block);
-                let o = at as u32;
-                at += len;
-                Ok((o, band.start as i32, band.end as i32))
-            };
-            for (qi, q) in quads.iter().enumerate() {
-                let mut layer =
-                    |c: Option<&Canvas>, blocks: &mut Vec<upload::Block>| -> Result<(u32, i32, i32), String> {
-                        match c {
-                            Some(c) if c.rec.is_some() => Ok((0, 0, 0)),
-                            Some(c) if !q.reuse => {
-                                put(Pixels { bytes: bytes(c.px.as_slice()), row_bytes: c.w as usize * 4 }, blocks)
-                            }
-                            Some(_) => Ok((0, 0, 0)),
-                            None => Ok((NONE, 0, 0)),
-                        }
-                    };
-                let (uo, uy0, uy1) = layer(q.under, &mut blocks)?;
-                let (oo, oy0, oy1) = layer(q.over, &mut blocks)?;
-                let first = f.n_jobs;
-                for job in q.jobs {
-                    if f.n_jobs as usize >= MAX_JOBS {
-                        return Err("too many plot windows".into());
-                    }
-                    let ph = if job.zoom { q.phz } else { q.ph };
-                    let mut j = JobMsg {
-                        x: job.area.x,
-                        y: job.area.y,
-                        w: job.area.w,
-                        h: job.area.h,
-                        mw: ph.w as i32,
-                        mh: ph.h as i32,
-                        map_off: [NONE; NCH],
-                        graded: job.graded as u32,
-                        lut_off: 0,
-                        shift: job.shift,
-                        col: job.col,
-                        map_y0: [0; NCH],
-                        map_y1: [0; NCH],
-                    };
-                    for c in 0..NCH {
-                        if job.show[c] && !q.reuse {
-                            let (o, y0, y1) = put(Source::counts(ph, c, job.count_map(ph, c)), &mut blocks)?;
-                            (j.map_off[c], j.map_y0[c], j.map_y1[c]) = (o, y0, y1);
-                        } else if job.show[c] {
-                            j.map_off[c] = 0;
-                        }
-                    }
-                    if !q.reuse {
-                        j.lut_off = if job.graded {
-                            put(
-                                Pixels { bytes: bytes(job.colours.as_slice()), row_bytes: job.colours.len() * 4 },
-                                &mut blocks,
-                            )?
-                            .0
-                        } else {
-                            put(Pixels { bytes: &job.alpha, row_bytes: job.alpha.len() }, &mut blocks)?.0
-                        };
-                    }
-                    f.j[f.n_jobs as usize] = j;
-                    f.n_jobs += 1;
-                }
-                let (lw, lh) = q.size;
-                f.q[qi] = QuadMsg {
-                    under_off: uo,
-                    over_off: oo,
-                    lw,
-                    lh,
-                    sx: q.src.x,
-                    sy: q.src.y,
-                    sw: q.src.w,
-                    sh: q.src.h,
-                    dx: q.dst.x,
-                    dy: q.dst.y,
-                    dw: q.dst.w,
-                    dh: q.dst.h,
-                    filter: q.filter as u32,
-                    first_job: first,
-                    n_jobs: f.n_jobs - first,
-                    reuse: q.reuse as u32,
-                    under_y0: uy0,
-                    under_y1: uy1,
-                    over_y0: oy0,
-                    over_y1: oy1,
-                    under_n: NONE,
-                    over_n: NONE,
-                    img_off: recs[qi][2].0,
-                    img_rows: if recs[qi][2].1 == NONE { 0 } else { recs[qi][2].1 },
-                };
-                if q.under.is_some_and(|c| c.rec.is_some()) && !q.reuse {
-                    (f.q[qi].under_off, f.q[qi].under_n) = recs[qi][0];
-                }
-                if q.over.is_some_and(|c| c.rec.is_some()) && !q.reuse {
-                    (f.q[qi].over_off, f.q[qi].over_n) = recs[qi][1];
-                }
-                f.n_quads += 1;
-            }
-            self.blocks[half] = blocks;
-            // a memory target is always read back: its place in the arena is kept free
-            if read || memory {
-                at = (at + 63) & !63;
-                if at + (tw * th * 4) as usize > tail {
-                    return Err("no room to read back".into());
-                }
-                f.readback = read as u32;
-                f.readback_off = at as u32;
-            }
-            let t1 = std::time::Instant::now();
-            self.sock.write_all(bytes(&f)).map_err(|e| format!("frame: {}", e))?;
-            self.times.copy = (t1 - t0).as_secs_f32() * 1e3;
-            Ok(Ticket::new(read.then_some((f.readback_off as usize, tw, th)), t1, half == 1))
-        }
-
-        /// Waits for a frame `submit` sent; with `back` its picture (asked for when it was sent) comes into it.
-        pub fn collect(&mut self, t: Ticket, back: Option<&mut Canvas>) -> Result<(), String> {
-            self.wait(Duration::from_millis(1500))?;
-            self.finish(&t, back)
+            response.decode(kind, &mut self.times)
         }
 
         pub(crate) fn reply_fd(&self) -> i32 {
@@ -591,9 +354,36 @@ mod imp {
             ticket: &mut Ticket,
             now: std::time::Instant,
         ) -> Result<Option<Duration>, String> {
+            let done = self.poll_reply(K_DONE, ticket, now)?;
+            if done.is_some() {
+                self.finish_render(ticket);
+                ticket.response = Default::default();
+            }
+            Ok(done)
+        }
+
+        pub(crate) fn try_readback(
+            &mut self,
+            ticket: &mut Ticket,
+            now: std::time::Instant,
+            canvas: &mut Canvas,
+        ) -> Result<bool, String> {
+            if self.poll_reply(K_READBACK, ticket, now)?.is_none() {
+                return Ok(false);
+            }
+            self.finish_readback(ticket, Some(canvas))?;
+            Ok(true)
+        }
+
+        fn poll_reply(
+            &mut self,
+            kind: u32,
+            ticket: &mut Ticket,
+            now: std::time::Instant,
+        ) -> Result<Option<Duration>, String> {
             let fd = self.reply_fd();
             let expired = now >= ticket.deadline();
-            ticket.response.poll(&mut self.times, expired, |buf| {
+            ticket.response.poll(kind, &mut self.times, expired, |buf| {
                 // SAFETY: buf is writable for its length; recv does not retain it.
                 let n = unsafe { libc::recv(fd, buf.as_mut_ptr().cast(), buf.len(), libc::MSG_DONTWAIT) };
                 if n < 0 {
@@ -604,13 +394,17 @@ mod imp {
             })
         }
 
-        pub(crate) fn finish(&mut self, t: &Ticket, back: Option<&mut Canvas>) -> Result<(), String> {
+        fn finish_render(&mut self, t: &Ticket) {
             let ms = self.times.upload + self.times.draw;
             if t.monitor {
                 self.times.monitor = ms;
             } else {
                 self.times.panel = ms;
             }
+        }
+
+        fn finish_readback(&mut self, t: &Ticket, back: Option<&mut Canvas>) -> Result<(), String> {
+            self.pending_read = None;
             if let (Some((off, tw, th)), Some(cv)) = (t.readback, back) {
                 if (cv.w, cv.h) != (tw, th) {
                     return Err("read-back canvas of another size".into());
@@ -626,14 +420,155 @@ mod imp {
             }
             Ok(())
         }
+
+        fn unmap_arena(&mut self) {
+            // SAFETY: this process owns this ARENA-byte mapping. Helper mappings are separate.
+            unsafe { libc::munmap(self.arena as *mut libc::c_void, ARENA) };
+        }
     }
+
+    /// Uploads fill stable blocks from the bottom and transient recordings from the top of one half.
+    struct ArenaRange {
+        base: *mut u8,
+        start: usize,
+        tail: usize,
+    }
+
+    impl ArenaRange {
+        fn reserve(&mut self, len: usize) -> Result<usize, String> {
+            self.tail = self
+                .tail
+                .checked_sub(len)
+                .filter(|&offset| offset >= self.start)
+                .ok_or("frame too large for the arena")?
+                & !63;
+            Ok(self.tail)
+        }
+
+        fn images(&mut self, recordings: [Option<&Rec>; 2]) -> Result<(u32, u32), String> {
+            let pixels = recordings.into_iter().flatten().map(|recording| recording.img.len()).sum::<usize>();
+            if pixels == 0 {
+                return Ok((NONE, NONE));
+            }
+            let rows = pixels.div_ceil(ATLAS_W);
+            let size = rows * ATLAS_W * 4;
+            let offset = self.reserve(size)?;
+            let mut position = offset;
+            for recording in recordings.into_iter().flatten() {
+                // SAFETY: the reserved rows fit both recordings and are disjoint from their sources.
+                unsafe {
+                    std::ptr::copy_nonoverlapping(
+                        recording.img.as_ptr(),
+                        self.base.add(position).cast::<u32>(),
+                        recording.img.len(),
+                    )
+                };
+                position += recording.img.len() * 4;
+            }
+            // SAFETY: zero the remaining bytes of the reserved block for the helper's image hash.
+            unsafe { std::ptr::write_bytes(self.base.add(position), 0, offset + size - position) };
+            Ok((offset as u32, rows as u32))
+        }
+
+        fn commands(&mut self, recording: &Rec, atlas: &[(usize, u32)], image_base: u32) -> Result<(u32, u32), String> {
+            let mut bases = [0; 256];
+            for (base, font) in bases.iter_mut().zip(&recording.fonts) {
+                *base = atlas.iter().find(|a| a.0 == font.as_ptr() as usize).map_or(0, |a| a.1);
+            }
+            let len = recording.cmds.len();
+            let offset = self.reserve(len * std::mem::size_of::<Cmd>())?;
+            // SAFETY: reserve returns aligned storage for these Cmds, exclusively used until submission.
+            let destination = unsafe { std::slice::from_raw_parts_mut(self.base.add(offset).cast::<Cmd>(), len) };
+            for (out, command) in destination.iter_mut().zip(&recording.cmds) {
+                *out = *command;
+                match command.kind & 255 {
+                    CMD_GLYPH => out.off += bases[usize::from(command.kind >> 8)],
+                    CMD_IMAGE | CMD_IMAGE_KEY => out.off += image_base,
+                    _ => {}
+                }
+            }
+            Ok((offset as u32, len as u32))
+        }
+    }
+
+    impl Gpu {
+        fn pack_atlas(&mut self, frame: &mut FrameMsg, quads: &[Quad], arena: &mut ArenaRange) -> Result<(), String> {
+            let first_font = self.atlas.len();
+            let first_row = self.atlas_rows;
+            let mut new_fonts = Vec::new();
+            let fonts = quads
+                .iter()
+                .filter(|quad| !quad.reuse)
+                .flat_map(|quad| [quad.under, quad.over].into_iter().flatten())
+                .filter_map(|canvas| canvas.rec.as_deref())
+                .flat_map(|recording| recording.fonts.iter().copied());
+            for font in fonts {
+                let id = font.as_ptr() as usize;
+                if self.atlas.iter().any(|entry| entry.0 == id) {
+                    continue;
+                }
+                let rows = font.len().div_ceil(ATLAS_W);
+                if self.atlas_rows + rows > ATLAS_H {
+                    return Err("glyph atlas full".into());
+                }
+                self.atlas.push((id, (self.atlas_rows * ATLAS_W) as u32));
+                self.atlas_rows += rows;
+                new_fonts.push(font);
+            }
+            if !new_fonts.is_empty() {
+                let rows = self.atlas_rows - first_row;
+                let offset = arena.reserve(rows * ATLAS_W)?;
+                for (font, entry) in new_fonts.into_iter().zip(&self.atlas[first_font..]) {
+                    let position = offset + entry.1 as usize - first_row * ATLAS_W;
+                    // SAFETY: reserve provides enough arena rows for every new font.
+                    unsafe { std::ptr::copy_nonoverlapping(font.as_ptr(), arena.base.add(position), font.len()) };
+                }
+                (frame.atlas_off, frame.atlas_rows, frame.atlas_row) = (offset as u32, rows as u32, first_row as u32);
+            }
+            Ok(())
+        }
+    }
+
+    struct BlockUpload<'a> {
+        base: *mut u8,
+        at: usize,
+        tail: usize,
+        known: bool,
+        previous: &'a [upload::Block],
+        blocks: &'a mut Vec<upload::Block>,
+    }
+
+    impl BlockUpload<'_> {
+        fn put(&mut self, source: Source<'_>) -> Result<(u32, i32, i32), String> {
+            self.at = (self.at + 63) & !63;
+            let len = source.bytes().len();
+            if self.at + len > self.tail {
+                return Err("frame too large for the arena".into());
+            }
+            let previous = self.previous.get(self.blocks.len());
+            self.known &= previous.is_some_and(|block| block.matches(self.at, len));
+            // SAFETY: the preceding render in this half finished, and the block fits below the reserved tail.
+            let dst = unsafe { std::slice::from_raw_parts_mut(self.base.add(self.at), len) };
+            let (block, band) = upload::Block::publish(self.at, dst, source, previous.filter(|_| self.known));
+            self.blocks.push(block);
+            let offset = self.at as u32;
+            self.at += len;
+            Ok((offset, band.start as i32, band.end as i32))
+        }
+    }
+
+    mod frame;
 
     mod lifecycle;
     impl Drop for Gpu {
         fn drop(&mut self) {
+            #[cfg(test)]
+            if self.child.is_none() {
+                self.unmap_arena();
+                return;
+            }
             self.shutdown();
-            // SAFETY: this process owns this ARENA-byte mapping; helper mappings are separate.
-            unsafe { libc::munmap(self.arena as *mut libc::c_void, ARENA) };
+            self.unmap_arena();
         }
     }
 }

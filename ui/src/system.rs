@@ -10,6 +10,7 @@ pub(crate) mod test_allocator;
 pub mod clocks;
 pub mod intake;
 pub mod memory;
+pub(crate) mod readback;
 pub mod serve;
 pub mod shutdown;
 pub mod wake;

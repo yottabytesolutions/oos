@@ -88,13 +88,14 @@ use std::io::{ErrorKind, Read};
 #[cfg(test)]
 use std::net::TcpStream;
 
-/// One bounded SCPI message, retained by its transport while *OPC? is pending.
+/// One bounded SCPI message, retained by its transport while a query is pending.
 #[derive(Default)]
 pub struct Program {
     commands: std::collections::VecDeque<(String, bool)>,
     out: Vec<u8>,
     output: Option<crate::netport::Output>,
     waiting: Option<crate::ui::Operations>,
+    capture: Option<(crate::system::readback::Request, display::Format)>,
     waveform: Option<waveform::Selection>,
     separator: u8,
     pub bytes: usize,
@@ -105,6 +106,10 @@ pub struct Program {
     unsettled: bool,
 }
 impl Program {
+    pub(crate) fn waiting_for_pixels(&self) -> bool {
+        self.capture.is_some()
+    }
+
     pub fn new(text: &str) -> Self {
         if text.len() > MAX_LINE {
             return Self { invalid: true, ..Self::default() };
@@ -171,6 +176,7 @@ pub struct Scpi {
     error_serial: u64,
     last_error: Option<String>,
     opc_events: Vec<crate::ui::Operations>,
+    readback: Option<crate::system::readback::Readback>,
 }
 
 /// SCPI keyword match: the long form or its short form (the upper-case part), case-insensitive.
@@ -756,76 +762,6 @@ impl Scpi {
             }
             crate::ui::OperationState::Cancelled => false,
         });
-    }
-
-    /// Advance a bounded per-client message without waiting on the UI thread.
-    /// The continuation owns its earlier replies and remaining commands: no write is replayed.
-    pub fn poll_program(&mut self, ui: &mut Ui, cv: &Canvas, program: &mut Program) -> Option<Vec<u8>> {
-        let response = crate::ui::change::intake(ui, |ui| self.advance_program(ui, cv, program));
-        self.transport.reply_limit = RESP_MAX;
-        self.normalize_errors();
-        response
-    }
-
-    fn advance_program(&mut self, ui: &mut Ui, cv: &Canvas, program: &mut Program) -> Option<Vec<u8>> {
-        self.poll_events(ui);
-        if program.invalid {
-            self.push_err("-363,\"Program message too large or too many commands\"".into());
-            return Some(Vec::new());
-        }
-        if let Some(fence) = &program.waiting {
-            match fence.state(ui) {
-                crate::ui::OperationState::Pending => return None,
-                crate::ui::OperationState::Complete => {
-                    program.waiting = None;
-                    if !self.append_program_reply(program, b"1".to_vec()) {
-                        return Some(std::mem::take(&mut program.out));
-                    }
-                }
-                crate::ui::OperationState::Cancelled => {
-                    self.push_err("-410,\"OPC query interrupted by cancelled operation\"".into());
-                    program.commands.clear();
-                    program.out.clear();
-                    if program.output.is_some() {
-                        program.output = Some(Default::default());
-                    }
-                    program.has_reply = false;
-                    program.waiting = None;
-                    return Some(Vec::new());
-                }
-            }
-        }
-        while let Some((command, new_line)) = program.commands.pop_front() {
-            if new_line && program.has_reply {
-                program.separator = b'\n';
-            }
-            if program.out.len() >= RESP_MAX {
-                self.push_err("-363,\"Input buffer overrun\" rest of the line dropped".into());
-                program.commands.clear();
-                break;
-            }
-            if !self.prepare_program_output(program, &command, cv) {
-                break;
-            }
-            program.before(ui, &command);
-            if command.eq_ignore_ascii_case("*OPC?") {
-                let fence = ui.scpi_operations();
-                if fence.state(ui) == crate::ui::OperationState::Pending {
-                    program.waiting = Some(fence);
-                    return None;
-                }
-                if !self.append_program_reply(program, b"1".to_vec()) {
-                    break;
-                }
-            } else if let Some(response) = self.exec(ui, cv, &command) {
-                if !self.append_program_reply(program, response) {
-                    break;
-                }
-            }
-        }
-        self.transport.reply_limit = RESP_MAX;
-        program.settle(ui);
-        Some(std::mem::take(&mut program.out))
     }
 
     fn exec(&mut self, ui: &mut Ui, cv: &Canvas, cmd: &str) -> Option<Vec<u8>> {

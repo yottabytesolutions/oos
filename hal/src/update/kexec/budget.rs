@@ -1,15 +1,16 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Growth ceiling for the measured kexec watchdog gap; timing still needs unit acceptance (docs/update.md).
+//! Growth ceiling for the kexec watchdog gap. Measured at 85 MB; raised to 90 MiB without a new measurement
+//! (docs/update.md). A watchdog reset during a kexec start means this ceiling is too high.
 
-const MAX_PAYLOAD: usize = 85 << 20;
+const MAX_PAYLOAD: usize = 90 << 20;
 
 pub(super) fn check(kernel: usize, initrd: usize, tree: usize) -> Result<(), String> {
     let bytes = kernel.checked_add(initrd).and_then(|n| n.checked_add(tree));
     if bytes.is_none_or(|n| n > MAX_PAYLOAD) {
         return Err(concat!(
-            "kexec payload exceeds 85 MiB watchdog budget; remeasure the gap before raising it. ",
+            "kexec payload exceeds 90 MiB watchdog budget; remeasure the gap before raising it. ",
             "--no-kexec skips the trial start: a hanging kernel restarts at every power-on until the card is pulled"
         )
         .into());

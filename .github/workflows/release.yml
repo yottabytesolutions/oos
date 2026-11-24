@@ -1,6 +1,5 @@
-# A SemVer tag vX.Y.Z on main: the image, the unsigned image and build id for offline signing, a changelog from the
-# Conventional Commit subjects (cliff.toml), build provenance, and a draft GitHub release. No signing key here:
-# the maintainer signs the update package offline (boot/sign-dev-image.sh --key) and attaches it before publishing.
+# A SemVer tag vX.Y.Z on main: test the release tools, build the unsigned image and provenance, and draft a release.
+# The maintainer builds the signed artifacts offline (docs/release.md).
 # Production code is compared with the previous release (ADR 0007): growth needs a `Code growth:` paragraph.
 name: Release
 on:
@@ -10,6 +9,8 @@ permissions:
   contents: read
 env:
   CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: 0
+  CARGO_PROFILE_TEST_DEBUG: 0
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
@@ -34,6 +35,11 @@ jobs:
           [ "$versions" = "version = \"${TAG#v}\"" ] || { echo "::error::$TAG does not match the crate versions: $versions"; exit 1; }
       - name: Pinned toolchain (rust-toolchain.toml)
         run: rustup toolchain install
+      - name: Test release packaging with temporary keys
+        run: |
+          cargo build --locked -p oos-fpgad --bin oos-update
+          OOS_RELEASE_TEST_UPDATER="$PWD/target/debug/oos-update" \
+            python3 -I -m unittest discover -s tools/tests -p 'test_release_artifacts.py' -v
       - name: Production code since the previous release, growth explained
         id: code
         env:
@@ -75,7 +81,7 @@ jobs:
         with:
           name: oos-image
           path: artifacts
-      - name: Release files (unsigned image, build id, checksums)
+      - name: Release files (unsigned image, build ID, models and manifest)
         env:
           TAG: ${{ github.ref_name }}
         run: |
@@ -85,9 +91,9 @@ jobs:
           dir=$(dirname "$img")
           cp "$img" "dist/oos-$TAG.img"
           cp "$dir/oos-dev.build" "dist/oos-$TAG.build"
-          cp "$dir/oos-dev.unit" "dist/oos-$TAG.unit"
+          cp "$dir/oos-dev.models" "dist/oos-$TAG.models"
           cp "$dir/manifest.txt" "dist/oos-$TAG.manifest.txt"
-          (cd dist && sha256sum -- * > SHA256SUMS)
+          (cd dist && sha256sum -- * > SHA256SUMS.unsigned)
       - uses: taiki-e/install-action@682ce6c3c696a4cd5168a05f98e51aa02b877941 # v2.89.1
         with:
           tool: git-cliff@2.14.2
@@ -102,11 +108,11 @@ jobs:
         with:
           subject-path: |
             dist/oos-*
-            dist/SHA256SUMS
+            dist/SHA256SUMS.unsigned
       - name: Release attestation files
         env:
           BUNDLE: ${{ steps.provenance.outputs.bundle-path }}
-        run: python3 -I tools/ci/attestation_assets.py "$BUNDLE" dist/oos-* dist/SHA256SUMS
+        run: python3 -I tools/ci/attestation_assets.py "$BUNDLE" dist/oos-* dist/SHA256SUMS.unsigned
       - name: Draft release
         env:
           GH_TOKEN: ${{ github.token }}

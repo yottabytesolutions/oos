@@ -20,7 +20,7 @@ class ImageOutputs(unittest.TestCase):
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name).resolve()
-        for name in ("boot/build-gel.py", "boot/boardconf.py", "boot/gel/do_extract.sh",
+        for name in ("boot/build-gel.py", "boot/gel_package.py", "boot/boardconf.py", "boot/gel/do_extract.sh",
                      "rootfs/board/dho/etc/oos-board", "tools/output.py", "tools/output.sh"):
             dest = self.root / name
             dest.parent.mkdir(parents=True, exist_ok=True)

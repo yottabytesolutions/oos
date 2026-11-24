@@ -1,5 +1,7 @@
 # Releases
 
+See [Assemble a release offline](release.md) for packaging, verification and publication.
+
 Verify a downloaded release asset with `gh attestation verify <file> -R yottabytesolutions/oos`.
 Its `<file>.sigstore.json` bundle and, when available, `<file>.intoto.jsonl` statement are attached to the release.
 

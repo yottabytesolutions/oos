@@ -138,6 +138,31 @@ harmless tree property difference and `-i` succeeded, with the same kernel. The 
 | Back online, after install and warm trial restart | about +32 s |
 
 Payload: kernel 27,159,040 bytes, staged initrd 57,611,256 bytes, merged DTB 94,618 bytes (about 85 MB total).
+
+The staged initrd is the compressed initramfs plus the whole package, so the package's kernel and initramfs count
+twice: one byte more in a binary costs about two bytes of payload after compression. `oos-update` refuses a kexec
+start above the ceiling in `hal/src/update/kexec/budget.rs`.
+
+Ceiling history:
+
+- 85 MiB, set about 5 % above the measured payload. Build 20261124-052052 reached 89,137,611 bytes, 8,651 over, and
+  was refused.
+- 90 MiB since 2026-11-24, by owner decision, without a new measurement of the timeline above. The margin rule below
+  uses 18.1 s of the 21.5 s period at the measured payload and keeps 5 s in reserve, which leaves 3.4 s. The
+  part of the start that grows with the payload is the uncached relocation inside the first 6.88 s, so a 6 %
+  larger payload is expected to add less than 0.5 s. That is an inference, not a measurement.
+- Measured 2026-11-24 on a DHO924S at a payload of 89.1 MB (legacy path, SDR104), without UART: the kexec'd
+  kernel keeps the sender's clock and its console survives the trial restart in persistent RAM, so the sender's
+  uptime at the last network reply before the jump can be compared with the new kernel's first console
+  timestamp. Jump to first message: at most 7.7 s (an upper bound, the network stops before the jump; the UART
+  figure at 85 MB was 6.88 s). From the first message: watchdog driver registered +4.25 s, `/init` +4.80 s,
+  watchdog opened +5.13 s with the hardware running, install finished +15.8 s. With the margin rule below:
+  1 + 7.7 + 4.25 + 5 = 17.95 s of 21.5 s. The 90 MiB ceiling adds about 6 % to the size-dependent part.
+- If a kexec start is ever reset by the watchdog (the previous build returns and `oos-update status` reports the
+  failed start), record the payload size here and lower the ceiling below it.
+- Stripping the release binaries would free 0.7 MB of payload but cost 16 % record rate at 1 ch 5 ns/div on the
+  unit. Do not strip.
+- The lasting fix is to stop staging the package in the initrd.
 Kernel, initrd, DTB and purgatory segments were at `0x40000000`, `0x41aa0000`, `0x45192000` and `0x451aa000`.
 The working root cause is watchdog exhaustion during uncached hashing plus relocation, with MMU/D-cache off.
 The successful bypass and the pre-supervision history support this; purgatory's checks-on duration was not
@@ -199,13 +224,13 @@ The local pinned kernel sources were checked, rather than assuming the upstream 
 Margin rule: keep at least 5 s between new-kernel watchdog takeover and hardware expiry. Allowing 1 s for the
 last ping's age gives `1 + 12.1 + 5 = 18.1 s < 21.5 s` for the measured payload; the registration ping actually
 precedes the observed userspace open, so using open is conservative. Both loaders refuse staged payloads above
-**85 MiB (89,128,960 bytes)** before loading: kernel file plus staged initrd plus the supplied DTB, if any.
+**90 MiB (94,371,840 bytes)** before loading: kernel file plus staged initrd plus the supplied DTB, if any.
 The staged initrd includes the trial package, so image growth also grows that embedded copy: the effective image
-headroom at the measured payload is only about **2 MB**. Boundary/overflow tests pin this ceiling. Applying it to
+headroom at the measured payload is about **4.7 MB** (2 MB at the earlier 85 MiB ceiling). Boundary/overflow tests pin this ceiling. Applying it to
 the same-tree file-load path is a conservative guard; the measurement above used the changed-tree path.
 It limits growth, but is not a timing proof: any kernel, initramfs, DTB, segment memory-size/padding, CPU-clock
-or shutdown-path change requires checking the 5 s margin on the unit before release, even below the ceiling. Do not raise the ceiling
-without a new measurement. The explicit `--no-kexec` route skips the trial start: a hanging kernel restarts at
+or shutdown-path change requires checking the 5 s margin on the unit before release, even below the ceiling. The raise to
+90 MiB was made without that measurement (ceiling history above). Do not raise it further without one. The explicit `--no-kexec` route skips the trial start: a hanging kernel restarts at
 every power-on until the card is pulled. It must not be treated as an equivalent safe fallback for a larger image.
 
 Acceptance still needs the fixed updater running first, the supervisor exercised under BusyBox ash, then one

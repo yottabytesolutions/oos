@@ -7,7 +7,7 @@ use std::ops::Range;
 /// The serial search geometry, shared by the workers of a deep pairs record.
 #[derive(Clone, Copy)]
 pub(crate) struct WideSearch {
-    pre: usize,
+    pre: f64,
     span: usize,
     width: usize,
     trigger: EdgeSearch,
@@ -23,12 +23,12 @@ pub(crate) struct WideShard {
 }
 
 impl WideSearch {
-    pub(super) fn new(pre: usize, span: usize, width: usize, trigger: EdgeSearch) -> Self {
+    pub(super) fn new(pre: f64, span: usize, width: usize, trigger: EdgeSearch) -> Self {
         Self { pre, span, width, trigger }
     }
 
     fn starts(self, len: usize) -> Range<usize> {
-        sample_bounds(len, (self.pre, self.span, self.width))
+        sample_bounds(len, (self.pre as usize, self.span, self.width))
             .map_or(0..0, |bounds| bounds.start..bounds.end - self.width + 1)
     }
 
@@ -206,7 +206,7 @@ mod tests {
         let mut source = [-1.0; 12];
         source[4] = 1.0;
         let trigger = EdgeSearch { level: 0.0, hysteresis: 0.25, rising: true, either: true };
-        let search = WideSearch::new(4, 10, 1, trigger);
+        let search = WideSearch::new(4.0, 10, 1, trigger);
         let filters: [&dyn Fn(f64) -> bool; 2] = [&|_| true, &|t| t > 4.0];
         for fits in filters {
             assert_eq!(sharded(&source, search, 3, fits), search.serial(&source, fits));
@@ -227,7 +227,7 @@ mod tests {
         for width in [1, 2, 11, 64] {
             for (rising, either) in [(true, false), (false, false), (true, true)] {
                 let trigger = EdgeSearch { level: 0.0, hysteresis: 0.25, rising, either };
-                let search = WideSearch::new(160, 180, width, trigger);
+                let search = WideSearch::new(160.0, 180, width, trigger);
                 for count in [2, 3, 4, 5] {
                     let fits = |t| t >= 48.0;
                     assert_eq!(sharded(&source, search, count, &fits), search.serial(&source, &fits));
@@ -246,7 +246,7 @@ mod tests {
         for rising in [true, false] {
             let trigger = EdgeSearch { level: 0.0, hysteresis: 0.25, rising, either: false };
             for (pre, bounds) in [(80, (75.0, 90.0)), (200, (195.0, 210.0))] {
-                let search = WideSearch::new(pre, 240, 1, trigger);
+                let search = WideSearch::new(pre as f64, 240, 1, trigger);
                 let fits = |t| (bounds.0..bounds.1).contains(&t);
                 let serial = search.serial(&source, &fits);
                 assert!(serial.1.is_some());

@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::super::{
-    batch, batch_timing, la_record, lifecycle, plan::raw_newest, raw, stop, window::deep_raw_settings, Settings,
+    batch, batch_timing, la_record, lifecycle,
+    plan::raw_newest,
+    raw, stop,
+    window::{deep_raw_settings, whole_raw_replay},
+    Settings,
 };
 use super::pacing::PacingPolicy;
 use super::{status, BatchState, Io, LoopClock, Port, Request};
 use crate::{
-    board::{HwShared, MaskRead, Shared, ZoneRead},
+    board::{HwShared, MaskRead, PlayedWindow, Shared, ZoneRead},
     drawpipe::{clock::StageClock, TapReservation},
     perfguard::deep::acq_lock as lock,
 };
@@ -72,6 +76,7 @@ pub(super) struct Readings {
     zone: Option<ZoneRead>,
     fired: Option<bool>,
     deep_ok: bool,
+    play: PlayedWindow,
 }
 
 impl Readings {
@@ -86,7 +91,8 @@ impl Readings {
             return;
         }
         g.trig_fired = Some((g.trig_fired.map_or(1, |old| old.0 + 1), self.fired));
-        g.deep_ok = self.deep_ok;
+        g.read_geometry.deep_ok = self.deep_ok;
+        g.read_geometry.play = Some((identity, self.play));
         let cols = cols.filter(|_| self.mask.is_some());
         g.mask = self.mask.map(|mut next| {
             next.n = g.mask.map_or(1, |old| old.n + 1);
@@ -182,14 +188,19 @@ impl BatchState {
         crate::pacing::batch(|| read_at, batch_ms, count, seq::frames(b, p), fill_ms, read_ms);
         let pre_ms = timing.pre_ms(started);
         self.fill.done(pre_ms + read_ms);
-        self.cap.done(
-            count,
-            read_ms,
-            pre_ms,
-            capture.uncapped,
-            prearm && super::super::window::prearm_keeps_replay(b, p, None),
-            || pacing.picture_period(),
-        );
+        if super::super::window::is_live_crop(b, p) {
+            let (fixed, dma) = timing.window_read();
+            self.cap.observe_window(count, fixed, dma);
+        } else {
+            self.cap.done(
+                count,
+                read_ms,
+                pre_ms,
+                capture.uncapped,
+                prearm && super::super::window::prearm_keeps_replay(b, p, None),
+                || pacing.picture_period(),
+            );
+        }
         Completed { count, batch_ms, clock: timing.complete(request.identity, read_at, count), reference_at: None }
     }
 
@@ -213,7 +224,7 @@ impl BatchState {
         .map(|words| la_record(words, b, p));
         let replay = raw::replay_due(count, live, &mut self.raw.live, io.clock);
         let mut wrote_after_dma = la.is_some() || replay;
-        let raw_frame = replay.then(|| seq::raw_settings(b)).and_then(|settings| {
+        let raw_frame = replay.then(|| whole_raw_replay(b)).and_then(|settings| {
             self.read_raw(io, capture, (&settings, count), (out, probe), (tap, false))
                 .inspect_err(|()| failed = true)
                 .ok()
@@ -236,7 +247,10 @@ impl BatchState {
         let mask = mask_read(io, b, p);
         let zone = zone_read(io, b, (count, completed.batch_ms));
         wrote_after_dma |= mask.is_some() || zone.is_some();
-        Readout { readings: Readings { mask, zone, fired, deep_ok }, raw_frame, la, failed, wrote_after_dma }
+        let (n, lo) = seq::window(b, p);
+        let k = if b.playback.is_play4() { seq::compress_k(b, p) } else { 1 };
+        let play = PlayedWindow { lo, n, k };
+        Readout { readings: Readings { mask, zone, fired, deep_ok, play }, raw_frame, la, failed, wrote_after_dma }
     }
 
     pub(super) fn read_raw(

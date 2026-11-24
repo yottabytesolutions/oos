@@ -9,6 +9,10 @@ use std::time::Duration;
 
 mod model;
 use model::{Estimate, PoolPlan};
+#[cfg(any(target_os = "linux", test))]
+mod cycle;
+#[cfg(any(target_os = "linux", test))]
+pub(crate) use cycle::{GrantBudget, WindowCycle};
 
 #[cfg(any(target_os = "linux", test))]
 const INITIAL_COST: u64 = 1_000_000;
@@ -48,9 +52,9 @@ impl Cost {
     }
 
     #[cfg(any(target_os = "linux", test))]
-    pub(crate) fn grant(&self, identity: Identity, bound: u32, budget: Duration) -> Grant {
+    pub(crate) fn grant(&self, identity: Identity, bound: u32, budget: impl Into<GrantBudget>) -> Grant {
         let [work, publication] = self.estimate(identity, [INITIAL_COST, 0], 1);
-        Estimate::new(work.saturating_add(publication), 0).grant(bound, budget.as_nanos(), 1)
+        Estimate::new(work.saturating_add(publication), 0).grant(bound, budget.into(), 1)
     }
 
     pub(crate) fn observe(&mut self, identity: Identity, records: u64, pool: Duration, publication: Duration) {
@@ -114,7 +118,7 @@ impl Admission {
     }
 
     #[cfg(any(target_os = "linux", test))]
-    pub(super) fn grant(&self, identity: Identity, bound: u32, budget: Duration) -> Grant {
+    pub(super) fn grant(&self, identity: Identity, bound: u32, budget: GrantBudget) -> Grant {
         let Some(pool) = self.pool.get() else { return lock(&self.state).cost.grant(identity, bound, budget) };
         let view = lock(&pool.view);
         let mut state = lock(&self.state);
@@ -126,8 +130,8 @@ impl Admission {
             state.cost.samples = Ring::default();
             state.plan = key;
         }
-        let [work, fixed] = state.cost.estimate(identity, plan.seed(), 0);
-        let grant = Estimate::new(work, fixed).grant(bound, budget.as_nanos(), pool.workers);
+        let [work, fixed] = state.cost.estimate(identity, plan.seed(budget.cycle.map(|cycle| cycle.played_points)), 0);
+        let grant = Estimate::new(work, fixed).grant(bound, budget, pool.workers);
         pool.counters.metrics.source_model(identity, [work, fixed, u64::from(pool.workers.min(grant.records()))]);
         grant
     }

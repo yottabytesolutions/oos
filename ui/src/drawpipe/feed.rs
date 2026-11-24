@@ -167,8 +167,13 @@ impl Pipe {
     }
 
     #[cfg(any(target_os = "linux", test))]
-    pub(crate) fn grant(&self, identity: Identity, bound: u32, budget: std::time::Duration) -> super::admission::Grant {
-        self.admission.grant(identity, bound, budget)
+    pub(crate) fn grant(
+        &self,
+        identity: Identity,
+        bound: u32,
+        budget: impl Into<super::admission::GrantBudget>,
+    ) -> super::admission::Grant {
+        self.admission.grant(identity, bound, budget.into())
     }
 
     #[cfg(any(target_os = "linux", test))]

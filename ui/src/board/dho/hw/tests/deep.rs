@@ -26,7 +26,7 @@ fn deep_record_gives_vavg_from_the_raw_window() {
     let b = batch_plan(&s, &p, 1);
     let d = deep_raw_settings(&b, &p).expect("a raw window for CH2 at 10 M");
     // what the acquisition thread publishes with the batch
-    shared.lock().unwrap().deep_ok = true;
+    shared.lock().unwrap().read_geometry.deep_ok = true;
     let pairs = decode(&vec![0x5au8; oos_hal::dho::seq::frame_bytes(&b, &p)], &b, &p, 1);
     let raw = decode(&vec![0x5au8; oos_hal::dho::seq::frame_bytes(&d, &p)], &d, &p, 2);
     assert!(crate::deepmeas::deep_pairs(&pairs) && crate::deepmeas::deep_raw_frame(&raw));

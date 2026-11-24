@@ -61,7 +61,7 @@ impl Input {
         let set_metadata = move |f: &mut Frame| {
             f.dt = rate.recip();
             f.pre = points / 2;
-            f.pre_exact = true;
+            f.trigger_anchor = crate::board::TriggerAnchor::new(true);
             f.acq = (rate, depth);
         };
         let decode: DecodeInto = Arc::new(move |bytes, f| {
@@ -277,7 +277,8 @@ fn a_sub_column_trigger_shift_can_move_a_sample_across_a_column_boundary() {
     let dt = f64::from(m.time_per_div()) * f64::from(HDIV) * spacing / size as f64;
     let mut projection = standard::projection(&m, size, size, spacing);
     projection.dots = true;
-    let mut frame = Frame { pre: 2048, dt, pre_exact: true, ..Default::default() };
+    let mut frame =
+        Frame { pre: 2048, dt, trigger_anchor: crate::board::TriggerAnchor::new(true), ..Default::default() };
     frame.ch[0].resize(4096, -1.0);
     frame.ch[0][frame.pre..].fill(63.0 / 64.0);
     frame.ch[1].resize(4096, 0.0);

@@ -7,12 +7,16 @@ use super::kernel::{self, FrameTiming, Placed, Projection, RawTrace, SamplesRef,
 use crate::drawpipe::metrics::fallback::{self, Cause};
 use crate::drawpipe::route::{self, hardware_position, Route};
 use crate::drawpipe::stage::fixture_stage;
+use crate::fastdraw::Samples;
 use crate::model::*;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 mod screen;
+mod trigger;
 pub(crate) use screen::trigger as screen_trigger;
 pub(crate) use screen::AverageGrid;
+pub(crate) use trigger::batch_trigger;
+use trigger::timed_trigger;
 pub(crate) use zoom::{zoom_code_plans, zoom_plans, zoom_reduced_plans, ZoomScratch};
 mod zoom;
 
@@ -39,6 +43,7 @@ pub(crate) fn frame_timing(m: &Model, f: &crate::board::Frame) -> FrameTiming {
     FrameTiming {
         dt: f.dt,
         pre: f.pre,
+        anchor: f.trigger_anchor.point(f.pre),
         trigger: TrigSnapshot {
             source: m.trig_src,
             hysteresis: m.trig_hyst_div() * m.ch[m.trig_src].volts_per_div(),
@@ -227,7 +232,11 @@ pub(crate) fn fast_plan(
         if x_per_sample > 0.5 || f.envelope || f.roll || f.scan || m.acq == AcqMode::HiRes {
             // Preserve the 3600-point sparse record and its trigger/interpolation policy until that source migrates.
             Cause::DirectRecord.mark();
-            let rec = crate::board::to_record(f, m, 3600, window, m.delay as f64 - window / 2.0);
+            let first = m.delay as f64 - window / 2.0;
+            use crate::board::record::{record_trigger, HW_POINTS};
+            let (ti, triggered) = record_trigger(f, m, HW_POINTS, window, first);
+            trigger::count_short_window(f, (first, first + window), ti, f.ch[m.trig_src].len());
+            let rec = crate::board::resample_record(f, m, HW_POINTS, window, first, ti, triggered);
             let fold = std::array::from_fn(|c| {
                 (fold[c] && m.ch[c].on).then(|| crate::fastdraw::Fold::of(rec.ch[c].as_slice(), 0..rec.ch[c].len()))
             });
@@ -340,6 +349,8 @@ pub(crate) fn batch_plan_timed(
     } else {
         batch_trigger(m, f, &proj, &meta, (&samples[m.trig_src], route), refine_time)
     };
+    let half = proj.time_per_div * HDIV as f64 / 2.0;
+    trigger::count_short_window(f, (proj.delay - half, proj.delay + half), ti, samples[m.trig_src].len());
     let layout = words.map(|(_, _, layout)| layout);
     let placed = match route {
         Route::Pairs | Route::Boxcar => {
@@ -365,72 +376,6 @@ pub(crate) fn screen_plan(
     previous: Option<RawTrace>,
 ) -> FastFrame {
     screen::place(m, f, placement, interp, samples, previous)
-}
-
-pub(crate) fn batch_trigger(
-    m: &Model,
-    f: &crate::board::Frame,
-    proj: &Projection,
-    meta: &FrameTiming,
-    (source, route): (&SamplesRef<'_>, Route),
-    refine_time: Option<&mut Duration>,
-) -> (f64, kernel::TrigOutcome) {
-    if let Some(ti) = hardware_position(m, f) {
-        #[cfg(test)]
-        crate::trignear::fixture::placed(f, ti);
-        return (ti, kernel::TrigOutcome::Hardware);
-    }
-    #[cfg(test)]
-    if crate::trignear::fixture::bypass() {
-        return (f.pre as f64, kernel::TrigOutcome::Hardware);
-    }
-    let col = if route == Route::Pairs {
-        crate::compress::smooth_len(proj.x_per_sample)
-    } else {
-        (1.0 / proj.x_per_sample).floor().clamp(1.0, 256.0) as usize
-    };
-    let result = kernel::refine(meta, col, || {
-        timed_trigger(refine_time, || refine_batch(m, f, proj.time_per_div, meta.trigger, source, col))
-    });
-    #[cfg(test)]
-    crate::trignear::fixture::placed(f, result.0);
-    result
-}
-
-fn timed_trigger<T>(time: Option<&mut Duration>, mut search: impl FnMut() -> T) -> T {
-    let started = time.as_ref().map(|_| Instant::now());
-    let result = fixture_stage!(Trigger, search());
-    if let Some((started, time)) = started.zip(time) {
-        *time = started.elapsed();
-    }
-    result
-}
-
-fn refine_batch(
-    m: &Model,
-    f: &crate::board::Frame,
-    time_per_div: f64,
-    t: kernel::TrigSnapshot,
-    source: &SamplesRef<'_>,
-    col: usize,
-) -> crate::trignear::SearchResult {
-    use crate::fastdraw::Samples;
-    match source {
-        SamplesRef::Codes(_) => Cause::TriggerFromCodes,
-        SamplesRef::Volts(_) => Cause::TriggerFromVolts,
-    }
-    .mark();
-    let level = crate::board::sw_trig_level_of(m, source.len(), |i| source.at(i));
-    let half = (time_per_div * HDIV as f64 / 2.0 / f.dt) as usize;
-    // AC and LF reject hide the comparator's signal. At full rate, the edge is already in the sample or pair.
-    if matches!(m.trig_coupling(), TrigCoup::Ac | TrigCoup::LfReject) || (f.pre_exact && m.trig_type == TrigType::Edge)
-    {
-        crate::trignear::edge_near(source, 0, source.len(), f.pre, level, t.hysteresis, t.rising, t.either, half, col)
-    } else {
-        let trigger =
-            crate::fastdraw::EdgeSearch { level, hysteresis: t.hysteresis, rising: t.rising, either: t.either };
-        crate::trignear::edge_smooth_near_with(source, (f.pre, half, col), trigger, &|_| true, false, None)
-    }
 }
 
 /// Exceptional direct-frame consumer shares the same differences and prefix kernels as Batch.

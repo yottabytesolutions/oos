@@ -35,6 +35,29 @@ fn capture_switch_programs_and_reads_the_same_geometry() {
 }
 
 #[test]
+fn play_window_switch_never_crops_reduced_capture_or_its_reference() {
+    use super::super::window::{batch_play, configured_play_window};
+    let m = at_1us();
+    for capture in ["peak:4", "decimate:2"] {
+        let sw = switches(&format!(
+            "acq.capture = {capture}\nacq.capture.inferred = on\nacq.compress = on\nacq.play_window = on"
+        ));
+        let s = settings(&m, false, &sw);
+        assert!(sw.source.play_window());
+        assert!(matches!(s.mode, Mode::Reduced(_)));
+        let p = seq::record_geometry(&s).unwrap();
+        let play = configured_play_window(&s, &p, 1024);
+        assert_eq!(play, None);
+        let b = batch_play(&s, &p, 1, play);
+        assert_eq!((b.window, b.compress, seq::window(&b, &p)), (None, 1, (p.memsel, 0)));
+        let reference = super::super::raw::reference_settings(&s);
+        let full = seq::record_geometry(&reference).unwrap();
+        let b = batch_plan(&reference, &full, 1);
+        assert_eq!((b.window, b.compress, seq::window(&b, &full)), (None, 1, (full.memsel, 0)));
+    }
+}
+
+#[test]
 fn diagnostic_decimation_programs_a_reduced_record_with_dots_enabled() {
     let model = Model { dots: DotsMode::On, ..at_1us() };
     let sw = switches("acq.capture = decimate:2\nacq.capture.inferred = on");

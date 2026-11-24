@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::super::{
-    batch, batch_plan, batch_timing,
+    batch, batch_timing,
     comparator::{is_stall, logs_acquire_error, mask_map, unit_key},
     dma_source::{self, ArmPlan},
     lifecycle,
-    window::prearm_keeps_replay,
+    window::{batch_play, configured_play_window, prearm_keeps_replay},
     Settings,
 };
 use super::dispatch::{Handoff, Published};
@@ -44,16 +44,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
             super::reference::reduced_batch(self, io, (settings, params), &request);
             return;
         }
-        let mut b = batch_plan(settings, params, self.switches.board.zone_batch);
-        let (deposit, uncapped) = batch::deposit_plan(&b, params, request.identity, request.route);
-        let uncapped = request.run.batch_bound(uncapped);
-        let grant = batch::grant(
-            (deposit, uncapped),
-            &self.batch.cap,
-            (&self.out, request.identity),
-            (&b, params),
-            self.switches.source.work_budget(),
-        );
+        let (mut b, (deposit, uncapped, grant)) = self.admit_batch(settings, params, &request);
         dma_source::limit_frames(
             &mut b,
             grant.records(),
@@ -81,6 +72,43 @@ impl<T: PacingPolicy> AcqLoop<T> {
             return;
         };
         self.capture(io, capture, (&plan, deposit), (ahead, tap, timing, last_read));
+    }
+
+    fn admit_batch(
+        &mut self,
+        settings: &Settings,
+        params: &hz::Params,
+        request: &Request,
+    ) -> (Settings, (Option<&'static Pipe>, u32, drawpipe::admission::Grant)) {
+        let window = self.play_window(settings, params, request.run.plot_columns);
+        let b = batch_play(settings, params, self.switches.board.zone_batch, window);
+        let (deposit, uncapped) = batch::deposit_plan(&b, params, request.identity, request.route);
+        let uncapped = request.run.batch_bound(uncapped);
+        let grant = batch::grant(
+            (deposit, uncapped),
+            &self.batch.cap,
+            (&self.out, request.identity),
+            (&b, params),
+            (self.switches.source.work_budget(), || self.pacing.picture_period()),
+        );
+        (b, (deposit, uncapped, grant))
+    }
+
+    fn play_window(&mut self, settings: &Settings, params: &hz::Params, columns: usize) -> Option<(u32, i64)> {
+        if !self.switches.source.play_window() {
+            return None;
+        }
+        if let Some((width, window)) = self.configured.play_window {
+            if width == columns {
+                return window;
+            }
+        }
+        let window = configured_play_window(settings, params, columns);
+        if self.configured.play_window.is_some_and(|(_, previous)| previous != window) {
+            self.batch.cap.reset_window();
+        }
+        self.configured.play_window = Some((columns, window));
+        window
     }
 
     pub(super) fn capture(
@@ -265,7 +293,7 @@ impl BatchState {
                 &self.cap,
                 (out, request.identity),
                 (b, p),
-                switches.source.work_budget(),
+                (switches.source.work_budget(), crate::pacing::picture_period),
             )
         });
         let clock = io.clock;

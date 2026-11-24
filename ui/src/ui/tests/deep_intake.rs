@@ -189,7 +189,7 @@ fn queued_raw_before_pair_keeps_measurement_sample_identity() {
         ..pair.clone()
     });
     let pair = std::sync::Arc::new(pair);
-    lock(&shared).deep_ok = true;
+    lock(&shared).read_geometry.deep_ok = true;
     let (_done, rx) = std::sync::mpsc::channel();
     let (tx, _jobs) = std::sync::mpsc::channel();
     let (_analysis, analysis_rx) = std::sync::mpsc::channel();

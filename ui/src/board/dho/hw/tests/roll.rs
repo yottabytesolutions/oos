@@ -30,7 +30,7 @@ fn scan_picture_wraps_and_fills_the_screen() {
         la: None,
         fixed_ti: None,
         hw_avg: false,
-        pre_exact: false,
+        trigger_anchor: crate::board::TriggerAnchor::new(false),
         cfg: 0,
         basic: Default::default(),
     };

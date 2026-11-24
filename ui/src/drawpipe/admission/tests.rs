@@ -26,7 +26,8 @@ fn a_scripted_pool_has_one_fixed_point_at_every_batch_size() {
                             let sample = Estimate::sample(records.into(), work, wall, 19, workers);
                             cost.record(id, sample.values());
                             let [work, fixed] = cost.estimate(id, [1, 0], 0);
-                            let grant = Estimate::new(work, fixed).grant(142, budget.into(), workers);
+                            let grant =
+                                Estimate::new(work, fixed).grant(142, Duration::from_nanos(budget).into(), workers);
                             records = grant.records();
                             let predicted = |n: u32| fixed + (u64::from(n) * work).div_ceil(u64::from(n.min(workers)));
                             if grant.serial() {
@@ -159,7 +160,7 @@ fn two_threads_release_every_old_flight_across_identity_changes() {
             boundary.wait();
             assert!(!admission.busy());
             assert_ne!(event.generation(), seen);
-            assert_eq!(admission.grant(new, 100, WORK_BUDGET).records(), 12);
+            assert_eq!(admission.grant(new, 100, WORK_BUDGET.into()).records(), 12);
             boundary.wait();
         }
     });

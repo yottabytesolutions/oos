@@ -12,6 +12,7 @@ pub struct AcquisitionCounters {
     events: [AtomicU64; 9],
     diagnostics: crate::perfguard::deep::Diagnostics,
     disarm: disarm::Counters,
+    play_window_rejected: AtomicU64,
 }
 
 #[derive(Clone, Copy)]
@@ -39,6 +40,15 @@ impl AcquisitionCounters {
 
     pub(crate) fn diagnostics(&self) -> &crate::perfguard::deep::Diagnostics {
         &self.diagnostics
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn reject_play_window(&self) {
+        self.play_window_rejected.update(Ordering::Relaxed, Ordering::Relaxed, |n| n.saturating_add(1));
+    }
+
+    pub(crate) fn play_window_rejections(&self) -> u64 {
+        self.play_window_rejected.load(Ordering::Relaxed)
     }
 
     #[cfg(any(target_os = "linux", test))]

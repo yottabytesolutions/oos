@@ -3,7 +3,7 @@
 //! Full-bandwidth readers and draw-only peak batches share one acquisition identity.
 
 use super::super::{
-    batch, batch_plan, batch_timing::SourceTiming, dma_source::ArmPlan, header::dump, lifecycle, raw, Settings,
+    batch, batch_timing::SourceTiming, dma_source::ArmPlan, header::dump, lifecycle, plan::batch_plan, raw, Settings,
 };
 use super::{
     pacing::PacingPolicy,
@@ -134,7 +134,7 @@ fn capture_profile(
         &source.batch.cap,
         (&source.out, request.identity),
         (&b, params),
-        source.switches.source.work_budget(),
+        (source.switches.source.work_budget(), || source.pacing.picture_period()),
     );
     b.frames = grant.records();
     let plan = ArmPlan::new(&b, request.identity, request.route, Some(pipe), true);

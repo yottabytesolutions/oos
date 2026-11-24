@@ -81,7 +81,7 @@ fn trigger_fixture(exact: bool) -> (Arc<Batch>, Arc<View>) {
     let mut frame = Frame::default();
     decode(&bytes, &mut frame);
     assert_eq!((frame.acq.0, frame.ch[1].len()), (312_500_000.0, 35_160));
-    assert!(frame.pre_exact);
+    assert!(frame.trigger_anchor.at_adc_rate());
     let arm = (m.trig_hyst_div() * 7500.0).round() as u16;
     const PERIOD: usize = 3125;
     for (i, group) in bytes.as_chunks_mut::<8>().0.iter_mut().enumerate() {
@@ -100,12 +100,12 @@ fn trigger_fixture(exact: bool) -> (Arc<Batch>, Arc<View>) {
         let raw = codes.unwrap();
         let codes: CodesInto = Arc::new(move |i, bytes, frame| {
             let layout = raw(i, bytes, frame)?;
-            frame.pre_exact = false;
+            frame.trigger_anchor = crate::board::TriggerAnchor::new(false);
             Some(layout)
         });
         let decode: DecodeInto = Arc::new(move |bytes, frame| {
             decode(bytes, frame);
-            frame.pre_exact = false;
+            frame.trigger_anchor = crate::board::TriggerAnchor::new(false);
         });
         (decode, Some(codes))
     };

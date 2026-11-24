@@ -345,7 +345,7 @@ fn read_newest(path: &Path, fields: &Fields<'_>) -> Result<Option<Frame>, String
         pre: cast("newest pre", pre)?,
         acq: (finite_str("newest rate", rate)?, cast("newest stored points", mem)?),
         envelope: cast("newest envelope", envelope)?,
-        pre_exact: cast("newest pre exact", exact)?,
+        trigger_anchor: crate::board::TriggerAnchor::new(cast("newest pre exact", exact)?),
         ch,
         ..Frame::default()
     }))

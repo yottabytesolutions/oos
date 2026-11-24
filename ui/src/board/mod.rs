@@ -235,6 +235,11 @@ impl BasicStats {
 }
 
 mod frame_summary;
+mod trigger_anchor;
+#[cfg(any(target_os = "linux", test))]
+pub(crate) use trigger_anchor::PlayedWindow;
+use trigger_anchor::ReadGeometry;
+pub(crate) use trigger_anchor::TriggerAnchor;
 
 /// One decoded record: volts per enabled channel, sample period and trigger index.
 #[derive(Clone, Default)]
@@ -266,9 +271,8 @@ pub struct Frame {
     pub fixed_ti: Option<f64>,
     /// the FPGA averaged this frame (Average mode with `Board::avg_hw`): the software average leaves it alone
     pub hw_avg: bool,
-    /// `pre` is the sample the trigger fired on (with FPGA compression: its pair): read at the full rate of the channel
-    /// set (trigger.md 7: the point is off the edge only with decimation). False where not known.
-    pub pre_exact: bool,
+    /// Hardware trigger geometry for live edge refinement.
+    pub(crate) trigger_anchor: TriggerAnchor,
     /// Resolved acquisition generation applied with this frame's epoch (`stamp`).
     pub cfg: u64,
 }
@@ -453,9 +457,7 @@ pub struct Shared {
     pub needs_raw: bool,
     /// raw reads of deep records for the measurements, as the UI wants them (deepmeas.rs; None: off)
     pub deep_raw: Option<crate::deepmeas::Want>,
-    /// the batch plan can read the raw screen window of its deep records (`hw::deep_raw_settings`): the only judge of
-    /// whether a raw record will come, which `deepmeas::hold` waits for
-    pub deep_ok: bool,
+    pub(crate) read_geometry: ReadGeometry,
     /// the FPGA's mask unit: wanted by the UI (None: off), the latest reading
     pub mask_want: Option<MaskWant>,
     pub mask: Option<MaskRead>,

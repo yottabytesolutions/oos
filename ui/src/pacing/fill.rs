@@ -99,12 +99,39 @@ pub struct FrameCap {
     /// mean deviation of the rest (time before the fill and read)
     dev: f32,
     cap: Option<u32>,
+    #[cfg(any(target_os = "linux", test))]
+    window_read: Option<(Duration, Duration)>,
 }
 
 impl FrameCap {
     /// `frames` (what the batch would read) capped.
     pub fn apply(&self, frames: u32) -> u32 {
         self.cap.map_or(frames, |c| frames.min(c))
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn reset_window(&mut self) {
+        self.window_read = None;
+    }
+
+    /// Fixed arm and readout setup, then DMA time per played record.
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn observe_window(&mut self, count: u32, fixed: Duration, dma: Duration) {
+        if count == 0 || dma.is_zero() {
+            return;
+        }
+        let per_record = dma.div_f64(f64::from(count));
+        let blend = |old: Duration, sample: Duration| old.mul_f64(0.8) + sample.mul_f64(0.2);
+        self.window_read = Some(self.window_read.map_or((fixed, per_record), |(old_fixed, old_per_record)| {
+            (blend(old_fixed, fixed), blend(old_per_record, per_record))
+        }));
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn window_read(&self, stored_words: u64) -> (Duration, Duration) {
+        // Cold estimate from the cropped read model in docs/fork/played-window.md, plus 1 ms for the arm.
+        self.window_read
+            .unwrap_or_else(|| (Duration::from_micros(1700), Duration::from_nanos((stored_words * 73).div_ceil(10))))
     }
 
     /// A batch read `count` frames in `read_ms` after `pre_ms` from its start to the start of its fill; `asked` is

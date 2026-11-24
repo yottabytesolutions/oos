@@ -344,6 +344,8 @@ impl<T: PacingPolicy> AcqLoop<T> {
         }
         self.batch.configured(want.mode, self.switches.board.avg_kind(), request.avg_clear);
         self.configured.mode = request.mode;
+        self.configured.play_window = None;
+        self.batch.cap.reset_window();
         self.configured.current = Some((want, params));
         true
     }

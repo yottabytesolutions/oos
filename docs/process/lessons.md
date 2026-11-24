@@ -103,6 +103,10 @@ pull request that fixes a mistake: what happened, then the rule.
   thread's own allocations for synchronous work. Even a child running one test shares its heap with the harness.
 - A socket test assumed the peer's close was readable on the next poll. On a loaded macOS host it was not. Wait on
   the event (a blocking `peek` with a hang guard), never on timing.
+- Adding a played-window counter inside an existing state section changed the section boundaries. Keep new standalone
+  state fields ahead of the versioned pipeline sections and preserve each existing section's field list.
+- A played-window margin mixed stored samples with compressed trigger-search points. Compute the search and filter
+  support in played points, then multiply by the effective compression factor before aligning the stored window.
 - The nightly image build fetched a patch from a host that answered HTTP 418 to CI. Fetch build inputs from a
   mirror that CI can reach.
 - A wait loop watched only the CI checks, leaving a Codex finding unseen for an hour. Watch the `codex-review`

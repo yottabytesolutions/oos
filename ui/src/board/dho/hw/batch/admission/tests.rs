@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 use super::*;
 use crate::drawpipe::budget::WORK_BUDGET;
+mod played_cycle;
 mod two_channel;
 use crate::model::{Model, RunState};
 fn fixture() -> (Pipe, Settings, hz::Params, Identity, Model) {

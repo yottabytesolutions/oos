@@ -61,7 +61,7 @@ pub fn frame_mean(len: usize, at: impl Fn(usize) -> f32) -> Option<f64> {
 }
 
 /// Use a fixed trigger when supplied, otherwise refine it with screen-point smoothing.
-/// The raw deep window only uses the near search.
+/// Live crops and raw deep windows use the near search.
 pub(crate) fn smoothed_edge(
     f: &Frame,
     m: &Model,
@@ -85,18 +85,22 @@ fn smoothed_edge_with(
     let span = (window / f.dt).ceil() as usize / 2;
     let col = (window / n as f64 / f.dt).floor().clamp(1.0, 256.0) as usize;
     let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
-    let fits = trigger_fits(f.dt, (window, first, len));
     let level = sw_trig_level_of(m, src.len(), |i| src.at(i));
     let hyst = m.trig_hyst_div() * m.ch[m.trig_src].volts_per_div();
+    let trigger = crate::fastdraw::EdgeSearch { level, hysteresis: hyst, rising, either };
+    let anchor = f.trigger_anchor.point(f.pre);
+    if f.trigger_anchor.cropped() {
+        let found = crate::trignear::edge_near_cropped(src, (anchor, span, col), anchor + first / f.dt, trigger);
+        // The comparator saw the filtered signal: without a software crossing its own point still stands.
+        return found.or((m.trig_coupling() != TrigCoup::Dc).then_some(anchor));
+    }
+    let fits = trigger_fits(f.dt, (window, first, len));
     if near_only {
         let found =
             crate::trignear::edge_near_window(src, 0, src.len(), f.pre, level, hyst, rising, either, span, col, fits);
         return Some(found.and_then(|r| r.0).unwrap_or(f.pre as f64));
     }
-    let trigger = crate::fastdraw::EdgeSearch { level, hysteresis: hyst, rising, either };
-    let require_end_rail = !crate::deepmeas::deep_pairs(f);
-    let found =
-        crate::trignear::edge_smooth_near_with(src, (f.pre, span, col), trigger, &fits, require_end_rail, wide).0;
+    let found = crate::trignear::edge_smooth_near_with(src, (anchor, span, col), trigger, &fits, wide).0;
     // A filtered comparator can fire without a crossing at this estimated software level.
     found.or((m.trig_coupling() != TrigCoup::Dc).then_some(f.pre as f64))
 }
@@ -135,7 +139,7 @@ fn trigger_point_with(
             crate::deepmeas::deep_raw_frame(f),
             wide,
         );
-        if smooth.is_some() {
+        if smooth.is_some() || f.trigger_anchor.cropped() {
             return smooth;
         }
     }
@@ -207,7 +211,7 @@ pub(crate) fn record_trigger_with(
         // scan: point 0 at the left edge of the screen
         -t_first / f.dt
     } else {
-        found.unwrap_or(f.pre as f64)
+        found.unwrap_or_else(|| f.trigger_anchor.point(f.pre))
     };
     (ti, found.is_some())
 }
@@ -448,7 +452,7 @@ mod tests {
             la: None,
             fixed_ti: None,
             hw_avg: false,
-            pre_exact: false,
+            trigger_anchor: crate::board::TriggerAnchor::new(false),
             cfg: 0,
             basic: Default::default(),
         });
@@ -492,7 +496,7 @@ mod tests {
             la: None,
             fixed_ti: None,
             hw_avg: false,
-            pre_exact: false,
+            trigger_anchor: crate::board::TriggerAnchor::new(false),
             cfg: 0,
             basic: Default::default(),
         };
@@ -525,7 +529,7 @@ mod peak_detect {
             la: None,
             fixed_ti: None,
             hw_avg: false,
-            pre_exact: false,
+            trigger_anchor: crate::board::TriggerAnchor::new(false),
             cfg: 0,
             basic: Default::default(),
         });
@@ -657,7 +661,7 @@ mod bench {
                 la: None,
                 fixed_ti: None,
                 hw_avg: false,
-                pre_exact: false,
+                trigger_anchor: crate::board::TriggerAnchor::new(false),
                 cfg: 0,
                 basic: Default::default(),
             });

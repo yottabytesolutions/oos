@@ -27,6 +27,7 @@ pub(super) struct Run {
     pub(super) cores: bool,
     pub(super) deep: Option<crate::deepmeas::Want>,
     pub(super) segment_bound: Option<u32>,
+    pub(super) plot_columns: usize,
 }
 
 impl Request {
@@ -62,6 +63,7 @@ impl Request {
                 cores: g.cores,
                 deep: g.deep_raw,
                 segment_bound: g.record_flow.segment_bound(),
+                plot_columns: g.acquisition.plot_columns(),
             },
             dvm: g.dvm_want,
             slots: g.slots_want,
@@ -138,7 +140,7 @@ pub(super) fn record_grant(
     bound: u32,
     settings: &oos_hal::dho::seq::Settings,
     params: &oos_hal::dho::hz::Params,
-    budget: std::time::Duration,
+    budget: impl Into<crate::drawpipe::admission::GrantBudget>,
 ) -> crate::drawpipe::admission::Grant {
     let (per, newest) = record_sizes(settings, params);
     // A singleton may exceed the sample bound. With no analog channels, only the newest LA record costs samples.

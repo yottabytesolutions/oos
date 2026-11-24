@@ -29,7 +29,7 @@ impl HardwareRequest {
         let sw = ui.switches();
         let gen_count = crate::model::gen_count();
         Self {
-            publication: Publication::new(prepared.changes.identity(), needs.route()),
+            publication: Publication::new(prepared.changes.identity(), needs.route()).with_plot_columns(ui.ph.w),
             want: want(model, sw, needs.mixed_bus()),
             slow: board().slow_mode(model),
             deep_raw: crate::deepmeas::want(model),

@@ -6,9 +6,44 @@
 #![cfg(any(target_os = "linux", test))]
 
 use super::read_plan::ReadPlan;
-use oos_hal::dho::{hz, seq::Settings};
+use oos_hal::dho::{
+    hz,
+    seq::{self, Settings},
+};
 
 pub use super::read_plan::stop_plan;
+
+/// Choose the live crop once, before batch admission. A rejected crop leaves the original play intact.
+pub(super) fn configured_play_window(s: &Settings, p: &hz::Params, columns: usize) -> Option<(u32, i64)> {
+    match super::read_plan::live_window(s, p, columns) {
+        Ok(window) => window,
+        Err(error) => {
+            crate::drawpipe::counters().acquisition.reject_play_window();
+            eprintln!("oos-ui hw: played window rejected, using whole-record play: {error}");
+            None
+        }
+    }
+}
+
+pub(super) fn batch_play(s: &Settings, p: &hz::Params, zone_batch: u32, window: Option<(u32, i64)>) -> Settings {
+    let mut b = s.clone();
+    if window.is_some() {
+        b.window = window;
+    }
+    super::read_plan::read_plan(&b, p, zone_batch).apply(&mut b);
+    b
+}
+
+pub(super) fn is_live_crop(s: &Settings, p: &hz::Params) -> bool {
+    s.window.is_some() && p.memsel <= crate::compress::MAX_DEPTH && seq::compress_k(s, p) > 1
+}
+
+/// Newest-record replay for readers and STOP, independent of the live display crop.
+pub(super) fn whole_raw_replay(b: &Settings) -> Settings {
+    let mut raw = seq::raw_settings(b);
+    raw.window = None;
+    raw
+}
 
 /// Whether arming ahead (`acq.prearm`) leaves the replay at STOP possible: not for a batch of the live compression or
 /// one whose newest frame the deep measurements may read raw (`deep_raw_settings`), since the next batch would write

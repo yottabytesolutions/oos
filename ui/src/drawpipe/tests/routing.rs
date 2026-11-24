@@ -15,7 +15,10 @@ fn near_only_where_the_hardware_point_stands_wide_elsewhere() {
     let f = crate::board::dho::hw::decode(&bytes, &s, &p, 0);
     let mut g0 = Frame::default();
     let lay = crate::board::dho::hw::codes_into(&bytes, &s, &p, 0, &mut g0).expect("raw frame");
-    assert!(f.pre == 50_000 && f.pre_exact && g0.pre_exact, "a full-rate raw read is exact");
+    assert!(
+        f.pre == 50_000 && f.trigger_anchor.at_adc_rate() && g0.trigger_anchor.at_adc_rate(),
+        "a full-rate raw read is exact"
+    );
     // at the hardware point: a level no sample reaches finds no edge
     let mut at_pre = Phosphor::new(w, h);
     let mut m = model(1e-5, false, false);
@@ -52,12 +55,12 @@ fn check_trigger_route(
     m.trig_coup = coup;
     set(&mut m);
     let mut fe = f.clone();
-    fe.pre_exact = exact;
+    fe.trigger_anchor = crate::board::TriggerAnchor::new(exact);
     let (mut a, mut b) = (Phosphor::new(w, h), Phosphor::new(w, h));
     let (mut sa, mut sb) = (([0u64; 4], (0.0, 0.0)), ([0u64; 4], (0.0, 0.0)));
     let ta = draw_frame(&mut a, &m, &fe, Interp::Exact, Some(Stats { edges: &mut sa.0, off: &mut sa.1 }));
     let mut meta = g0.clone();
-    meta.pre_exact = exact;
+    meta.trigger_anchor = crate::board::TriggerAnchor::new(exact);
     let codes = Arc::new(move |_, _: &[u8], f: &mut Frame| {
         f.clone_from(&meta);
         Some(lay)
@@ -88,7 +91,7 @@ fn verify_exact_read_flags(bytes: &[u8], s: &Settings, p: hz::Params) {
         let q = hz::Params { rate, ..p };
         let t = Settings { compress, ..s.clone() };
         assert_eq!(
-            crate::board::dho::hw::decode(bytes, &t, &q, 0).pre_exact,
+            crate::board::dho::hw::decode(bytes, &t, &q, 0).trigger_anchor.at_adc_rate(),
             exact,
             "rate {} compress {}",
             rate,
@@ -125,7 +128,7 @@ fn compressed_full_rate_reads_search_near_decimated_ones_wide() {
         ch: [v, Vec::new(), Vec::new(), Vec::new()],
         envelope: true,
         acq: (1.25e9, 1_000_000),
-        pre_exact: exact,
+        trigger_anchor: crate::board::TriggerAnchor::new(exact),
         ..Default::default()
     };
     assert!(crate::compress::live(&frame(Vec::new(), true)));

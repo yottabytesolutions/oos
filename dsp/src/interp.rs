@@ -57,8 +57,9 @@ pub fn lanczos(v: &[f32], x: f64, a: usize) -> Option<f32> {
 
 /// Phases of the precomputed Lanczos kernel (`lanczos8`).
 const PHASES: usize = 1024;
-/// Lobes of `lanczos8`.
-const A: usize = 8;
+/// Radius in samples of the 16-tap `lanczos8` kernel.
+pub const LANCZOS8_RADIUS: usize = 8;
+const A: usize = LANCZOS8_RADIUS;
 
 /// Kernel table of `lanczos8`: for each phase p (fraction p / PHASES) the 2A weights of the samples i0 - A + 1 ..= i0 + A.
 fn table() -> &'static [f32] {

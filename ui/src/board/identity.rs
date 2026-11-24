@@ -61,10 +61,18 @@ pub(crate) struct Publication {
     identity: Identity,
     route: bool,
     start_epoch: u64,
+    plot_columns: Option<usize>,
 }
 impl Publication {
     pub(crate) fn new(identity: Identity, route: bool) -> Self {
-        Self { identity, route, start_epoch: 0 }
+        Self { identity, route, start_epoch: 0, plot_columns: None }
+    }
+    pub(crate) fn with_plot_columns(mut self, columns: usize) -> Self {
+        self.plot_columns = Some(columns.max(1));
+        self
+    }
+    pub(in crate::board) fn plot_columns(self) -> usize {
+        self.plot_columns.unwrap_or(crate::layout::Screen::PANEL.w as usize)
     }
     /// Only an accepted RUN or SINGLE starts a new diagnostic lifetime.
     pub(crate) fn replace(&mut self, mut next: Self, started: bool) {

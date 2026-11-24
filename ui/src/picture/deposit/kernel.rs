@@ -104,6 +104,7 @@ pub(crate) struct TrigSnapshot {
 pub(crate) struct FrameTiming {
     pub(crate) dt: f64,
     pub(crate) pre: usize,
+    pub(crate) anchor: f64,
     pub(crate) trigger: TrigSnapshot,
 }
 
@@ -164,16 +165,16 @@ pub(crate) fn refine(
     search: impl FnOnce() -> (Option<f64>, Option<oos_dsp::edges::Edge>),
 ) -> (f64, TrigOutcome) {
     if meta.trigger.on_la {
-        return (meta.pre as f64, TrigOutcome::Hardware);
+        return (meta.anchor, TrigOutcome::Hardware);
     }
     let (edge, any) = search();
     let outcome = match (edge, any) {
         (None, _) => TrigOutcome::NotFound,
-        (Some(t), _) if (t - meta.pre as f64).abs() <= (col + 16) as f64 => TrigOutcome::AtPoint,
+        (Some(t), _) if (t - meta.anchor).abs() <= (col + 16) as f64 => TrigOutcome::AtPoint,
         (Some(_), Some(n)) if !meta.trigger.either && n.rising != meta.trigger.rising => TrigOutcome::WrongSlope,
-        (Some(t), _) => TrigOutcome::Moved((t - meta.pre as f64).abs()),
+        (Some(t), _) => TrigOutcome::Moved((t - meta.anchor).abs()),
     };
-    (edge.unwrap_or(meta.pre as f64), outcome)
+    (edge.unwrap_or(meta.anchor), outcome)
 }
 
 pub(crate) fn place(

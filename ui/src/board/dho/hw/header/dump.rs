@@ -168,7 +168,12 @@ fn write_capture(
         let _ = writeln!(
             meta,
             "newest={} {} {} {} {} {} {a} {b} {c} {d}",
-            frame.dt, frame.pre, frame.acq.0, frame.acq.1, frame.envelope, frame.pre_exact
+            frame.dt,
+            frame.pre,
+            frame.acq.0,
+            frame.acq.1,
+            frame.envelope,
+            frame.trigger_anchor.at_adc_rate()
         );
         let fixed_ti = frame.fixed_ti.map_or_else(|| "none".into(), |ti| ti.to_string());
         let _ = writeln!(meta, "newest_flags={} {} {} {fixed_ti}", frame.roll, frame.scan, frame.partial);

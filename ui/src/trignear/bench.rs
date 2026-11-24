@@ -80,7 +80,7 @@ fn bench_shape(stride: usize, n: usize, signal: &str, v: &[f32]) {
         });
         let wide_us = micros(records.len(), |i| {
             let (words, t, pre) = &records[i];
-            smooth_all(&black_box(codes(words, stride)), *pre, *t, span, l, &|_| true)
+            smooth_all(&black_box(codes(words, stride)), *pre as f64, *t, span, l, &|_| true)
         });
         let near_us = micros(records.len(), |i| try_near(black_box(i)));
         let (convert, smooth, scan) = bench_stages(&records, stride, (n, span, l));

@@ -63,7 +63,7 @@ pub(super) fn compare<S: TriggerSamples + ?Sized>(
     if MODE.load(Ordering::Relaxed) != COLLECT {
         return;
     }
-    let wide = smooth_all(source, pre, trigger, span, width, fits);
+    let wide = smooth_all(source, pre as f64, trigger, span, width, fits);
     let bits = |(want, any): SearchResult| (want.map(f64::to_bits), any.map(|e| (e.t.to_bits(), e.rising)));
     let mut total = oos_hal::sync::lock(&TOTAL);
     match outcome {

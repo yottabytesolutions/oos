@@ -190,13 +190,13 @@ fn narrow_trigger_matches_wide_on_noisy_code_edges_and_rails() {
                 for level in [0.0, 32_768.0, f32::from(u16::MAX)] {
                     let trigger = EdgeSearch { level, hysteresis: 8.0, rising, either: false };
                     let fits = &|_| true;
-                    let expected = smooth_all(&codes, pre, trigger, span, l, fits);
+                    let expected = smooth_all(&codes, pre as f64, trigger, span, l, fits);
                     let mut fallback = false;
                     let mut wide = |_, _: &dyn Fn(f64) -> bool| {
                         fallback = true;
                         expected
                     };
-                    let got = edge_smooth_near_with(&codes, (pre, span, l), trigger, fits, false, Some(&mut wide));
+                    let got = edge_smooth_near_with(&codes, (pre as f64, span, l), trigger, fits, Some(&mut wide));
                     assert_eq!(bits(got), bits(expected), "{rising} {offset} {l} {level}");
                     if level == 32_768.0 {
                         assert_eq!(fallback, offset.unsigned_abs() > near_span(l));

@@ -359,7 +359,7 @@ impl Source {
     /// The acquisition can read deep records raw for the measurements (`Shared::deep_ok`); false for other sources.
     pub fn hw_deep_ok(&self) -> bool {
         match self {
-            Source::Hw { shared, .. } => crate::perfguard::deep::ui_lock(shared).deep_ok,
+            Source::Hw { shared, .. } => crate::perfguard::deep::ui_lock(shared).read_geometry.deep_ok,
             _ => false,
         }
     }
@@ -681,7 +681,7 @@ impl Source {
                     stamp: 0,
                     // a replay record is made on the step that shows it: `change::acquisition::record` takes it
                     cfg: 0,
-                    pre_exact: false,
+                    trigger_anchor: crate::board::TriggerAnchor::new(false),
                     basic: basic.into(),
                     la: None,
                     fixed_ti: None,

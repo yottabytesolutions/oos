@@ -226,8 +226,10 @@ impl Counters {
     pub(crate) fn pipeline_text(&self, budget: std::time::Duration, step_missed: u64) -> String {
         let full = self.losses.unexpected_full.load(Ordering::Relaxed);
         let busy = self.losses.unexpected_busy.load(Ordering::Relaxed);
+        let short = self.routes.fallbacks.short_windows();
+        let rejected = self.acquisition.play_window_rejections();
         let mut text = format!(
-            " intake.unexpected_full={full} admission.unexpected_busy={busy}{} step.missed={step_missed}",
+            " intake.unexpected_full={full} admission.unexpected_busy={busy} window.short={short} window.rejected={rejected}{} step.missed={step_missed}",
             self.metrics.text(&self.routes, budget),
         );
         self.routes.fallbacks.write(&mut text);

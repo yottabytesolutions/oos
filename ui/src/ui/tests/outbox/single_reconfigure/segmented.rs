@@ -229,8 +229,7 @@ fn check_segment_boundary(phase: crate::board::SegPhase, boundary: &str) {
     assert!(lock(&shared).seg.times.is_empty());
     assert_eq!(event("acq_seg_start="), 2);
     assert_eq!(event("acq_configure="), if boundary == "configure" { 2 } else { 1 });
-    // until the SINGLE ends, bounded by time: the frames a step takes follow its measured time (`fast_take_next`), so a
-    // slow build (coverage, tests in parallel) needs more steps for the same segments
+    // Continue stepping until the final segment completes SINGLE and applies STOP.
     let deadline = crate::ui::lifecycle::test_wait::Wait::new("segmented SINGLE completion applies STOP");
     loop {
         deadline.poll();

@@ -14,8 +14,14 @@ pub struct Edge {
 /// counted when the signal goes from below level - hyst/2 to above level + hyst/2; its time is the last crossing of
 /// `level` before that (linear interpolation). NaN samples are skipped.
 pub fn edges(v: &[f32], level: f32, hyst: f32) -> Vec<Edge> {
-    let (lo, hi) = (level - hyst / 2.0, level + hyst / 2.0);
     let mut out = Vec::new();
+    visit_edges(v, level, hyst, |edge| out.push(edge));
+    out
+}
+
+/// Visit centred-hysteresis edges in sample order without allocating a list.
+pub fn visit_edges(v: &[f32], level: f32, hyst: f32, mut emit: impl FnMut(Edge)) {
+    let (lo, hi) = (level - hyst / 2.0, level + hyst / 2.0);
     let mut state: Option<bool> = None;
     let mut last_cross: Option<f64> = None;
     let mut prev: Option<(usize, f32)> = None;
@@ -38,17 +44,16 @@ pub fn edges(v: &[f32], level: f32, hyst: f32) -> Vec<Edge> {
             }
             Some(false) if x > hi => {
                 state = Some(true);
-                out.push(Edge { t: last_cross.unwrap_or(i as f64), rising: true });
+                emit(Edge { t: last_cross.unwrap_or(i as f64), rising: true });
             }
             Some(true) if x < lo => {
                 state = Some(false);
-                out.push(Edge { t: last_cross.unwrap_or(i as f64), rising: false });
+                emit(Edge { t: last_cross.unwrap_or(i as f64), rising: false });
             }
             _ => {}
         }
         prev = Some((i, x));
     }
-    out
 }
 
 /// Edges of `v` as the trigger comparators of the FPGA see them (docs/protocols/trigger.md 2.3): a rising edge is armed
@@ -59,11 +64,28 @@ pub fn edges(v: &[f32], level: f32, hyst: f32) -> Vec<Edge> {
 /// Unlike `edges`, the band is not centred: noise that stays within `h` below the level never arms a rising edge,
 /// as on the hardware, and an edge is decided at its crossing.
 pub fn trigger_edges(v: &[f32], level: f32, h: f32) -> Vec<Edge> {
+    let mut out = Vec::new();
+    trigger_edges_into(v, level, h, &mut out);
+    out
+}
+
+/// Fill caller-owned storage with the same edges as `trigger_edges`.
+pub fn trigger_edges_into(v: &[f32], level: f32, h: f32, out: &mut Vec<Edge>) {
+    trigger_edges_indexed_into(v.iter().copied().enumerate(), level, h, out);
+}
+
+/// Fill caller-owned storage from samples in ascending index order. Missing indices act like NaNs.
+pub fn trigger_edges_indexed_into(
+    samples: impl Iterator<Item = (usize, f32)>,
+    level: f32,
+    h: f32,
+    out: &mut Vec<Edge>,
+) {
+    out.clear();
     let (arm_r, arm_f) = (level - h, level + h);
     let (mut up, mut down) = (false, false);
-    let mut out = Vec::new();
     let mut prev: Option<(usize, f32)> = None;
-    for (i, &x) in v.iter().enumerate() {
+    for (i, x) in samples {
         if !x.is_finite() {
             continue;
         }
@@ -84,7 +106,6 @@ pub fn trigger_edges(v: &[f32], level: f32, h: f32) -> Vec<Edge> {
         }
         prev = Some((i, x));
     }
-    out
 }
 
 /// Logic state of `v` at every sample with hysteresis (None until the first decision).
@@ -106,6 +127,21 @@ pub fn states(v: &[f32], level: f32, hyst: f32) -> Vec<Option<bool>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn indexed_trigger_preserves_gaps_in_interpolation() {
+        let samples = [-1.0, f32::NAN, 1.0, f32::NAN, f32::NAN, -2.0];
+        let mut indexed = Vec::new();
+        trigger_edges_indexed_into(
+            samples.into_iter().enumerate().filter(|(_, x)| x.is_finite()),
+            0.0,
+            0.1,
+            &mut indexed,
+        );
+        assert_eq!(indexed, trigger_edges(&samples, 0.0, 0.1));
+        assert_eq!(indexed[0].t.to_bits(), 1.0f64.to_bits());
+        assert_eq!(indexed[1].t.to_bits(), 3.0f64.to_bits());
+    }
 
     #[test]
     fn square_with_noise() {

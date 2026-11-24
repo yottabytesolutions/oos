@@ -5,82 +5,210 @@ use crate::perfguard::deep::acq_lock as lock;
 use oos_core::change::Identity;
 use oos_hal::dho::acq::Mode;
 
-type Request = (Option<Gen>, Option<Want>, Slow, u64, Option<MaskWant>, Option<ZoneWant>, bool, Identity, bool);
-
-pub(super) fn snapshot(out: &HwShared) -> Request {
-    let g = lock(out);
-    (
-        g.afg[0],
-        g.want.clone(),
-        g.slow,
-        g.avg_clear,
-        g.mask_want.clone(),
-        g.zone_want.clone(),
-        g.needs_raw,
-        g.acquisition.identity(),
-        g.acquisition.route(),
-    )
+pub(super) struct Request {
+    pub(super) generator: Option<Gen>,
+    pub(super) want: Option<Want>,
+    pub(super) mode: Slow,
+    pub(super) avg_clear: u64,
+    pub(super) mask: Option<MaskWant>,
+    pub(super) zone: Option<ZoneWant>,
+    pub(super) needs_raw: bool,
+    pub(super) identity: Identity,
+    pub(super) route: bool,
+    pub(super) run: Run,
+    pub(super) dvm: Option<crate::board::DvmWant>,
+    pub(super) slots: Option<u64>,
 }
 
-/// Peak holds one complete batch; its producer waits for this queue before reading another.
-/// Other modes keep the newest `QUEUE_MAX` frames. All modes retain the sample bound and newest-frame exception.
-pub(super) fn push_frames(out: &HwShared, mut frames: Vec<Frame>, mode: Mode) {
+pub(super) struct Run {
+    pub(super) hold: bool,
+    pub(super) stop_view: Option<(f64, f64)>,
+    pub(super) final_req: u64,
+    pub(super) cores: bool,
+    pub(super) deep: Option<crate::deepmeas::Want>,
+    pub(super) segment_bound: Option<u32>,
+}
+
+#[cfg(target_os = "linux")]
+impl Request {
+    pub(super) fn pair(&self) -> (u64, u64) {
+        (self.identity.gen(), self.identity.epoch())
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl Run {
+    pub(super) fn batch_bound(&self, bound: u32) -> u32 {
+        self.segment_bound.map_or(bound, |remaining| bound.min(remaining))
+    }
+}
+
+/// Copy the batch inputs together. Live control changes are still polled at IO and hand-off boundaries.
+impl Request {
+    pub(super) fn read(g: &crate::board::Shared) -> Self {
+        Self {
+            generator: g.afg[0],
+            want: g.want.clone(),
+            mode: g.slow,
+            avg_clear: g.avg_clear,
+            mask: g.mask_want.clone(),
+            zone: g.zone_want.clone(),
+            needs_raw: g.needs_raw,
+            identity: g.acquisition.identity(),
+            route: g.acquisition.route(),
+            run: Run {
+                hold: g.hold,
+                stop_view: g.stop_view,
+                final_req: g.final_req,
+                cores: g.cores,
+                deep: g.deep_raw,
+                segment_bound: g.record_flow.segment_bound(),
+            },
+            dvm: g.dvm_want,
+            slots: g.slots_want,
+        }
+    }
+}
+
+#[cfg(test)]
+pub(super) fn snapshot(out: &HwShared) -> Request {
+    Request::read(&lock(out))
+}
+
+/// Publish one bounded batch after the acquisition loop has waited for the previous hand-off.
+#[cfg(test)]
+pub(super) fn push_frames(out: &HwShared, frames: Vec<Frame>, mode: Mode) {
     if frames.is_empty() {
         return;
     }
-    let mut g = lock(out);
-    frames.retain(|f| current(&g, f));
-    let max = if mode == Mode::Peak { super::PEAK_BATCH_MAX } else { QUEUE_MAX };
-    g.queue.extend(frames.into_iter().map(Into::into));
-    let size = |f: &std::sync::Arc<Frame>| f.ch.iter().map(Vec::len).sum::<usize>();
-    let mut held: usize = g.queue.iter().map(size).sum();
-    let mut over = 0u64;
-    while g.queue.len() > 1 && (g.queue.len() > max || held > QUEUE_SAMPLES) {
-        if let Some(f) = g.queue.pop_front() {
-            held -= size(&f);
-        }
-        over += 1;
-    }
-    g.dropped += over;
-    crate::drawpipe::Counters::add(&crate::drawpipe::counters().losses.overflow, over);
-    crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, over);
-    let copied = g.queue.back().map(crate::perfguard::deep::clone_frame);
-    let sample = copied.map(|(frame, sample)| {
-        g.frame = frame;
-        sample
-    });
-    drop(g);
+    finish_batch(out, frames, mode, |_| {});
+}
+
+/// Publish the readings and any current frames in the same Shared transaction.
+pub(super) fn finish_batch(
+    out: &HwShared,
+    mut frames: Vec<Frame>,
+    mode: Mode,
+    readings: impl FnOnce(&mut crate::board::Shared),
+) {
+    let sample = {
+        let mut g = lock(out);
+        readings(&mut g);
+        frames.retain(|f| current(&g, f));
+        enqueue(&mut g, frames, mode)
+    };
     if let Some(sample) = sample {
         sample.record();
     }
 }
 
-/// Called after controls and STOP handling, before reading the next ordinary batch.
-/// A prearmed batch may fill its bounded FPGA ring while the UI drains the preceding batch.
-pub(super) fn peak_backpressure(g: &crate::board::Shared, mode: Mode) -> bool {
-    mode == Mode::Peak && !g.queue.is_empty()
+fn enqueue(g: &mut crate::board::Shared, frames: Vec<Frame>, mode: Mode) -> Option<crate::perfguard::deep::CopySample> {
+    if frames.is_empty() {
+        return None;
+    }
+    let max = if mode == Mode::Peak { super::PEAK_BATCH_MAX } else { QUEUE_MAX };
+    let samples = frames
+        .iter()
+        .map(|frame| frame.ch.iter().map(Vec::len).sum::<usize>() + frame.la.as_ref().map_or(0, |la| la.words.len()))
+        .sum::<usize>();
+    let handoff = &crate::drawpipe::counters().losses.record_handoff;
+    let fits = frames.len() <= max && (frames.len() == 1 || samples <= QUEUE_SAMPLES);
+    let empty = g.queue.is_empty();
+    if !fits {
+        crate::drawpipe::Counters::add(&handoff.sample_mismatch, 1);
+    }
+    if !empty {
+        crate::drawpipe::Counters::add(&handoff.unexpected_queue, 1);
+    }
+    debug_assert!(fits, "record plan exceeds one hand-off");
+    debug_assert!(empty, "the record producer waits for the previous hand-off");
+    g.queue.extend(frames.into_iter().map(Into::into));
+    g.record_flow.segments_published();
+    let copied = g.queue.back().map(crate::perfguard::deep::clone_frame);
+    copied.map(|(frame, sample)| {
+        g.frame = frame;
+        sample
+    })
 }
 
-/// Worker-owned wait timer. Log at most once per second, including across separate waits.
+/// Count and sample capacity for the ordinary record hand-off, before arm.
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn record_grant(
+    out: &HwShared,
+    identity: Identity,
+    bound: u32,
+    settings: &oos_hal::dho::seq::Settings,
+    params: &oos_hal::dho::hz::Params,
+    budget: std::time::Duration,
+) -> crate::drawpipe::admission::Grant {
+    let (per, newest) = record_sizes(settings, params);
+    // A singleton may exceed the sample bound. With no analog channels, only the newest LA record costs samples.
+    let by_samples = QUEUE_SAMPLES.saturating_sub(newest).checked_div(per).map_or(QUEUE_MAX, |extra| extra + 1);
+    let bound = bound.min(by_samples as u32).min(crate::board::RECORDS_PER_STEP as u32);
+    lock(out).record_flow.cost.grant(identity, bound, budget)
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn record_sizes(settings: &oos_hal::dho::seq::Settings, params: &oos_hal::dho::hz::Params) -> (usize, usize) {
+    use oos_hal::dho::{hz, la, seq};
+    let analog = |s: &seq::Settings| {
+        let bytes = seq::frame_bytes(s, params) - usize::from(s.header) * 16;
+        let points = bytes / (2 * hz::ratio(s.mask) as usize);
+        points * (s.mask & 0xf).count_ones() as usize
+    };
+    let per = analog(settings);
+    let raw = super::hw::raw_replay_settings(settings, params, true);
+    let logic = settings.la.as_ref().map_or(0, |_| la::window(&la::timing(params, settings.mask)).0 as usize);
+    (per, raw.as_ref().map_or(per, analog).max(per) + logic)
+}
+
+/// Check once after controls and STOP handling, then return to the source loop on any event.
 #[derive(Default)]
-pub(super) struct PeakWait {
+pub(super) struct RecordWait {
     started: Option<(Identity, std::time::Instant)>,
     logged: Option<std::time::Instant>,
 }
 
-impl PeakWait {
-    pub(super) fn poll(&mut self, out: &HwShared, mode: Mode, status: impl FnOnce(String)) -> bool {
-        let (waiting, identity, queued) = {
+impl RecordWait {
+    pub(super) fn poll(
+        &mut self,
+        out: &HwShared,
+        deposit: Option<&crate::drawpipe::Pipe>,
+        obsolete: impl FnOnce() -> bool,
+        status: impl FnOnce(String),
+    ) -> bool {
+        use std::time::{Duration, Instant};
+        if deposit.is_some() {
+            self.started = None;
+            return false;
+        }
+        let pipe_event = crate::drawpipe::source_event();
+        let (local, seen, identity, queued, segment_drawing, segment_exhausted) = {
             let g = lock(out);
-            (peak_backpressure(&g, mode), g.acquisition.identity(), g.queue.len())
+            let local = g.record_flow.source.clone();
+            let seen = pipe_event.unwrap_or(&local).generation();
+            let drawing = g.record_flow.segments_pending();
+            let exhausted = !drawing && g.record_flow.segment_bound() == Some(0);
+            (local, seen, g.acquisition.identity(), g.queue.len(), drawing, exhausted)
         };
-        if let Some(message) = self.observe(std::time::Instant::now(), identity, waiting, queued) {
+        let event = pipe_event.unwrap_or(&local);
+        let waiting = queued != 0 || segment_drawing;
+        if let Some(message) = self.observe(Instant::now(), identity, waiting, queued) {
             status(message);
         }
-        if waiting {
-            std::thread::sleep(std::time::Duration::from_millis(2));
+        if obsolete() {
+            return true;
         }
-        waiting
+        if waiting {
+            if let Some(elapsed) = event.wait(seen, Duration::from_millis(100)) {
+                crate::drawpipe::counters().metrics.source_wait(identity, elapsed);
+            }
+        }
+        if segment_exhausted {
+            // The UI has already queued STOP for the completed recording.
+            event.wait(seen, Duration::from_millis(100));
+        }
+        waiting || segment_exhausted
     }
 
     pub(super) fn observe(
@@ -105,7 +233,7 @@ impl PeakWait {
         }
         self.logged = Some(now);
         Some(format!(
-            "event=peak_backpressure wait_ms={} queued={} gen={} epoch={}",
+            "event=record_backpressure wait_ms={} queued={} gen={} epoch={}",
             elapsed.as_millis(),
             queued,
             id.gen(),
@@ -114,22 +242,13 @@ impl PeakWait {
     }
 }
 
-/// Peak must decode every capture even when the previous Normal step requested only a few.
-/// Frame-zero rejection and hardware-average selection keep their existing policies.
-pub(super) fn record_decode(
-    out: &HwShared,
-    mode: Mode,
-    avail: usize,
-    average: bool,
-    frame0_drop: bool,
-) -> ((usize, usize), bool) {
-    let g = lock(out);
-    let take = if mode == Mode::Peak || g.take == 0 { avail } else { g.take.min(avail) };
-    let take = if average { take.min(1) } else { take };
+/// Preserve frame-zero rejection and hardware-average selection. The source budgets records before the read.
+pub(super) fn record_decode(avail: usize, average: bool, frame0_drop: bool) -> (usize, usize) {
+    let take = if average { avail.min(1) } else { avail };
     let stale = (avail > 1 && !average && frame0_drop) as usize;
     let skip = (avail - take).max(stale);
     let frame0 = usize::from(skip > 0 && stale > 0);
-    ((frame0, skip - frame0), g.cores)
+    (frame0, skip - frame0)
 }
 
 /// Account for a selected batch's skips once, when the caller commits to decoding it.
@@ -250,8 +369,7 @@ mod timing_tests {
 }
 
 /// Completed read before average selection or short-buffer rejection.
-pub(super) fn read(count: u32, shown: u32, avail: usize) {
-    let counters = crate::drawpipe::counters();
+pub(super) fn read(counters: &crate::drawpipe::Counters, count: u32, shown: u32, avail: usize) {
     crate::drawpipe::Counters::add(&counters.acquired, count as u64);
     counters.lose(crate::drawpipe::Lost::Average, (count - shown) as u64);
     counters.lose(crate::drawpipe::Lost::Error, shown as u64 - avail as u64);
@@ -264,21 +382,19 @@ mod conservation_tests {
     #[test]
     fn completed_reads_account_for_average_short_buffer_selection_and_settings_loss() {
         let _scope = crate::drawpipe::test_scope::Scope::new();
-        let shared = HwShared::default();
-        oos_hal::sync::lock(&shared).take = 1;
-        read(10, 8, 6);
-        let (skipped, _) = record_decode(&shared, Mode::Normal, 6, false, true);
-        assert_eq!(skipped, (1, 4));
-        assert_eq!(account_skipped(skipped, false), 5);
+        read(crate::drawpipe::counters(), 10, 8, 6);
+        let skipped = record_decode(6, false, true);
+        assert_eq!(skipped, (1, 0));
+        assert_eq!(account_skipped(skipped, false), 1);
         let counters = crate::drawpipe::counters();
         counters.lose(crate::drawpipe::Lost::Settings, 1);
         assert_eq!(counters.read(), (10, 0, 0));
         let text = counters.records_text();
-        for bucket in ["lost.average=2", "lost.error=2", "lost.frame0=1", "lost.budget=4", "lost.settings=1"] {
+        for bucket in ["lost.average=2", "lost.error=2", "lost.frame0=1", "lost.settings=1"] {
             assert!(text.contains(bucket), "{text}");
         }
-        read(3, 3, 3);
-        let (skipped, _) = record_decode(&shared, Mode::Average { count: 4 }, 3, true, true);
+        read(crate::drawpipe::counters(), 3, 3, 3);
+        let skipped = record_decode(3, true, true);
         assert_eq!(skipped, (0, 2), "average selection does not discard frame zero separately");
         assert_eq!(account_skipped(skipped, true), 2);
         assert_eq!(counters.read(), (13, 0, 0));
@@ -288,10 +404,10 @@ mod conservation_tests {
     #[test]
     fn incomplete_average_and_boundary_queue_clear_have_explicit_buckets() {
         let _scope = crate::drawpipe::test_scope::Scope::new();
-        read(64, 0, 0);
+        read(crate::drawpipe::counters(), 64, 0, 0);
         let mut shared = crate::board::Shared::default();
         shared.queue.extend([Frame::default(), Frame::default()].map(Into::into));
-        read(2, 2, 2);
+        read(crate::drawpipe::counters(), 2, 2, 2);
         shared.clear_queue(crate::drawpipe::Lost::Settings);
         let counters = crate::drawpipe::counters();
         assert_eq!(counters.read(), (66, 0, 0));
@@ -301,3 +417,6 @@ mod conservation_tests {
         assert!(shared.queue.is_empty());
     }
 }
+
+#[cfg(test)]
+mod tests;

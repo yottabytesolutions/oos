@@ -11,6 +11,7 @@ use std::sync::Arc;
 use crate::system::test_allocator::Counting;
 #[global_allocator]
 static HEAP: Counting = Counting::new();
+mod continuous;
 mod counters;
 mod funding;
 mod perf;
@@ -61,7 +62,6 @@ impl Route {
         B::Bytes: Into<Box<dyn RawBatch>>,
     {
         // Fixed intake count and injected dt: elapsed draw time cannot alter picture membership.
-        self.ui.fast_take = 48.0;
         let id = change::acquisition::script_prepare_route(&mut self.ui, self.records);
         let sw = change::acquisition::draw_switches(&self.ui, &self.ui.m);
         let batch = fixture(self, &sw);
@@ -207,13 +207,13 @@ fn batch_picture_keeps_recent_deposits_without_recounting_their_records() {
     assert_eq!(route.ui.batch_picture.frames, 9);
     assert_eq!(route.ui.wfm_total, 36);
     assert!(route.ui.ph.maps()[0].iter().any(|&v| v > 0));
+    let shown = picture(&route.ui);
 
     for _ in 0..3 {
         route.ui.step(1.0 / 30.0);
     }
-    assert_eq!(route.ui.batch_picture.frames, 0);
     assert_eq!(route.ui.wfm_total, 36);
-    assert!(route.ui.ph.maps()[0].iter().all(|&v| v == 0));
+    assert_eq!(picture(&route.ui), shown);
 }
 
 #[test]
@@ -287,6 +287,22 @@ fn auto_to_lines_transition_resets_the_batch_window() {
     assert!(weights(&lines)[0] > 0);
 }
 
+fn assert_zoom_route(ui: &Ui, channels: usize, batch: bool, dots: bool) {
+    assert!(ui.fast_ok());
+    assert_eq!(drawpipe::counters().routes.count(drawpipe::route::Route::Zoom), if batch { 3 } else { 0 });
+    for map in &ui.phz.maps()[..channels] {
+        assert!(map.iter().any(|&v| v > 0));
+    }
+    if batch {
+        if dots {
+            assert!(ui.ph.weight() > 3.0 * 24.0);
+            assert!(ui.phz.weight() > 3.0 * 24.0);
+        } else {
+            assert_eq!((ui.ph.weight(), ui.phz.weight()), (72.0, 72.0));
+        }
+    }
+}
+
 #[test]
 fn draw_routes_raw_codes_pairs_dots_and_zoom() {
     for channels in [1, 2, 4] {
@@ -297,18 +313,27 @@ fn draw_routes_raw_codes_pairs_dots_and_zoom() {
             (BatchKind::DeepPairs, false, false),
             (BatchKind::Raw, true, false),
             (BatchKind::Raw, false, true),
+            (BatchKind::Raw, true, true),
+            (BatchKind::Codes, false, true),
+            (BatchKind::Codes, true, true),
         ] {
             let run = |batch| {
                 let _scope = Scope::new();
                 let mut r =
                     Route::new(kind, batch, channels, if kind == BatchKind::LivePairs { 200e-6 } else { 10e-6 });
                 r.ui.m.dots = if dots { DotsMode::On } else { DotsMode::Off };
-                r.ui.m.zoom = zoom;
+                if zoom {
+                    r.ui.m.zoom = true;
+                    r.ui.m.zscale = tscales().iter().position(|&t| t == 2e-6).unwrap();
+                    r.ui.m.zdelay = 2e-6;
+                    r.ui.zoom_vfactor = 1.5;
+                    r.ui.zoom_vcenter = 0.125;
+                    r.ui.m.deskew_ch[0] = 8.1e-9;
+                }
                 r.step(3);
                 assert_eq!(r.ui.wfm_total, 3);
                 if zoom {
-                    assert!(!r.ui.fast_ok(), "current zoom uses the shared record path");
-                    assert!(r.ui.phz.maps()[0].iter().any(|&v| v > 0));
+                    assert_zoom_route(&r.ui, channels, batch, dots);
                 }
                 let pic = picture(&r.ui);
                 if kind == BatchKind::LivePairs && !dots && !zoom && batch {
@@ -335,6 +360,48 @@ fn draw_routes_raw_codes_pairs_dots_and_zoom() {
 }
 
 #[test]
+fn both_zoom_maps_follow_the_same_retained_window() {
+    let _scope = Scope::new();
+    let mut route = Route::new(BatchKind::Codes, true, 1, 10e-6);
+    route.ui.m.zoom = true;
+    route.ui.m.zscale = tscales().iter().position(|&t| t == 5e-6).unwrap();
+    for (records, retained) in [(27, 27), (3, 30), (3, 33)] {
+        route.step(records);
+        assert_eq!(route.ui.batch_picture.frames, retained);
+        for ph in [&route.ui.ph, &route.ui.phz] {
+            assert_eq!(ph.weight(), f64::from(retained) * 24.0);
+            assert!(ph.channel_max(0) > 0);
+        }
+    }
+    for _ in 0..3 {
+        route.ui.step(1.0 / 30.0);
+    }
+    assert_eq!(route.ui.wfm_total, 33);
+    assert_eq!(route.ui.batch_picture.frames, 33);
+    for ph in [&route.ui.ph, &route.ui.phz] {
+        assert_eq!(ph.weight(), 33.0 * 24.0);
+        assert!(ph.channel_max(0) > 0);
+    }
+}
+
+#[test]
+fn zoom_deposits_blend_with_nonminimum_persistence() {
+    let run = |batch| {
+        let _scope = Scope::new();
+        let mut route = Route::new(BatchKind::Codes, batch, 2, 10e-6);
+        route.ui.m.zoom = true;
+        route.ui.m.zscale = tscales().iter().position(|&t| t == 5e-6).unwrap();
+        route.ui.m.persist = 1;
+        route.step(3);
+        route.step(3);
+        assert_eq!(route.ui.wfm_total, 6);
+        assert_eq!(drawpipe::counters().routes.count(drawpipe::route::Route::Zoom), if batch { 6 } else { 0 });
+        picture(&route.ui)
+    };
+    compare(&run(false), &run(true), "zoom with finite persistence");
+}
+
+#[test]
 fn draw_routes_roll_scan_stop_single_and_replay() {
     for mode in ["roll", "scan", "stop", "single", "history", "segments"] {
         let run = |batch| {
@@ -347,6 +414,7 @@ fn draw_routes_roll_scan_stop_single_and_replay() {
             let mut r = Route::new(kind, batch, 2, if mode == "roll" || mode == "scan" { 0.2 } else { 10e-6 });
             if mode == "history" {
                 r.ui.m.zoom = true;
+                r.records = true;
             }
             if mode == "single" {
                 r.ui.m.trig_mode = TrigMode::Single;
@@ -526,7 +594,7 @@ fn consumed_waveform_redraws_only_if_its_private_deposit_becomes_stale() {
         if remap {
             let mut expected = Phosphor::new(route.ui.ph.w, route.ui.ph.h);
             drawpipe::draw_frame(&mut expected, &route.ui.m, &last.unwrap(), sw.interp, None);
-            assert_eq!(route.ui.ph.map, expected.map);
+            assert_eq!(route.ui.ph.maps(), expected.maps());
         }
         route.ui.step(1.0 / 30.0);
         assert_eq!((route.ui.wfm_total, route.ui.history.len()), (2, 2));
@@ -557,3 +625,8 @@ fn batch_steps_keep_narrow_uploads_and_idle_pictures_need_no_upload() {
         }
     }
 }
+
+mod render_owner;
+
+#[cfg(feature = "private-picture-counts")]
+mod picture_count_tests;

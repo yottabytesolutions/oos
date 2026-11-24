@@ -14,11 +14,24 @@ use crate::dho::Write;
 pub enum Mode {
     Normal,
     Peak,
+    /// Experimental capture with a smaller stored record, using the normal or Peak capture mode.
+    Reduced(crate::dho::seq::CaptureReduction),
     /// hardware averaging of `count` triggers: 0x1004 bit3, its own segment layout
     /// (`hz::avg_params`), 0x1110 window word, cleared with `avg_clear`. NOT VERIFIED ON THE UNIT.
     Average {
         count: u32,
     },
+}
+
+impl Mode {
+    /// Whether the capture uses the FPGA's Peak mode.
+    pub fn is_peak(self) -> bool {
+        match self {
+            Self::Peak => true,
+            Self::Reduced(capture) => capture.is_peak(),
+            _ => false,
+        }
+    }
 }
 
 /// Average count register: `count` - 1, at least 1 (stock: counts 1 and 2 both give 1).
@@ -131,7 +144,7 @@ pub fn configure_la(
     // acquisition mode: bits 0,1,3,12 cleared; peak = bit1 (forced to normal at the maximum rate), average = bit3
     // (no such fallback)
     let (bits, count, presa, seg) = match mode {
-        Mode::Peak if p.rate < max_rate => (2, 1, 5, p.seg),
+        _ if mode.is_peak() && p.rate < max_rate => (2, 1, 5, p.seg),
         Mode::Average { count } => (8, avg_count_reg(count), 10, crate::dho::hz::avg_params(*p).seg),
         _ => (0, 1, 5, p.seg),
     };

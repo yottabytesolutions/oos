@@ -10,17 +10,26 @@
 //!
 //! `summary` gives percentiles for the status line.
 
+mod compose;
+pub(crate) mod presentation;
+pub(crate) use compose::note_composition;
+#[cfg(target_os = "linux")]
+pub(crate) use compose::note_remote_intake;
+pub(crate) use presentation::{append_presentation, note_picture_triggers};
+#[cfg(target_os = "linux")]
+pub(crate) use presentation::{begin_picture, Panel, Picture};
+
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
-use std::time::Instant;
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant};
 
-/// Entries kept of each kind: 10 s of screen frames at 30 per second.
+/// Entries kept of each kind: about 9 s of screen pictures at the default panel cadence.
 const KEEP: usize = 300;
 /// A frame-loop pass longer than this is logged with its parts.
 const SLOW_MS: f32 = 60.0;
 
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct State {
     /// per picture: time of its step, frames in it
     pics: VecDeque<(Instant, u32)>,
@@ -33,8 +42,6 @@ struct State {
     reads: VecDeque<f32>,
     readies: VecDeque<f32>,
     ready_ms: Option<f32>,
-    /// per step with the fast path: its queued-frame drawing and merge (ms)
-    fast: VecDeque<[f32; 2]>,
     last_pass: Option<Instant>,
     last_batch: Option<Instant>,
     slow_logged: u64,
@@ -44,6 +51,7 @@ struct State {
     /// per picture (`composition`): frames drawn by a deposit kernel, frames drawn through the record path, and the
     /// age (ms) of the newest batch the pipe merged into it
     comps: VecDeque<(u32, u32, Option<f32>)>,
+    compose: compose::History,
 }
 
 /// From a change of the acquisition settings to steady pictures again: times (ms after the change) of the hardware
@@ -110,8 +118,7 @@ pub static VIEWS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::n
 
 /// UI-side times of a step's fast block (ms): drawing the queued frames, merging the workers' maps.
 pub fn fast_block(draw_ms: f32, merge_ms: f32) {
-    let mut s = state().lock().unwrap();
-    push(&mut s.fast, [draw_ms, merge_ms]);
+    oos_hal::sync::lock(state()).compose.record_fast(draw_ms, merge_ms);
 }
 
 /// Settings generations (docs/architecture/drawing.md, step 0): `WANTED` counts the acquisition settings (`Want`) the
@@ -208,30 +215,56 @@ pub fn batch(wait_ms: f32, count: u32, asked: u32, fill_ms: u64, read_ms: f32) {
     push(&mut s.reads, read_ms);
 }
 
-/// The deposit workers finished the batch read last (drawpipe.rs): the time since its read went into `ready_ms`.
-pub fn ready() {
-    let mut s = state().lock().unwrap();
-    if let Some(t) = s.last_batch {
-        let ms = t.elapsed().as_secs_f32() * 1e3;
+/// A published nonempty deposit supplies its newest input read clock for the scheduling sample.
+/// Missing origins and clear-only deposits supply None and teach the planner nothing.
+pub fn ready(read: Option<Instant>, published: Instant) {
+    ready_at(&mut oos_hal::sync::lock(state()), read, published);
+}
+
+fn ready_at(s: &mut State, read: Option<Instant>, now: Instant) {
+    if let Some(t) = read {
+        let ms = now.saturating_duration_since(t).as_secs_f32() * 1e3;
         s.ready_ms = Some(s.ready_ms.map_or(ms, |x| x + 0.2 * (ms - x)));
         push(&mut s.readies, ms);
     }
 }
 
-/// Time from a batch's read to its frames being drawn (smoothed), ms.
+/// Smoothed time from the newest input read to publication, including any slot wait, in milliseconds.
 pub fn ready_ms() -> f32 {
     state().lock().unwrap().ready_ms.unwrap_or(3.0)
 }
 
-/// Screen frame period of the frame loop (main.rs: 30 a second).
-const FRAME_MS: f32 = 1000.0 / 30.0;
+mod frame_clock;
+#[cfg(test)]
+pub(crate) use frame_clock::with_test_clock;
+use frame_clock::ClockPublication;
+#[cfg(target_os = "linux")]
+pub(crate) use frame_clock::PictureRate;
+pub(crate) use frame_clock::{step_missed, ClockMode, FlipDivisor};
+#[cfg(any(target_os = "linux", test))]
+pub(crate) use frame_clock::{Flip, FrameClock};
 
-/// The first frame-loop step at or after `t`, from the last one; None before the first.
+pub(crate) const TIMER_PERIOD: Duration = Duration::from_nanos(1_000_000_000 / 30);
+
+static CLOCK: LazyLock<ClockPublication> = LazyLock::new(|| ClockPublication::new(Instant::now()));
+
+#[cfg(target_os = "linux")]
+pub(crate) fn publish_deadline(clock: &FrameClock, now: Instant) {
+    CLOCK.publish(clock, now);
+}
+
+/// Effective picture period, including while a flip clock runs on its fallback timer.
+pub(crate) fn picture_period() -> Duration {
+    CLOCK.period()
+}
+
+pub(crate) fn note_flip_fallback() {
+    CLOCK.note_fallback();
+}
+
+/// First predicted step at or after `t`, anchored to the published device deadline.
 pub fn next_step_after(t: Instant) -> Option<Instant> {
-    let l = state().lock().unwrap().last_pass?;
-    let since = t.saturating_duration_since(l).as_secs_f32() * 1e3;
-    let k = (since / FRAME_MS).ceil().max(1.0);
-    Some(l + std::time::Duration::from_secs_f32(k * FRAME_MS / 1e3))
+    CLOCK.next_step_after(t)
 }
 
 /// Ring-fill time limits: the hardware source's former fixed wait before the first screen step is known (and at most
@@ -265,6 +298,7 @@ impl Fill {
     /// The fill time, ms, for a batch starting at `start`, given the next screen step after a time (`next`) and the
     /// time to draw a batch after its read (`ready`).
     pub fn plan(&mut self, start: Instant, next: impl Fn(Instant) -> Option<Instant>, ready: f32) -> u64 {
+        let frame_ms = picture_period().as_secs_f32() * 1e3;
         let rest = self.rest.unwrap_or(5.0);
         let ms = |a: f32| std::time::Duration::from_secs_f32(a.max(0.0) / 1e3);
         // the drawing overlaps the next batch: only the reads need a screen frame between them, each one `ready` +
@@ -276,20 +310,20 @@ impl Fill {
         // one a frame later
         let rest = rest + 2.0 * self.dev;
         // no room for a batch in a frame: as fast as it goes (waiting for a slot would read more frames, longer)
-        if rest + FILL_MIN_MS > FRAME_MS {
+        if rest + FILL_MIN_MS > frame_ms {
             self.target = None;
             return FILL_MIN_MS as u64;
         }
         let mut lower = start + ms(rest + FILL_MIN_MS);
         if let Some(t) = self.target {
-            lower = lower.max(t + ms(0.5 * FRAME_MS));
+            lower = lower.max(t + ms(0.5 * frame_ms));
         }
         let Some(step) = next(lower + ms(lead)) else { return FILL_MAX_MS as u64 };
         let read = step - ms(lead);
         self.target = Some(read);
         let fill = read.saturating_duration_since(start).as_secs_f32() * 1e3 - rest;
         // a batch that starts early (the read before was early) fills longer to keep its slot
-        fill.clamp(FILL_MIN_MS, FILL_MAX_MS.max(FRAME_MS)).round() as u64
+        fill.clamp(FILL_MIN_MS, FILL_MAX_MS.max(frame_ms)).round() as u64
     }
 
     /// A batch spent `rest` ms besides its fill: before it (arm, wait of a batch armed ahead, first trigger) and in the
@@ -341,7 +375,8 @@ impl FrameCap {
         let (per, pre) = (self.per_frame.unwrap_or(1.0), self.pre.unwrap_or(0.0));
         // the read that leaves the batch a frame: the time before the fill, its spread, a fill of `CAP_FILL_MS` and the
         // margin taken off
-        let budget = FRAME_MS - MARGIN_MS - CAP_FILL_MS - pre - 2.0 * self.dev;
+        let frame_ms = picture_period().as_secs_f32() * 1e3;
+        let budget = frame_ms - MARGIN_MS - CAP_FILL_MS - pre - 2.0 * self.dev;
         let want = ((budget / per.max(0.01)).floor().max(1.0) as u32).min(asked.max(1));
         let new = (want < asked).then_some(want);
         let far = match (self.cap, new) {
@@ -371,7 +406,8 @@ fn gaps(pics: &VecDeque<(Instant, u32)>) -> Vec<f32> {
 
 /// One line for the status: ` pacing pics N new p10/p50/p90 a/b/c empty E% gap p50/p90/p99/max ... pass ... batch ...`.
 pub fn summary() -> String {
-    let s = state().lock().unwrap();
+    // Snapshot the bounded histories before sorting and formatting the status reply.
+    let s = oos_hal::sync::lock(state()).clone();
     let mut fr: Vec<f32> = s.pics.iter().map(|p| p.1 as f32).collect();
     let empty = s.pics.iter().filter(|p| p.1 == 0).count();
     let n = s.pics.len().max(1);
@@ -387,10 +423,59 @@ pub fn summary() -> String {
     let mut re: Vec<f32> = s.reads.iter().copied().collect();
     // before the fill ended: arm or the wait of a batch armed ahead, first trigger, fill
     let mut pre: Vec<f32> = s.batches.iter().zip(s.reads.iter()).map(|(b, r)| b.0 - r).collect();
-    let mut fd: Vec<f32> = s.fast.iter().map(|x| x[0]).collect();
-    let mut fm: Vec<f32> = s.fast.iter().map(|x| x[1]).collect();
-    let settles: Vec<String> = s
-        .settled
+    let [mut fd, mut fm] = s.compose.fast_costs();
+    let settles = settle_summary(&s.settled);
+    let p4 = |v: &mut Vec<f32>| format!("{:.1}/{:.1}/{:.1}/{:.1}", pct(v, 0.5), pct(v, 0.9), pct(v, 0.99), pct(v, 1.0));
+    format!(
+        " pacing pics {} new p10/p50/p90 {:.0}/{:.0}/{:.0} empty {:.0}% gap p50/p90/p99/max {} ms pass {} ms step {} ms batch wait {} ms every {} ms frames p50 {:.0} full {:.0}% fill p50 {:.0} ms until fill end {} ms read {} ms drawn {} ms ui fast {} merge {} ms views {}{}{} pacing.flip_fallback={} settle configured/first/steady ms/empty {}",
+        s.pics.len(),
+        pct(&mut fr, 0.1),
+        pct(&mut fr, 0.5),
+        pct(&mut fr, 0.9),
+        100.0 * empty as f32 / n as f32,
+        p4(&mut g),
+        p4(&mut iv),
+        p4(&mut st),
+        p4(&mut bw),
+        p4(&mut bi),
+        pct(&mut bc, 0.5),
+        100.0 * full as f32 / s.batches.len().max(1) as f32,
+        pct(&mut fl, 0.5),
+        p4(&mut pre),
+        p4(&mut re),
+        p4(&mut rd),
+        p4(&mut fd),
+        p4(&mut fm),
+        VIEWS.load(std::sync::atomic::Ordering::Relaxed),
+        picture_summary(&s),
+        s.compose.text(),
+        CLOCK.fallbacks(),
+        if settles.is_empty() { "-".to_string() } else { settles.join(" ") },
+    )
+}
+
+fn picture_summary(s: &State) -> String {
+    let mut cd: Vec<f32> = s.comps.iter().map(|c| c.0 as f32).collect();
+    let mut cr: Vec<f32> = s.comps.iter().map(|c| c.1 as f32).collect();
+    // the weight of a picture in deposit frames: a record-path frame weighs about 3.7 (docs/architecture/drawing.md)
+    let mut cw: Vec<f32> = s.comps.iter().map(|c| c.0 as f32 + 3.7 * c.1 as f32).collect();
+    let mut age: Vec<f32> = s.comps.iter().filter_map(|c| c.2).collect();
+    let p3 = |v: &mut Vec<f32>| format!("{:.0}/{:.0}/{:.0}", pct(v, 0.1), pct(v, 0.5), pct(v, 0.9));
+    format!(
+        " picture deposit p10/p50/p90 {} record {} weight {} age p50/p90/p99/max {} ms stale {} partial {} wanted {} applied {}",
+        p3(&mut cd),
+        p3(&mut cr),
+        p3(&mut cw),
+        format!("{:.1}/{:.1}/{:.1}/{:.1}", pct(&mut age, 0.5), pct(&mut age, 0.9), pct(&mut age, 0.99), pct(&mut age, 1.0)),
+        STALE.load(Ordering::Relaxed),
+        PARTIAL.load(Ordering::Relaxed),
+        WANTED.load(Ordering::Relaxed),
+        APPLIED.load(Ordering::Relaxed),
+    )
+}
+
+fn settle_summary(settled: &VecDeque<Settle>) -> Vec<String> {
+    settled
         .iter()
         .rev()
         .take(4)
@@ -403,54 +488,40 @@ pub fn summary() -> String {
                 c.empty
             )
         })
-        .collect();
-    let nb = s.batches.len().max(1);
-    let mut cd: Vec<f32> = s.comps.iter().map(|c| c.0 as f32).collect();
-    let mut cr: Vec<f32> = s.comps.iter().map(|c| c.1 as f32).collect();
-    // the weight of a picture in deposit frames: a record-path frame weighs about 3.7 (docs/architecture/drawing.md)
-    let mut cw: Vec<f32> = s.comps.iter().map(|c| c.0 as f32 + 3.7 * c.1 as f32).collect();
-    let mut age: Vec<f32> = s.comps.iter().filter_map(|c| c.2).collect();
-    let p3 = |v: &mut Vec<f32>| format!("{:.0}/{:.0}/{:.0}", pct(v, 0.1), pct(v, 0.5), pct(v, 0.9));
-    let comp = format!(
-        " picture deposit p10/p50/p90 {} record {} weight {} age p50/p90/p99/max {} ms stale {} partial {} wanted {} applied {}",
-        p3(&mut cd),
-        p3(&mut cr),
-        p3(&mut cw),
-        format!("{:.1}/{:.1}/{:.1}/{:.1}", pct(&mut age, 0.5), pct(&mut age, 0.9), pct(&mut age, 0.99), pct(&mut age, 1.0)),
-        STALE.load(Ordering::Relaxed),
-        PARTIAL.load(Ordering::Relaxed),
-        WANTED.load(Ordering::Relaxed),
-        APPLIED.load(Ordering::Relaxed),
-    );
-    let p4 = |v: &mut Vec<f32>| format!("{:.1}/{:.1}/{:.1}/{:.1}", pct(v, 0.5), pct(v, 0.9), pct(v, 0.99), pct(v, 1.0));
-    format!(
-        " pacing pics {} new p10/p50/p90 {:.0}/{:.0}/{:.0} empty {:.0}% gap p50/p90/p99/max {} ms pass {} ms step {} ms batch wait {} ms every {} ms frames p50 {:.0} full {:.0}% fill p50 {:.0} ms until fill end {} ms read {} ms drawn {} ms ui fast {} merge {} ms views {}{} settle configured/first/steady ms/empty {}",
-        s.pics.len(),
-        pct(&mut fr, 0.1),
-        pct(&mut fr, 0.5),
-        pct(&mut fr, 0.9),
-        100.0 * empty as f32 / n as f32,
-        p4(&mut g),
-        p4(&mut iv),
-        p4(&mut st),
-        p4(&mut bw),
-        p4(&mut bi),
-        pct(&mut bc, 0.5),
-        100.0 * full as f32 / nb as f32,
-        pct(&mut fl, 0.5),
-        p4(&mut pre),
-        p4(&mut re),
-        p4(&mut rd),
-        p4(&mut fd),
-        p4(&mut fm),
-        VIEWS.load(std::sync::atomic::Ordering::Relaxed),
-        comp,
-        if settles.is_empty() { "-".to_string() } else { settles.join(" ") },
-    )
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
+    const FRAME_MS: f32 = TIMER_PERIOD.as_micros() as f32 / 1000.0;
+
+    #[test]
+    fn readiness_uses_published_input_when_dma_overlaps() {
+        let read = Instant::now();
+        let later_dma = read + Duration::from_millis(20);
+        let published = read + Duration::from_millis(30);
+        let mut deposit = crate::picture::deposit::Deposit::new(1, (1, 1), None, [true; 4]);
+        deposit.extent.include(read - Duration::from_millis(5));
+        deposit.extent.include(read);
+        deposit.records = 2;
+        let mut state = State { last_batch: Some(later_dma), ..State::default() };
+        ready_at(&mut state, deposit.ready_origin(), published);
+        assert_eq!(state.ready_ms, Some(30.0));
+        assert_eq!(state.readies.iter().copied().collect::<Vec<_>>(), vec![30.0]);
+        let biased = published.duration_since(later_dma).as_secs_f32() * 1e3;
+        assert_eq!(biased, 10.0);
+        let next = |_: Instant| Some(read + Duration::from_millis(80));
+        let exact_fill = Fill::default().plan(read + Duration::from_millis(33), next, state.ready_ms.unwrap());
+        let biased_fill = Fill::default().plan(read + Duration::from_millis(33), next, biased);
+        assert_eq!((exact_fill, biased_fill), (9, 29));
+        deposit.records = 0;
+        ready_at(&mut state, deposit.ready_origin(), published);
+        deposit.records = 1;
+        deposit.extent = Default::default();
+        ready_at(&mut state, deposit.ready_origin(), published);
+        assert_eq!(state.readies.len(), 1);
+    }
+
     #[test]
     fn diagnostic_history_reserves_its_bound_on_first_sample() {
         let mut history = std::collections::VecDeque::new();

@@ -8,7 +8,7 @@ use oos_core::change::{Identity, Requester};
 
 /// Startup switches with the hardware draw route selected by the supplied model.
 pub(crate) fn draw_switches(ui: &Ui, model: &Model) -> crate::sysconf::Switches {
-    let mut sw = *ui.switches();
+    let mut sw = ui.switches().clone();
     if ui.src.is_hw() {
         sw.pipeline = if model.draw_batch { crate::drawpipe::Mode::Batch } else { crate::drawpipe::Mode::Frames };
     }
@@ -16,7 +16,12 @@ pub(crate) fn draw_switches(ui: &Ui, model: &Model) -> crate::sysconf::Switches 
 }
 
 pub(crate) fn accepted_draw_switches(ui: &Ui) -> crate::sysconf::Switches {
-    ui.host.runtime().change.shadow.as_ref().map_or(*ui.switches(), |shadow| draw_switches(ui, shadow.accepted()))
+    ui.host
+        .runtime()
+        .change
+        .shadow
+        .as_ref()
+        .map_or_else(|| ui.switches().clone(), |shadow| draw_switches(ui, shadow.accepted()))
 }
 
 pub(crate) fn identity(ui: &Ui) -> Identity {
@@ -50,11 +55,14 @@ pub(in crate::ui) fn publish(ui: &mut Ui) {
             && batch
             && ui.host.runtime().change.prepared.as_ref().is_some_and(|p| p.workers)
         {
-            pipe.publish_view(model, ui.ph.w, ui.ph.h, sw.interp, id);
+            let zoom = model.zoom.then(|| step_draw::zoom_view(ui));
+            pipe.publish_picture_view(model, (ui.ph.w, ui.ph.h), sw.interp, id, zoom);
         } else {
             pipe.set_view(None, 0, 0, sw.interp);
             pipe.set_identity(id);
         }
+    } else if ui.src.is_hw() {
+        crate::drawpipe::counters().metrics.set_identity(id);
     }
     let Source::Hw { shared, .. } = &ui.src else { return };
     let mut g = lock(shared);
@@ -73,16 +81,40 @@ pub(in crate::ui) fn publish(ui: &mut Ui) {
         // running: no STOP view any more, the thread acquires again
         (g.stop_view, g.replay) = (None, None);
     }
+    segment_quota(ui, &mut g, id);
+    g.record_flow.cost.set_identity(id);
     g.acquisition = crate::board::identity::Publication::new(id, needs.route());
     for i in 0..crate::model::gen_count() {
         g.afg[i] = Some(board().gen(&model.gen_ch(i)));
     }
+    g.record_flow.wake();
     // This is a metrics mirror, never an identity source for a frame or batch.
     crate::pacing::WANTED.store(id.gen(), std::sync::atomic::Ordering::Relaxed);
     let before = g.queue.len();
     g.queue.retain(|f| current(f, id));
     crate::drawpipe::Counters::add(&crate::drawpipe::counters().losses.ui_publish, (before - g.queue.len()) as u64);
     crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, (before - g.queue.len()) as u64);
+}
+
+fn segment_quota(ui: &Ui, g: &mut crate::board::Shared, id: Identity) {
+    let old = g.acquisition.identity();
+    let enabled = ui.m.segments > 0 && !ui.seg_hw_on() && g.slow == crate::board::Slow::Off;
+    if (old.gen(), old.epoch()) != (id.gen(), id.epoch()) || enabled != g.record_flow.segment_bound().is_some() {
+        g.record_flow.start_segments(enabled.then(|| ui.m.segments.min(SEG_MAX).saturating_sub(ui.seg_n) as u32));
+    }
+}
+
+pub(in crate::ui) fn record_progress(ui: &Ui, records: u64, draw: std::time::Duration) {
+    ui.src.note_record_draw(records, draw);
+    if ui.m.segments == 0 || ui.seg_hw_on() {
+        return;
+    }
+    if let Source::Hw { shared, .. } = &ui.src {
+        let mut g = lock(shared);
+        if g.queue.is_empty() {
+            g.record_flow.segments_drawn(ui.m.segments.min(SEG_MAX).saturating_sub(ui.seg_n) as u32);
+        }
+    }
 }
 
 /// Project the accepted Bus setup into the hardware candidate request without changing visible settings.

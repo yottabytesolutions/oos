@@ -23,7 +23,7 @@ fn quota_and_injected_time_yield_without_replaying_setters() {
     intake.poll(
         &ports,
         || Duration::ZERO,
-        |p| {
+        |p, _| {
             calls += 1;
             Some(p.immediate(&mut |_| Vec::new()))
         },
@@ -31,15 +31,15 @@ fn quota_and_injected_time_yield_without_replaying_setters() {
     // One queued reply and one parked reply fill output; frame/input remain free to advance.
     assert_eq!(calls, 2);
     for _ in 0..4 {
-        intake.poll(&ports, || Duration::ZERO, |_| panic!("setter replay"));
+        intake.poll(&ports, || Duration::ZERO, |_, _| panic!("setter replay"));
     }
     assert_eq!(ports.replies().take(1)[0].id().connection(), 1);
-    intake.poll(&ports, || Duration::from_micros(500), |_| panic!("time budget expired"));
+    intake.poll(&ports, || Duration::from_micros(500), |_, _| panic!("time budget expired"));
     assert_eq!(calls, 2);
     intake.poll(
         &ports,
         || Duration::ZERO,
-        |p| {
+        |p, _| {
             calls += 1;
             Some(p.immediate(&mut |_| Vec::new()))
         },
@@ -49,26 +49,34 @@ fn quota_and_injected_time_yield_without_replaying_setters() {
 }
 
 #[test]
-fn continuation_keeps_fifo_ownership_across_time_yields() {
+fn a_pending_program_yields_to_the_next_connection() {
     let ports = ports();
     submit(&ports, 1);
     submit(&ports, 2);
     let mut intake = Intake::default();
-    intake.poll(&ports, || Duration::ZERO, |_| None);
-    assert!(!ports.requests().is_empty());
-    let mut turns = 0;
     intake.poll(
         &ports,
         || Duration::ZERO,
-        |p| {
-            turns += 1;
-            if turns == 1 {
-                assert!(p.immediate(&mut |_| Vec::new()).is_empty());
-            }
+        |p, _| {
+            let mut command = String::new();
+            p.immediate(&mut |text| {
+                command = text.to_owned();
+                Vec::new()
+            });
+            (command == "set 2").then(Vec::new)
+        },
+    );
+    assert!(ports.requests().is_empty());
+    assert_eq!(ports.replies().take(1)[0].id().connection(), 2);
+    assert_eq!(intake.waiting.len(), 1);
+    intake.poll(
+        &ports,
+        || Duration::ZERO,
+        |p, _| {
+            p.immediate(&mut |_| panic!("the suspended setter must not replay"));
             Some(Vec::new())
         },
     );
-    assert_eq!(turns, 2);
     assert_eq!(ports.replies().take(1)[0].id().connection(), 1);
 }
 
@@ -81,13 +89,13 @@ fn all_clients_share_one_response_budget_and_disconnect_releases_it() {
     }
     submit(&ports, 1);
     let mut intake = Intake::default();
-    intake.poll(&ports, || Duration::ZERO, |_| panic!("must reserve before dispatch"));
+    intake.poll(&ports, || Duration::ZERO, |_, _| panic!("must reserve before dispatch"));
     drop(reservation);
-    intake.poll(&ports, || Duration::ZERO, |_| None);
-    assert_eq!(ports.budget().used(), RESPONSE_BYTES);
-    let active = intake.active.as_ref().unwrap();
+    intake.poll(&ports, || Duration::ZERO, |_, _| None);
+    assert_eq!(ports.budget().used(), 0, "an empty continuation releases its unused budget");
+    let active = intake.waiting.front().unwrap();
     active.request.cancel();
-    intake.poll(&ports, || Duration::ZERO, |_| panic!("disconnected program"));
+    intake.poll(&ports, || Duration::ZERO, |_, _| panic!("disconnected program"));
     assert_eq!(ports.budget().used(), 0);
     let budget = Budget::new(Arc::new(Wake::new().unwrap()));
     let reply = Reply::new(Id::new(1, 1), Vec::with_capacity(4096), budget.reserve(RESPONSE_BYTES).unwrap());
@@ -111,7 +119,7 @@ fn exactly_eight_turns_and_elapsed_budget_roll_over_fifo() {
     intake.poll(
         &ports,
         || Duration::ZERO,
-        |p| {
+        |p, _| {
             ports.replies().take(1);
             p.immediate(&mut |command| {
                 visited.push(command.to_string());
@@ -130,7 +138,7 @@ fn exactly_eight_turns_and_elapsed_budget_roll_over_fifo() {
     intake.poll(
         &ports,
         || clock.next().unwrap_or(Duration::from_micros(500)),
-        |p| {
+        |p, _| {
             p.immediate(&mut |command| {
                 visited.push(command.to_string());
                 Vec::new()
@@ -147,13 +155,13 @@ fn idle_and_parked_intake_do_not_resignal_a_busy_loop() {
     let ports = ports();
     let mut intake = Intake::default();
     ports.requests().wake().drain();
-    intake.poll(&ports, || Duration::ZERO, |_| panic!("idle"));
+    intake.poll(&ports, || Duration::ZERO, |_, _| panic!("idle"));
     assert!(!ports.requests().wake().wait(0));
     submit(&ports, 1);
     submit(&ports, 2);
-    intake.poll(&ports, || Duration::ZERO, |_| Some(Vec::new()));
+    intake.poll(&ports, || Duration::ZERO, |_, _| Some(Vec::new()));
     ports.requests().wake().drain();
-    intake.poll(&ports, || Duration::ZERO, |_| panic!("output full"));
+    intake.poll(&ports, || Duration::ZERO, |_, _| panic!("output full"));
     assert!(!ports.requests().wake().wait(0));
 }
 
@@ -168,7 +176,7 @@ fn a_full_output_port_parks_owned_bytes_while_frames_and_input_advance() {
     intake.poll(
         &ports,
         || Duration::ZERO,
-        |p| {
+        |p, _| {
             setters += 1;
             p.immediate(&mut |_| b"done".to_vec());
             Some(Vec::new())
@@ -183,7 +191,7 @@ fn a_full_output_port_parks_owned_bytes_while_frames_and_input_advance() {
         for _ in 0..4 {
             crate::cmd::run(&mut ui, "workflow sim");
             ui.step(0.02);
-            intake.poll(&frame_ports, || Duration::ZERO, |_| panic!("setter replay"));
+            intake.poll(&frame_ports, || Duration::ZERO, |_, _| panic!("setter replay"));
         }
         done.send(intake).unwrap();
     });
@@ -192,7 +200,7 @@ fn a_full_output_port_parks_owned_bytes_while_frames_and_input_advance() {
         .expect("frames and input must finish before output is drained");
     frames.join().unwrap();
     ports.replies().take(1);
-    intake.poll(&ports, || Duration::ZERO, |_| panic!("setter replay"));
+    intake.poll(&ports, || Duration::ZERO, |_, _| panic!("setter replay"));
     let reply = ports.replies().take(1).pop().unwrap();
     assert_eq!(reply.output().chunks().flatten().copied().collect::<Vec<_>>(), b"done\n");
     assert_eq!(ports.budget().used(), reply.capacity());
@@ -210,7 +218,7 @@ fn stalled_client_does_not_delay_another_connections_exchange() {
     intake.poll(
         &ports,
         || now.get(),
-        |program| {
+        |program, _| {
             now.set(now.get() + turn);
             program.immediate(&mut |_| vec![b'a'; 16 << 20]);
             Some(Vec::new())
@@ -224,7 +232,7 @@ fn stalled_client_does_not_delay_another_connections_exchange() {
     intake.poll(
         &ports,
         || now.get() - accepted,
-        |program| {
+        |program, _| {
             now.set(now.get() + turn);
             program.immediate(&mut |_| b"ready".to_vec());
             Some(Vec::new())

@@ -1,18 +1,17 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
-2054 file ui/src/board/dho/hw.rs
-568 file ui/src/drm.rs
-590 file ui/src/fastdraw.rs
+509 file ui/src/drm.rs
+528 file ui/src/fastdraw.rs
 649 file ui/src/gfx.rs
-640 file ui/src/gpu.rs
+621 file ui/src/gpu.rs
 657 file ui/src/http.rs
 438 file ui/src/main.rs
 460 file ui/src/measures/jitter.rs
 514 file ui/src/measures/power.rs
 516 file ui/src/measures/standard.rs
-3277 file ui/src/scpi.rs
+3266 file ui/src/scpi.rs
 1464 file ui/src/store.rs
-8472 file ui/src/ui.rs
+8436 file ui/src/ui.rs
 1495 file ui/src/ui/analysis.rs
 504 file ui/src/ui/autoset.rs
 826 file ui/src/ui/bode.rs
@@ -33,15 +32,10 @@
 772 file ui/src/ui/wlan.rs
 653 file ui/src/ui/workflow.rs
 804 file ui/src/ui/workspace.rs
-1069 file ui/src/wave.rs
+1047 file ui/src/wave.rs
 138 fn ui/src/board/dho/fpga.rs spawn
-72 fn ui/src/board/dho/hw.rs hw_trigger
-125 fn ui/src/board/dho/hw.rs settings
-825 fn ui/src/board/dho/hw.rs spawn
-83 fn ui/src/board/record.rs resample
-103 fn ui/src/board/record.rs trigger_point
 91 fn ui/src/cmd.rs execute
-105 fn ui/src/drm.rs Display::on_fd
+103 fn ui/src/drm.rs Display::on_fd
 63 fn ui/src/framestats.rs cheap_results
 224 fn ui/src/gpu.rs Gpu::submit
 71 fn ui/src/hislip.rs on_program_message
@@ -53,7 +47,6 @@
 77 fn ui/src/main.rs hdmi_gpu_frame
 70 fn ui/src/main.rs main
 69 fn ui/src/measures/jitter.rs eye_of
-76 fn ui/src/pacing.rs summary
 162 fn ui/src/scpi.rs Scpi::bus_cmd
 76 fn ui/src/scpi.rs Scpi::bus_rs232
 88 fn ui/src/scpi.rs Scpi::counter_cmd
@@ -83,17 +76,17 @@
 118 fn ui/src/ui.rs Ui::draw_menu
 75 fn ui/src/ui.rs Ui::draw_refs_at
 66 fn ui/src/ui.rs Ui::draw_strip_band
-73 fn ui/src/ui.rs Ui::draw_top
+68 fn ui/src/ui.rs Ui::draw_top
 159 fn ui/src/ui.rs Ui::key
 117 fn ui/src/ui.rs Ui::knob
 76 fn ui/src/ui.rs Ui::menu_title
 100 fn ui/src/ui.rs Ui::multi_touch
-253 fn ui/src/ui.rs Ui::new
+252 fn ui/src/ui.rs Ui::new
 76 fn ui/src/ui.rs Ui::pointer_wheel_motion
 135 fn ui/src/ui.rs Ui::render_layers
 121 fn ui/src/ui.rs Ui::set_dec_proto
 133 fn ui/src/ui.rs Ui::set_trig_type
-246 fn ui/src/ui.rs Ui::step
+237 fn ui/src/ui.rs Ui::step
 214 fn ui/src/ui.rs Ui::tap
 66 fn ui/src/ui.rs Ui::tap_menu
 409 fn ui/src/ui.rs Ui::touch_in
@@ -160,7 +153,6 @@
 61 impls ui Ui
 16 struct ui/src/board/mod.rs Frame
 45 struct ui/src/board/mod.rs Shared
-14 struct ui/src/drm.rs Display
 16 struct ui/src/drm.rs GetConnector
 15 struct ui/src/drm.rs ModeInfo
 14 struct ui/src/gpu.rs FrameMsg
@@ -171,7 +163,7 @@
 14 struct ui/src/pacing.rs State
 18 struct ui/src/sysconf.rs SysConf
 13 struct ui/src/ui.rs TouchState
-215 struct ui/src/ui.rs Ui
+214 struct ui/src/ui.rs Ui
 19 struct ui/src/ui/analysis.rs RefMeasureKey
 49 struct ui/src/ui/analysis.rs State
 16 struct ui/src/ui/autoset.rs AutoRun

@@ -233,6 +233,14 @@ fn prep_nominal(mask: u32, tdiv_fs: i128, depth: i128, offset_fs: i128) -> Param
     }
     // a few points over a very long screen: the integer rate would be 0
     let rate = rate.max(1);
+    geometry(ratio, rate, memsel, offset_fs)
+}
+
+pub(super) fn centered_params(ratio: u32, rate: u64, points: u32) -> Params {
+    geometry(i128::from(ratio), i128::from(rate), i128::from(points), 0)
+}
+
+fn geometry(ratio: i128, rate: i128, memsel: i128, offset_fs: i128) -> Params {
     let dot = FS / rate;
     let seg = mem_size(memsel * ratio);
     // frame ring for batches: kept at the stock memory size (verified on the unit; more frames would fit)

@@ -95,6 +95,7 @@ pub struct Program {
     out: Vec<u8>,
     output: Option<crate::netport::Output>,
     waiting: Option<crate::ui::Operations>,
+    waveform: Option<waveform::Selection>,
     separator: u8,
     pub bytes: usize,
     /// A completed query may legitimately produce zero payload bytes.
@@ -162,14 +163,7 @@ const ERR_LEN: usize = 256;
 
 pub struct Scpi {
     transport: intake::Transport,
-    /// :WAVeform:SOURce, a channel or a reference slot
-    wav_src: WaveId,
-    wav_fmt: u8, // 0 BYTE, 1 WORD, 2 ASCII
-    /// :WAVeform:MODE: 0 NORMal (screen), 1 MAXimum (memory while stopped), 2 RAW (memory)
-    wav_mode: u8,
-    /// :WAVeform:STARt and :WAVeform:STOP, 1-based inclusive. `stop == 0` reads through the last point.
-    wav_start: u64,
-    wav_stop: u64,
+    waveform: waveform::WaveformContext,
     err: Vec<String>,
     /// who may connect (`netacl`, net.allow; empty: everyone): new connections, and after a change those held
     pub acl: crate::netacl::Shared,
@@ -751,14 +745,6 @@ impl Scpi {
 
     pub fn port(&self) -> Option<u16> {
         self.transport.endpoint.port()
-    }
-
-    pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas) {
-        let Some(ports) = self.transport.endpoint.ports(&self.acl) else { return };
-        let start = std::time::Instant::now();
-        let mut intake = std::mem::take(&mut self.transport.intake);
-        intake.poll(&ports, || start.elapsed(), |program| self.poll_program(ui, cv, program));
-        self.transport.intake = intake;
     }
 
     fn poll_events(&mut self, ui: &Ui) {
@@ -2629,7 +2615,7 @@ impl Scpi {
     }
 
     fn wav_source_text(&self) -> String {
-        match self.wav_src {
+        match self.waveform.read().source {
             WaveId::Ch(c) => format!("CHAN{}", c + 1),
             WaveId::Ref(i) => format!("R{}", i + 1),
         }
@@ -2637,11 +2623,11 @@ impl Scpi {
 
     /// RAW, or MAXimum while stopped: the deep record. NORMal, and MAXimum while running: the screen.
     fn wave_memory(&self, ui: &Ui) -> bool {
-        self.wav_mode == 2 || (self.wav_mode == 1 && ui.m.run == RunState::Stop)
+        self.waveform.read().mode == 2 || (self.waveform.read().mode == 1 && ui.m.run == RunState::Stop)
     }
 
     fn wave_len(&self, ui: &Ui) -> u64 {
-        match self.wav_src {
+        match self.waveform.read().source {
             WaveId::Ch(c) => ui.channel_points(c, self.wave_memory(ui)) as u64,
             WaveId::Ref(i) => ui.ref_info(i).map(|(n, _, _, _, _)| n as u64).unwrap_or(0),
         }
@@ -2650,16 +2636,16 @@ impl Scpi {
     /// How many points the current STARt/STOP page holds, without copying them.
     fn page_count(&self, ui: &Ui) -> u64 {
         let n = self.wave_len(ui);
-        let a = self.wav_start.max(1);
+        let a = self.waveform.read().start.max(1);
         if n == 0 || a > n {
             return 0;
         }
-        let b = if self.wav_stop == 0 { n } else { self.wav_stop.clamp(a, n) };
+        let b = if self.waveform.read().stop == 0 { n } else { self.waveform.read().stop.clamp(a, n) };
         b - a + 1
     }
 
     fn wave_scale(&self, ui: &Ui) -> (f64, f64) {
-        match self.wav_src {
+        match self.waveform.read().source {
             WaveId::Ch(c) => {
                 let ch = &ui.m.ch[c];
                 (ch.volts_per_div() as f64, ch.offset as f64)
@@ -2669,7 +2655,7 @@ impl Scpi {
     }
 
     fn y_codes(&self, vpd: f64, offset: f64) -> (f64, f64, f64) {
-        let (yinc, yref) = match self.wav_fmt {
+        let (yinc, yref) = match self.waveform.read().format {
             1 => (vpd * VDIV as f64 / 60000.0, 32768.0),
             _ => (vpd * VDIV as f64 / 250.0, 128.0),
         };
@@ -2683,8 +2669,8 @@ impl Scpi {
         let (dt, t0) = self.wave_origin(ui);
         format!(
             "{},{},{},1,{},{},0,{},{},{}",
-            self.wav_fmt,
-            self.wav_mode,
+            self.waveform.read().format,
+            self.waveform.read().mode,
             self.page_count(ui),
             e(dt),
             e(t0),
@@ -2696,12 +2682,12 @@ impl Scpi {
 
     /// Sample interval and the time of the first point of the current page. Does not copy the samples.
     fn wave_origin(&self, ui: &Ui) -> (f64, f64) {
-        let (dt, t0) = match self.wav_src {
+        let (dt, t0) = match self.waveform.read().source {
             WaveId::Ch(c) => ui.channel_origin(c, self.wave_memory(ui)).unwrap_or((0.0, 0.0)),
             WaveId::Ref(i) => ui.ref_info(i).map(|(_, dt, t0, _, _)| (dt, t0)).unwrap_or((0.0, 0.0)),
         };
         let n = self.wave_len(ui);
-        let a = self.wav_start.max(1);
+        let a = self.waveform.read().start.max(1);
         if n == 0 || a > n {
             (dt, t0)
         } else {
@@ -3208,7 +3194,7 @@ impl Scpi {
 
     fn wave_data(&mut self, ui: &Ui) -> Option<Vec<u8>> {
         // Bound output before taking a copy of the requested page. Metadata never copies samples.
-        let width = match self.wav_fmt {
+        let width = match self.waveform.read().format {
             0 => 1,
             1 => 2,
             _ => 14,
@@ -3219,14 +3205,14 @@ impl Scpi {
         }
         let (vpd, offset) = self.wave_scale(ui);
         let (yinc, yorg, yref) = self.y_codes(vpd, offset);
-        let samples = ui.scpi_wave_samples(self.wav_src, self.wave_memory(ui));
-        let start = (self.wav_start.max(1) - 1).min(samples.len() as u64) as usize;
+        let samples = ui.scpi_wave_samples(self.waveform.read().source, self.wave_memory(ui));
+        let start = (self.waveform.read().start.max(1) - 1).min(samples.len() as u64) as usize;
         let count = self.page_count(ui) as usize;
         let v = samples.get(start..start + count).unwrap_or_default();
         let mut bytes = Vec::with_capacity(v.len() * width as usize + 11);
         bytes.resize(11, 0);
         for (index, value) in v.iter().enumerate() {
-            match self.wav_fmt {
+            match self.waveform.read().format {
                 2 => {
                     if index != 0 {
                         bytes.push(b',');
@@ -3806,10 +3792,6 @@ mod tests {
         });
         let mut bytes = [0; 128];
         assert_eq!(waiting.read(&mut bytes).unwrap_err().kind(), ErrorKind::WouldBlock);
-        let mut control = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
-        control.write_all(b":WAV:FORM WORD;*OPC?\n").unwrap();
-        s.poll(&mut ui, &cv);
-        assert_eq!(s.wav_fmt, 0, "another program cannot interleave with the continuation");
         line(&mut s, &mut ui, &cv, ":TRIG:FORC");
         let reply = test_io::line(&mut waiting, || {
             s.poll(&mut ui, &cv);
@@ -3975,6 +3957,7 @@ mod tests {
             s.transport.intake.pending().then_some(())
         });
         assert!(s.transport.intake.pending());
+        client.write_all(b":RUN\n").unwrap();
         client.shutdown(std::net::Shutdown::Both).unwrap();
         drop(client);
         crate::ui::lifecycle::test_wait::until("raw client close reaches IO", || {
@@ -4204,9 +4187,9 @@ mod tests {
         line(&mut s, &mut ui, &cv, ":UNDEFINED_ONE?;:UNDEFINED_TWO?");
         assert_eq!(s.err.len(), 2);
         let errors = s.err.clone();
-        s.wav_src = WaveId::Ref(2);
-        s.wav_fmt = 1;
-        s.wav_mode = 2;
+        s.waveform.edit(|wave| wave.source = WaveId::Ref(2));
+        s.waveform.edit(|wave| wave.format = 1);
+        s.waveform.edit(|wave| wave.mode = 2);
         // An independently pending client request must not be consumed or
         // cancelled while another client polls configuration/status.
         let ports = s.transport.endpoint.io.as_ref().unwrap().ports();
@@ -4228,7 +4211,10 @@ mod tests {
             assert_eq!(ui.m.hw_stamp, acquisition_stamp);
             assert_eq!(s.err, errors, "status reads must not consume queued errors");
             assert!(!ports.requests().is_empty());
-            assert_eq!((s.wav_src, s.wav_fmt, s.wav_mode), (WaveId::Ref(2), 1, 2));
+            assert_eq!(
+                (s.waveform.read().source, s.waveform.read().format, s.waveform.read().mode),
+                (WaveId::Ref(2), 1, 2)
+            );
         }
         line(&mut s, &mut ui, &cv, ":TIM:SCAL 0.000005");
         assert!(

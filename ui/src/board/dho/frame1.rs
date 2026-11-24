@@ -5,7 +5,9 @@
 //! before they reach the record or the deposit workers.
 
 use crate::board::Frame;
-use oos_hal::dho::{hz, seq::Settings};
+#[cfg(any(target_os = "linux", test))]
+use oos_hal::dho::hz;
+use oos_hal::dho::seq::Settings;
 
 /// Samples around the trigger point in which frame 1's edge must lie (`off_trigger`); the hardware puts it within a
 /// few samples (unit 2026-11-16: +6.5 at 6.25 MSa/s).
@@ -13,6 +15,7 @@ const SPAN: usize = 32;
 
 /// Largest record whose frame 1 the batch path decodes for `off_trigger`: one more decode per batch, cheap for the
 /// short records batches are made of; a longer record is searched for its edge by the fast path anyway.
+#[cfg(any(target_os = "linux", test))]
 const CHECK_MAX: u32 = 100_000;
 
 /// Issue #5, the rest: frame 1 of a batch (the first trigger after the arm) is now and then joined with older memory.
@@ -22,23 +25,53 @@ const CHECK_MAX: u32 = 100_000;
 /// crossing of the level within `SPAN` samples of `pre`. Other trigger types cannot be checked this way and keep
 /// their frame 1.
 pub(super) fn off_trigger(f: &Frame, s: &Settings) -> bool {
-    use oos_hal::dho::tpu::{Coupling, Slope};
-    if !matches!(s.trigger, oos_hal::dho::seq::Trig::Edge)
-        || !(1..=4).contains(&s.trig_src)
-        || !matches!(s.trig_couple, Coupling::Dc | Coupling::HfReject)
-        || f.envelope
-    {
-        return false;
-    }
-    let tc = (s.trig_src - 1) as usize;
+    let Some(tc) = trigger_channel(s).filter(|_| !f.envelope) else { return false };
     let v = &f.ch[tc];
-    if v.len() < 2 * SPAN || f.pre >= v.len() {
-        return false;
-    }
-    // a fifth of a division: an edge the trigger took crosses it, noise on a flat level near the level does not
+    checked(v.len(), f.pre) && missing_edge(v, f.pre, s, tc)
+}
+
+fn trigger_channel(s: &Settings) -> Option<usize> {
+    use oos_hal::dho::tpu::Coupling;
+    (matches!(s.trigger, oos_hal::dho::seq::Trig::Edge)
+        && (1..=4).contains(&s.trig_src)
+        && matches!(s.trig_couple, Coupling::Dc | Coupling::HfReject))
+    .then(|| (s.trig_src - 1) as usize)
+}
+
+fn checked(len: usize, pre: usize) -> bool {
+    len >= 2 * SPAN && pre < len
+}
+
+fn missing_edge(v: &[f32], pre: usize, s: &Settings, tc: usize) -> bool {
+    use oos_hal::dho::tpu::Slope;
     let hyst = (0.2 * s.ch[tc].scale) as f32;
     let (rising, either) = (s.slope != Slope::Falling, s.slope == Slope::Either);
-    crate::fastdraw::edge_near(v, f.pre, s.level as f32, hyst, rising, either, SPAN).is_none()
+    crate::fastdraw::edge_near(v, pre, s.level as f32, hyst, rising, either, SPAN).is_none()
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn bytes_off_trigger(bytes: &[u8], s: &Settings, p: &hz::Params) -> bool {
+    use oos_hal::dho::seq;
+    let Some(tc) = trigger_channel(s).filter(|_| super::hw::pair_step(s, p) == 1) else { return false };
+    let map = seq::code_map(s.mask, s.ch.map(|c| (c.scale, c.offset)));
+    let Some(word) = map.word[tc] else { return false };
+    let bytes = super::matching::payload(bytes, s).as_chunks::<2>().0;
+    let len = bytes.len().saturating_sub(word).div_ceil(map.ratio);
+    let pre = p.pre.saturating_sub(seq::window(s, p).1) as usize;
+    if !checked(len, pre) {
+        return false;
+    }
+    // The edge search walks back at most 4096 samples to establish hysteresis.
+    const LOOK: usize = 4096;
+    let first = pre.saturating_sub(SPAN + LOOK);
+    let last = (pre + SPAN + 1).min(len);
+    let mut volts = [0.0; LOOK + 2 * SPAN + 1];
+    let window = &mut volts[..last - first];
+    for (i, v) in window.iter_mut().enumerate() {
+        let code = u16::from_le_bytes(bytes[(first + i) * map.ratio + word]);
+        *v = seq::volt_code(code, map.affine[tc]);
+    }
+    missing_edge(window, pre - first, s, tc)
 }
 
 /// Counts a frame 1 left out and logs the count at 1, 2, 4, 8, ...
@@ -55,6 +88,7 @@ pub(super) fn left_out() {
 /// The first frame of a batch of `avail` that the deposit workers and the matcher may use: 0, or 1 with frame 0 left
 /// out (`frame0_drop`), or 2 when frame 1 has no edge at the trigger point (checked for records up to `CHECK_MAX`;
 /// with two frames the newest is frame 1, which `newest_kept` judges).
+#[cfg(any(target_os = "linux", test))]
 pub(super) fn first_kept(
     bytes: &[u8],
     fb: usize,
@@ -66,9 +100,7 @@ pub(super) fn first_kept(
     if !frame0_drop || avail < 2 {
         return 0;
     }
-    let off = avail > 2
-        && p.memsel <= CHECK_MAX
-        && off_trigger(&super::hw::decode_probed(&bytes[fb..2 * fb], s, p, 0, Default::default()), s);
+    let off = avail > 2 && p.memsel <= CHECK_MAX && bytes_off_trigger(&bytes[fb..2 * fb], s, p);
     if off {
         left_out();
     }
@@ -76,8 +108,13 @@ pub(super) fn first_kept(
 }
 
 /// Whether the newest frame of a batch of `avail` stays: with two frames it is frame 1, left out without its edge.
-pub(super) fn newest_kept(newest: &Frame, avail: usize, frame0_drop: bool, s: &Settings) -> bool {
-    let off = avail == 2 && frame0_drop && off_trigger(newest, s);
+#[cfg(any(target_os = "linux", test))]
+pub(super) fn newest_kept(
+    (raw, bytes): (Option<&Frame>, &[u8]),
+    (avail, frame0_drop): (usize, bool),
+    (s, p): (&Settings, &hz::Params),
+) -> bool {
+    let off = avail == 2 && frame0_drop && raw.map_or_else(|| bytes_off_trigger(bytes, s, p), |f| off_trigger(f, s));
     if off {
         left_out();
     }

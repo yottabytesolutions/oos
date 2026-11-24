@@ -95,6 +95,10 @@ struct Admission {
 }
 
 impl Queue {
+    pub(super) fn accepts_deposit(&self, identity: Option<Identity>) -> bool {
+        self.identity.is_none() || identity.is_none() || crate::drawpipe::same_pair(self.identity, identity)
+    }
+
     fn published(&mut self, number: u64) {
         if let Some(index) = self.unpublished.iter().position(|&(n, _, _)| n == number) {
             self.unpublished.remove(index);

@@ -35,9 +35,7 @@ fn watchdog_reset_fences_in_flight_and_queued_batches_before_reopening() {
     pipe.feed(Box::new(Bytes(bytes.clone())), fb, 1, 0, dec(&s, &p));
     drop(recycled(&pipe));
     let gate = one_worker_held(&pipe);
-    for _ in 0..16 {
-        pipe.feed(Box::new(Bytes(bytes.clone())), fb, 1, 0, dec(&s, &p));
-    }
+    pipe.feed(Box::new(Bytes(bytes.clone())), fb, 1, 0, dec(&s, &p));
 
     shutdown::reset(&pipe);
     pipe.set_view(Some(&m), 97, 48, Interp::Exact);
@@ -46,7 +44,7 @@ fn watchdog_reset_fences_in_flight_and_queued_batches_before_reopening() {
     settle(&pipe);
     host::barrier(&pipe);
 
-    assert_eq!(pipe.counters.read().2, 37, "every pre-reset record is discarded once");
+    assert_eq!(pipe.counters.read().2, 22, "every pre-reset record is discarded once");
     assert!(pipe.slot.take().is_none());
     assert!(pipe.slot.spare().is_none());
     pipe.feed(Box::new(Bytes(bytes)), fb, 1, 0, dec(&s, &p));

@@ -34,6 +34,7 @@ bench = false
 # file in src/protocols. All are on by default; a build without some: `--no-default-features --features "..."`, or
 # OOS_DECODERS / OOS_DECODERS_OFF with build.sh and boot/build-dev-image.sh (tools/decoder-features.sh).
 [features]
+private-picture-counts = []
 default = ["decoders"]
 decoders = ["dec-dmx512", "dec-spdif", "dec-usbpd", "dec-dcc", "dec-linecode", "dec-serial", "dec-onewire", "dec-debug", "dec-qspi", "dec-i3c", "dec-vehicle", "dec-avionics", "dec-i2s", "dec-usb"]
 dec-dmx512 = []

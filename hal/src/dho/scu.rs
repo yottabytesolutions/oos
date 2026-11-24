@@ -156,7 +156,6 @@ pub fn stop_sequence(w: &mut Vec<Write>, sh: &mut Shadows) {
 /// Read-out window: channel processing on, LA processing off, window 0x1100/0x1108, TX length 0x11f0,
 /// no frame header (0x1010 bit31), record sequence off (0x400c bit25); 7 writes.
 fn readout_window(w: &mut Vec<Write>, win: &Window, sh: &mut Shadows) {
-    let r4 = (win.n + 3) / 4 * 4;
     sh.s4008 |= 1 << 23;
     w.push((0x4008, sh.s4008));
     sh.s4008 &= !(1 << 24);
@@ -166,12 +165,20 @@ fn readout_window(w: &mut Vec<Write>, win: &Window, sh: &mut Shadows) {
     if win.avg {
         w.push((AVG_OFFSET, avg_offset(win.start / win.ratio, win.ratio)));
     }
-    let size = if r4 / win.ratio == 8 { 128 } else { r4 / win.ratio };
-    w.push((0x11f0, size));
+    w.push((0x11f0, tx_points(win)));
     sh.s1010 |= 1 << 31;
     w.push((0x1010, sh.s1010));
     sh.s400c &= !(1 << 25);
     w.push((0x400c, sh.s400c));
+}
+
+pub(super) fn tx_points(win: &Window) -> u32 {
+    let size = win.n.div_ceil(4) * 4 / win.ratio;
+    if size == 8 {
+        128
+    } else {
+        size
+    }
 }
 
 /// Play-last read-out (verified word-exact): 28 writes, then ONE read of 2 * n bytes from /dev/xdma0_c2h_0.

@@ -256,6 +256,45 @@ The read-only checks for each unit round (governor, idle states, `pm_qos`, therm
 parameters, IRQ affinity, PCIe link, printk level, timer slack per thread) are in the study's check list, kept with
 unitlab's scripts.
 
+### Acquisition source overhead
+
+These switches are read when oos-ui starts. Set them in `system.conf` or use the corresponding environment
+variable, which takes precedence. Invalid values are logged and fall back to the default. The
+`:SYSTem:STATe?` response reports the configured values.
+
+| Key | Environment override | Default | Other values |
+|---|---|---|---|
+| `acq.write_gap` | `OOS_ACQ_WRITE_GAP` | `0`, wait 10 us once after each live batch write sequence, before the next poll or read | `10`, wait 10 us after each BAR1 write |
+| `acq.sched` | `OOS_ACQ_SCHED` | `fifo`, pin the Linux acquisition thread to the second A72 and request SCHED_FIFO priority 1. If that fails, log the error and use normal scheduling with the existing `perf.place` policy | `other`, normal scheduling and existing `perf.place` policy |
+| `acq.work_budget_ms` | `OOS_ACQ_WORK_BUDGET_MS` | 36% of the picture period for measured service per batch | Whole milliseconds from `4` to `20`, inclusive |
+
+Boot, configuration, calibration, TPU writes, roll, segment access and stopped-record replay retain their
+per-write gaps. With `perf.place = on`, XDMA MSI is steered to the last A53 on RK3399. The deposit pool
+uses all four A53 cores.
+
+When the measured service cost of one record exceeds the work budget, the source disables prearm and waits
+for the in-flight batch to be released before arming. The wait wakes on acquisition commands. The
+`source.v1` section reports the effective `budget_ms` and the number of serial reads for the current
+acquisition identity as `source.serial`.
+
+### Frame clock
+
+| `system.conf` key | Environment override | Default | Values |
+|---|---|---|---|
+| `pacing.clock` | `OOS_PACING_CLOCK` | `flip` | `flip` locks steps to panel vblank, `timer` runs at 30 Hz |
+| `pacing.flip_divisor` | `OOS_PACING_FLIP_DIVISOR` | `3` | `2`, `3` or `4` vblanks per picture in flip mode |
+
+The startup switches select about 48.7, 32.5 or 24.4 pictures/s on the DHO900's 97.4 Hz panel.
+The effective flip period is the divisor times the refresh interval from the DRM mode.
+Between new pictures the UI requests a completion on the current framebuffer. Late completions from an
+overrun keep the panel phase and do not start a catch-up step. After 50 ms without a completion, the UI
+uses a timer at the same period until flips resume. Resuming waits at least a picture period after the
+last timer step. `pacing.flip_fallback` counts each transition to the timer.
+The device publishes the period and the next predicted step deadline for acquisition pacing. `:SYSTem:STATe?`
+reports the startup switches, `pacing.period_us`, `pacing.pipeline_budget_us` and `fps` measured from step intervals.
+With private picture counts enabled, the `fresh.v1` counters and elapsed nanoseconds give the observed fresh rate
+over a query window.
+
 ### RUN clock floors
 
 Task 0086 implements plan P5 while keeping schedutil and the GPU governor.

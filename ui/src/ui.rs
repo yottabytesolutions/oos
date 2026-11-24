@@ -61,7 +61,7 @@ mod selfcal;
 mod sertrig;
 mod sim;
 pub mod startup;
-mod step_draw;
+pub(crate) mod step_draw;
 pub(crate) use step_draw::status as draw_status;
 mod sysinfo;
 mod tables;
@@ -221,7 +221,6 @@ const DLG_HEAD: i32 = 50;
 const DLG_ROW: i32 = 44;
 const DLG_CTRL: i32 = 40;
 /// The time a screen step spends on records from the source at most once it has one (docs/fork/stutter.md).
-const RECORDS_BUDGET: std::time::Duration = std::time::Duration::from_millis(15);
 /// records kept for history playback
 const HISTORY: usize = 200;
 /// Seconds the trigger level line stays after the level changed.
@@ -1283,7 +1282,6 @@ pub struct Ui {
     pub fast_off: (f64, f64),
     /// frames the fast path takes in one screen (`fast_max`), its time in the last screens (ms, smoothed) and that of
     /// its two phases (placing, drawing; `:SYSTem:STATe?`)
-    pub fast_take: f32,
     /// STOP: the software trigger of the record shown at the stop (s from the hardware trigger point), kept for the
     /// records read again (`stop_replay`)
     stop_ti_off: Option<f64>,
@@ -1650,7 +1648,6 @@ impl Ui {
             zone_hw_clear: 0,
             fast_edges: [0; 4],
             fast_off: (0.0, 0.0),
-            fast_take: crate::board::QUEUE_MAX as f32,
             stop_ti_off: None,
             stop_raw: None,
             stop_pic: None,
@@ -2281,9 +2278,7 @@ impl Ui {
     fn zoom_display_model(&self) -> Model {
         let mut display = self.m.clone();
         for channel in &mut display.ch {
-            let vpd = channel.volts_per_div();
-            channel.vfine /= self.zoom_vfactor;
-            channel.offset -= self.zoom_vcenter * vpd;
+            step_draw::zoom_view(self).transform(channel);
         }
         display
     }
@@ -2639,20 +2634,19 @@ impl Ui {
         self.azr.watch || self.xy
     }
 
-    /// A STOP that waits for the hardware's final frame: a plain STOP (not the end of Single or segments, not a mask
-    /// stop or a history view) while the record shown is of live-compression pairs, or of a deep record's pairs with raw
-    /// deep measurements on.
+    /// A plain STOP drains a serial capture, or waits for the final read needed by the current view.
     fn stop_wants_final(&self) -> bool {
         let m = &self.m;
-        m.trig_mode != TrigMode::Single
+        let frame = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);
+        self.src.is_hw()
+            && board().slow_mode(m) == crate::board::Slow::Off
+            && m.trig_mode != TrigMode::Single
             && m.segments == 0
             && !(m.mask_on && m.mask_stop)
             && self.hist_pos.is_none()
             && self.seg_pos.is_none()
-            && self.last[0].as_ref().and_then(|r| r.raw.as_ref()).is_some_and(|r| {
-                crate::compress::live(&r.frame)
-                    || (crate::deepmeas::want(m).is_some() && crate::deepmeas::deep_pairs(&r.frame))
-            })
+            && self.last[0].is_some()
+            && change::transitions::wants_final_record(self, frame)
     }
 
     /// Measurement `k` of channel `c` as last measured; NaN for a mean-type measurement made on min/max pairs.
@@ -2827,9 +2821,8 @@ impl Ui {
     pub fn step(&mut self, dt_wall: f64) {
         // System > Features: what is left out runs nothing
         self.features_enforce();
-        let before = self.now;
         let Some((final_done, picture_cleared)) = change::begin_step(self, dt_wall) else { return };
-        let window_now = step_draw::window_time(self, before);
+        let keep_window = step_draw::prepare_window(self);
         self.poll_reference_measurements();
         self.poll_catalog_measurements();
         self.math_fit_tick();
@@ -2870,19 +2863,8 @@ impl Ui {
                 draw[0] += started.elapsed();
             }
             let fast = self.fast_ok();
-            if !fast {
-                self.src.hw_take_all();
-            }
             let mut taps = deep_draw::ReaderTaps::new(self);
-            let k = match self.m.trig_type {
-                // The fast path reserves one ordinary record and can drain a backlog of batch taps.
-                _ if fast => taps.len().max(1),
-                // the hardware source delivers batches: draw up to 48 queued records per frame
-                _ if matches!(self.src, Source::Hw { .. }) => crate::board::RECORDS_PER_STEP,
-                TrigType::Edge | TrigType::Pattern => 6,
-                TrigType::Video => 1,
-                _ => 2,
-            };
+            let k = step_draw::intake_count(self, fast, taps.len());
             // what this picture is made of (pacing::composition): frames through a deposit kernel, through the record
             // path, and when the newest pipe batch in it was fed
             let mut composition = step_draw::Composition::default();
@@ -2894,23 +2876,18 @@ impl Ui {
             let mut raw_rec: Option<Record> = None;
             let mut window_frames = None;
             if fast {
-                let f = step_draw::fast(self, &sw, &mut clear_pending, window_now, &mut composition, &mut draw);
+                let f = step_draw::fast(self, &sw, &mut clear_pending, keep_window, &mut composition, &mut draw);
                 (got, td, window_frames, raw_rec) = (f.frames, f.ms, f.window_frames, f.raw);
             }
+            let queued_fast_records = composition.deposit.saturating_sub(composition.merged as usize);
+            let mut record_draw = step_draw::RecordDraw::new(queued_fast_records, draw[1]);
             let mut received_record = false;
             let t_records = std::time::Instant::now();
             for _ in 0..k {
-                // the records of a step within a time budget: where every frame takes the record path, 48 of them a step
-                // took the frame rate down to 5-13 fps (stutter.md); the rest of the queue goes, counted as dropped.
-                // Hardware queue only: the demo source makes its records here and advances its signal time by each
-                // record, so a wall-clock cut made what it shows depend on the machine's speed and load (the host
-                // tests of the decoders and bus triggers failed on a loaded machine)
-                if got > 0 && self.src.is_hw() && self.host.time_budgets() && t_records.elapsed() > RECORDS_BUDGET {
-                    break;
-                }
                 let t0 = std::time::Instant::now();
                 let (r, drawing_input) = deep_draw::acquire(self, dt_wall / k as f64, &mut taps);
                 ta += t0.elapsed().as_secs_f32() * 1000.0;
+                let bill_record = record_draw.acquired(r.as_ref().map(|(_, _, tap)| *tap), || t0.elapsed());
                 if r.is_none() && self.bus_candidate_waiting() {
                     break;
                 }
@@ -2971,7 +2948,7 @@ impl Ui {
                         }
                         let t1 = std::time::Instant::now();
                         got += composition.draw_record(self, &rec, sw.interp, drawing_input, eligibility);
-                        td += t1.elapsed().as_secs_f32() * 1000.0;
+                        td += record_draw.placed(bill_record, t1.elapsed()).as_secs_f32() * 1000.0;
                         if self.history.len() >= if hw_seg { HISTORY } else { HISTORY.max(self.seg_count()) } {
                             self.history.pop_front();
                         }
@@ -3015,6 +2992,7 @@ impl Ui {
             }
             got += if fast { step_draw::replay(self, &sw, &mut clear_pending, &mut composition) } else { 0 };
             draw[3] += t_records.elapsed();
+            change::acquisition::record_progress(self, record_draw.records, record_draw.elapsed);
             // WAIT only when the whole frame brought nothing (the hardware source delivers a new record only every
             // few attempts; an empty attempt must not override TRIG'D)
             // at large depths the hardware delivers fewer records than frames: WAIT only after 0.5 s without one, or
@@ -3141,29 +3119,15 @@ impl Ui {
         parts.join("   \u{b7}   ")
     }
 
-    /// Frames the fast path takes in one screen: as many as fit into `fast_budget` at the pace of the last screens.
-    /// Beyond that the frame rate would drop (and with it the time the newest frame waits to be seen).
-    fn fast_max(&self) -> usize {
-        (self.fast_take as usize).clamp(4, crate::board::QUEUE_MAX)
-    }
-
-    /// Time of a screen the fast path may spend (ms): what a frame of the 30 a second (33 ms) leaves after the rest of
-    /// the step, drawing and showing the screen, less 2 ms of slack; 5 to 28 ms.
-    fn fast_budget(&self) -> f32 {
-        let rest = (self.t_step - self.t_fast).max(0.0) + self.t_render + self.t_present;
-        (31.0 - rest).clamp(5.0, 28.0)
-    }
-
     /// STOP on the hardware: the thread acquires nothing and reads the stored record again for every view (time base,
     /// delay), as much of it as the view shows: zoomed out the whole record, zoomed in every sample of the part on
     /// screen. The trigger stays where the last record had it (software trigger included).
     fn stop_replay(&mut self) {
         let ok = self.src.is_hw()
             && board().slow_mode(&self.m) == crate::board::Slow::Off
-            && !self.m.la_on()
             && self.m.segments == 0
             && self.hist_pos.is_none()
-            && self.last[0].as_ref().is_some_and(|r| r.raw.is_some());
+            && self.last[0].as_ref().is_some_and(|r| r.raw.is_some() || r.la.is_some());
         if !ok {
             self.src.hw_stop(None);
             self.stop_ti_off = None;
@@ -3208,24 +3172,24 @@ impl Ui {
         self.stop_pic.as_ref().filter(|_| same)
     }
 
-    /// The fast display path applies: hardware frames with a plain edge trigger and nothing that needs every record
-    /// as a full record (averaging, a software mask test, zones, segments, zoom, XY, Z input, software coupling or filter).
+    /// Continuous hardware views that can draw with the deposit pool.
     fn fast_ok(&self) -> bool {
         let m = &self.m;
+        // Newly eligible modes still need their records projection when it resamples a shifted channel.
+        let deskew = (m.acq != AcqMode::Normal || m.trig_type != TrigType::Edge)
+            && m.ch.iter().zip(m.deskew_ch).any(|(ch, shift)| ch.on && shift != 0.0);
         matches!(self.src, Source::Hw { .. })
-            && m.trig_type == TrigType::Edge
-            && m.acq == AcqMode::Normal
+            // Zoom uses the records route's fractional trigger. Non-edge record searches allocate.
+            && (m.trig_type == TrigType::Edge || (!m.zoom && crate::drawpipe::route::hardware_trigger(m)))
+            && matches!(m.acq, AcqMode::Normal | AcqMode::Peak | AcqMode::HiRes)
+            && !deskew
             && m.trig_mode != TrigMode::Single
             && m.segments == 0
             && (!m.mask_on || self.mask_hw_active())
-            && !m.zoom
             && !self.xy
             && m.z_src.is_none()
             && (!m.zones.iter().any(|z| z.usable()) || self.zone_hw_active())
             && board().slow_mode(m) == crate::board::Slow::Off
-        // coupling and the 20 MHz limit: the hardware source sets them in the AFE (`hw::settings`), the records of it
-        // are not conditioned in software (`condition` is for the demo source), so its frames take the fast path too.
-        // Kept out, AC and BW 20M sent every frame through the record path: 48 records a step, 5-13 fps (stutter.md)
     }
 
     /// The fast path for the queued frames (every one but the newest): placed on several cores (trigger, columns or
@@ -3243,7 +3207,7 @@ impl Ui {
                 && m.meas.iter().any(|&(k, mc)| mc == WaveId::Ch(c) && crate::fastdraw::Fold::covers(k))
         });
         let t0 = std::time::Instant::now();
-        let placed = crate::fastdraw::par_map(&frames, |f| fast_plan(m, w, h, f, fold));
+        let placed = step_draw::place_records(&frames, |f| fast_plan(m, w, h, f, fold));
         let t1 = std::time::Instant::now();
         let mut trig = 0;
         for (p, f) in placed.iter().zip(&frames) {
@@ -5410,7 +5374,7 @@ impl Ui {
 
     /// Run state pill at the left of the top bar (wider for the larger text sizes).
     fn run_pill(&self) -> Rect {
-        Rect::new(8, 6, 92.max(30 + self.fonts().mb.width("TRIG'D") + 12), 28)
+        step_draw::capture::run_pill(self)
     }
 
     /// Network box at the right of the top bar: room for an address, two lines of text (taller at the larger text
@@ -5594,12 +5558,7 @@ impl Ui {
         cv.fill(top, BAR);
         cv.hline(top.x, top.right() - 1, top.bottom() - 1, LINE);
         // run / trigger state; offline mode reads the record (playing or held) instead of a trigger
-        let (txt, col) = self.run_caption();
-        let r = self.run_pill();
-        cv.round(r, 6, mix(BAR, col, 80), 255);
-        cv.round(r.inset(1), 5, mix(BAR, col, 36), 255);
-        cv.circle(r.x + 16, r.y + 14, 4, col);
-        cv.text_in(&f.mb, Rect::new(r.x + 30, r.y, r.w - 30, r.h), 0, txt, col);
+        step_draw::capture::draw_run_status(self, cv);
         let single = self.single_btn();
         btn(cv, single, BTN, BTN_BORDER);
         cv.text_in(&f.s, single, 1, "Single", TEXT);
@@ -9388,17 +9347,6 @@ fn draw_slope1(cv: &mut Canvas, x: i32, y: i32, s: Slope, col: Rgb) {
     }
 }
 
-/// The fast path's take for the next screen after drawing `n` frames in `ms` with `budget` ms (`Ui::fast_max`).
-fn fast_take_next(take: f32, n: usize, ms: f32, budget: f32) -> f32 {
-    let est = n as f32 * budget / ms;
-    let limited = n >= (take as usize).clamp(4, crate::board::QUEUE_MAX);
-    if ms > budget || (limited && est > take) {
-        (take + 0.5 * (est - take)).clamp(4.0, crate::board::QUEUE_MAX as f32)
-    } else {
-        take
-    }
-}
-
 /// The count a trace pixel is graded against (full brightness), from the brightest pixel `mx` of the picture. It
 /// follows a higher `mx` at once and a lower one slowly (`prev`, no flicker). Minimum persistence (`frames` > 0, the
 /// frames in the picture): the picture holds as many frames as arrived since the last screen refresh, in batches, so
@@ -9430,6 +9378,7 @@ mod tests {
     mod deep_intake;
     mod roll;
     mod shadow;
+    mod stop_serial;
     mod trigger_sweep;
 
     use super::axis_label;
@@ -11473,19 +11422,10 @@ mod tests {
             }
             // through `step`: 41 queued frames, 40 by the fast path, the newest as the record; nothing left
             shared.lock().unwrap().queue.extend((1..=41).map(frame).map(Into::into));
-            // the take of this screen (the step adapts it to the time the draw took afterwards: debug builds miss the
-            // budget)
-            let max = ui.fast_max();
             ui.producer_step(0.05);
             assert_eq!(ui.wfm_total, 41);
             assert_eq!(ui.records, 1);
             assert!(shared.lock().unwrap().queue.is_empty());
-            // the thread is told how many of a batch to decode; the record path wants them all
-            assert_eq!(shared.lock().unwrap().take, max + 1);
-            ui.m.acq = AcqMode::Average;
-            ui.producer_step(0.05);
-            assert_eq!(shared.lock().unwrap().take, 0);
-            ui.m.acq = AcqMode::Normal;
         }
     }
 
@@ -11928,9 +11868,9 @@ mod tests {
         assert_eq!(seq(&ui), Some(3));
     }
 
-    /// The fast path takes what fits into its time budget: the newest frames, the older ones are counted as dropped.
+    /// The fast path takes the queued prefix and leaves the newest for normal record intake.
     #[test]
-    fn fast_path_keeps_to_its_budget() {
+    fn fast_path_drains_the_whole_queued_prefix() {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         let frame = |seq: u64| crate::board::Frame {
@@ -11942,36 +11882,10 @@ mod tests {
         };
         shared.lock().unwrap().queue.extend((1..=100).map(frame).map(Into::into));
         let mut src = Source::Hw { shared: shared.clone(), seen: 0 };
-        let got = src.drain_newest(30);
-        assert_eq!(got.iter().map(|f| f.seq).collect::<Vec<_>>(), (70..=99).collect::<Vec<_>>());
+        let got = src.drain_newest();
+        assert_eq!(got.iter().map(|f| f.seq).collect::<Vec<_>>(), (1..=99).collect::<Vec<_>>());
         let g = shared.lock().unwrap();
-        assert_eq!((g.queue.len(), g.queue[0].seq, g.dropped), (1, 100, 69));
-        drop(g);
-        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
-        assert_eq!(ui.fast_max(), crate::board::QUEUE_MAX);
-        // nothing else in the screen: 28 ms; a slow screen leaves at least 5
-        assert_eq!(ui.fast_budget(), 28.0);
-        ui.t_render = 40.0;
-        assert_eq!(ui.fast_budget(), 5.0);
-        // the take settles where the time meets the budget, with a fixed 3 ms a screen and 0.3 ms a frame
-        ui.t_render = 0.0;
-        // a queue always fuller than the take, 3 ms a screen and 0.3 ms a frame: settles where the time meets 28 ms
-        let mut take = crate::board::QUEUE_MAX as f32;
-        for _ in 0..40 {
-            let n = (take as usize).clamp(4, crate::board::QUEUE_MAX);
-            take = fast_take_next(take, n, 3.0 + 0.3 * n as f32, 28.0);
-        }
-        assert!((take - 83.3).abs() < 1.0, "{}", take);
-        // from below, too
-        let mut low = 4.0;
-        for _ in 0..40 {
-            let n = (low as usize).clamp(4, crate::board::QUEUE_MAX);
-            low = fast_take_next(low, n, 3.0 + 0.3 * n as f32, 28.0);
-        }
-        assert!((low - 83.3).abs() < 1.0, "{}", low);
-        // a screen with a few frames (a burst still to come) leaves the take alone; one over the budget lowers it
-        assert_eq!(fast_take_next(take, 6, 4.8, 28.0), take);
-        assert!(fast_take_next(take, 6, 40.0, 28.0) < take);
+        assert_eq!((g.queue.len(), g.queue[0].seq, g.dropped), (1, 100, 0));
     }
 
     /// The trigger level line shows for a moment after the level changes by any way (not only while dragging it);

@@ -1,7 +1,91 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Generic acquisition and step execution; the clock is supplied at the IO boundary.
+use super::time::{fill_count, BatchWait, STOP_POLL};
 use super::*;
+use std::time::{Duration, Instant};
+
+impl State {
+    /// Arm at frame zero and wait for the first frame to complete.
+    pub fn arm_steps(&mut self, s: &Settings, p: &hz::Params) -> Vec<Step> {
+        let mut st = self.arm_only_steps(s, p);
+        st.extend(wait_steps(p));
+        st
+    }
+
+    /// Arm at frame zero without waiting, before the host decodes the previous batch.
+    pub fn arm_only_steps(&mut self, s: &Settings, p: &hz::Params) -> Vec<Step> {
+        // A deep live capture can occupy frame zero beyond the stock segmented-record ring.
+        self.arm_record_steps(s, 0, frames(s, p))
+    }
+
+    /// Arm without waiting, starting at the given frame within the stock segmented-record ring.
+    pub fn arm_only_steps_at(&mut self, s: &Settings, p: &hz::Params, first: u32) -> Result<Vec<Step>, String> {
+        let nf = frames(s, p);
+        validate_ring_arm(p, first, nf)?;
+        Ok(self.arm_record_steps(s, first, nf))
+    }
+}
+
+fn batch_arm(st: &mut State, s: &Settings, p: &hz::Params, first: u32, armed: bool) -> Result<Vec<Step>, String> {
+    let mut steps = if armed {
+        if first != 0 {
+            validate_ring_arm(p, first, frames(s, p))?;
+        }
+        Vec::new()
+    } else if first == 0 {
+        st.arm_only_steps(s, p)
+    } else {
+        st.arm_only_steps_at(s, p, first)?
+    };
+    steps.extend(wait_steps(p));
+    Ok(steps)
+}
+
+/// Host observations of the unchanged acquisition sequence.
+#[derive(Debug)]
+pub enum BatchPhase {
+    Arm(Duration),
+    FirstTrigger(Duration),
+    FillStarted(Instant),
+    Fill(Duration),
+    Readout(Duration),
+    Read(Duration, usize),
+}
+
+/// Like `acquire_batch_idle`, with typed timestamps for the acquisition thread.
+/// The caller handles disarming after a canceled or timed-out acquisition.
+#[allow(clippy::too_many_arguments)] // Mirrors the acquisition boundary and adds its observer.
+pub fn acquire_batch_observed<B: crate::dho::bus::Bus, R: std::io::Read>(
+    st: &mut State,
+    s: &Settings,
+    p: &hz::Params,
+    bar: &mut B,
+    c2h: &mut R,
+    dma: &mut crate::dho::bus::DmaBuf,
+    armed: bool,
+    (wait, clock): (BatchWait, &impl super::time::Clock),
+    log: impl FnMut(String),
+    stop: impl Fn() -> bool,
+    (stop_fill, before_read): (impl Fn() -> bool, impl FnMut(u32) -> bool),
+    observe: impl FnMut(BatchPhase),
+) -> Result<u32, String> {
+    acquire_batch_phases(
+        st,
+        s,
+        p,
+        bar,
+        c2h,
+        dma,
+        armed,
+        wait,
+        log,
+        stop,
+        || false,
+        clock,
+        Some((observe, stop_fill, before_read)),
+    )
+}
 
 /// One batch on the unit: arm `frames(s, p)` frames, wait for the first, then let the ring fill until all frames are
 /// recorded or `wait_ms` have passed since the first one (0x4010 reads back the last recorded frame, so the count is
@@ -73,30 +157,127 @@ pub fn acquire_batch_with_clock<B: crate::dho::bus::Bus, R: std::io::Read>(
     dma: &mut crate::dho::bus::DmaBuf,
     armed: bool,
     wait_ms: u64,
+    log: impl FnMut(String),
+    stop: impl Fn() -> bool,
+    idle: impl FnMut() -> bool,
+    clock: &impl super::time::Clock,
+) -> Result<u32, String> {
+    acquire_batch_phases(
+        st,
+        s,
+        p,
+        bar,
+        c2h,
+        dma,
+        armed,
+        BatchWait::new(wait_ms, None),
+        log,
+        stop,
+        idle,
+        clock,
+        None::<(fn(BatchPhase), fn() -> bool, fn(u32) -> bool)>,
+    )
+}
+
+#[allow(clippy::too_many_arguments)] // Shares execution with the existing clock and optional phase observer.
+fn acquire_batch_phases<B: crate::dho::bus::Bus, R: std::io::Read>(
+    st: &mut State,
+    s: &Settings,
+    p: &hz::Params,
+    bar: &mut B,
+    c2h: &mut R,
+    dma: &mut crate::dho::bus::DmaBuf,
+    armed: bool,
+    wait: BatchWait,
     mut log: impl FnMut(String),
     stop: impl Fn() -> bool,
     mut idle: impl FnMut() -> bool,
     clock: &impl super::time::Clock,
+    mut observed: Option<(impl FnMut(BatchPhase), impl Fn() -> bool, impl FnMut(u32) -> bool)>,
 ) -> Result<u32, String> {
-    let nf = frames(s, p);
-    let arm = if armed { wait_steps(p) } else { st.arm_steps(s, p) };
-    execute_with_clock(&arm, bar, c2h, dma, &mut log, &stop, clock)?;
-    let t = clock.now();
-    let mut count = bar.rd(0x4010).wrapping_add(1).min(nf);
-    while count < nf && clock.now().saturating_duration_since(t).as_millis() < wait_ms as u128 {
-        if !idle() {
-            clock.wait(std::time::Duration::from_micros(200));
-        }
-        count = bar.rd(0x4010).wrapping_add(1).clamp(1, nf);
+    let arm = batch_arm(st, s, p, wait.first, armed)?;
+    let observed_fill = observed.is_some();
+    if let Some((observe, _, _)) = observed.as_mut() {
+        first_record(&arm, wait.armed_at(), p, (bar, c2h, dma), (&mut log, &stop, clock), observe)?;
+    } else {
+        execute_with_clock(&arm, bar, c2h, dma, &mut log, &stop, clock)?;
     }
-    log(format!(
-        "{} of {} frames after {:.1} ms",
-        count,
-        nf,
-        clock.now().saturating_duration_since(t).as_secs_f64() * 1e3
-    ));
-    execute_with_clock(&st.read_steps(s, p, count), bar, c2h, dma, &mut log, &|| false, clock)?;
+    let started = clock.now();
+    if let Some((observe, _, _)) = observed.as_mut() {
+        observe(BatchPhase::FillStarted(started));
+    }
+    let nf = frames(s, p);
+    let stop_fill = || observed.as_ref().is_some_and(|(_, stop_fill, _)| stop_fill());
+    let count = fill_count(bar, (nf, p), (wait, started, observed_fill), clock, (&mut idle, &stop_fill));
+    let fill = clock.now().saturating_duration_since(started);
+    log(format!("{} of {} frames after {:.1} ms", count, nf, fill.as_secs_f64() * 1e3));
+    if let Some((observe, _, before_read)) = observed.as_mut() {
+        observe(BatchPhase::Fill(fill));
+        if !before_read(count) {
+            return Err(NEW_SETTINGS.into());
+        }
+    }
+    let steps = st.read_steps_at(s, p, wait.first, count);
+    read_batch(&steps, bar, c2h, dma, &mut log, clock, observed.map(|(observe, _, _)| observe))?;
     Ok(count)
+}
+
+fn first_record(
+    arm: &[Step],
+    armed_at: Option<Instant>,
+    p: &hz::Params,
+    (bar, c2h, dma): (&mut impl crate::dho::bus::Bus, &mut impl std::io::Read, &mut crate::dho::bus::DmaBuf),
+    (log, stop, clock): (&mut impl FnMut(String), &impl Fn() -> bool, &impl super::time::Clock),
+    observe: &mut impl FnMut(BatchPhase),
+) -> Result<(), String> {
+    let at = arm.iter().position(|step| matches!(step, Step::Poll { .. })).unwrap_or(arm.len());
+    let (writes, steps) = arm.split_at(at);
+    let started = clock.now();
+    execute_with_clock(writes, bar, c2h, dma, log, stop, clock)?;
+    let now = clock.now();
+    if !writes.is_empty() {
+        observe(BatchPhase::Arm(now.saturating_duration_since(started)));
+    }
+    let armed_at = armed_at.unwrap_or(now);
+    if let Some((step, tail)) = steps.split_first() {
+        let delay = super::time::record_time(p.memsel.saturating_sub(p.pre), p.rate)
+            .saturating_sub(now.saturating_duration_since(armed_at));
+        poll_after(step, bar, log, stop, clock, delay)?;
+        execute_with_clock(tail, bar, c2h, dma, log, stop, clock)?;
+    }
+    observe(BatchPhase::FirstTrigger(clock.now().saturating_duration_since(armed_at)));
+    Ok(())
+}
+
+fn read_batch<B: crate::dho::bus::Bus, R: std::io::Read>(
+    steps: &[Step],
+    bar: &mut B,
+    c2h: &mut R,
+    dma: &mut crate::dho::bus::DmaBuf,
+    log: &mut impl FnMut(String),
+    clock: &impl super::time::Clock,
+    observe: Option<impl FnMut(BatchPhase)>,
+) -> Result<(), String> {
+    let Some(mut observe) = observe else {
+        return execute_with_clock(steps, bar, c2h, dma, log, &|| false, clock);
+    };
+    let start = steps.iter().position(|step| matches!(step, Step::Wr(_))).unwrap_or(steps.len());
+    let (before, rest) = steps.split_at(start);
+    let writes = rest.iter().take_while(|step| matches!(step, Step::Wr(_))).count();
+    let (registers, rest) = rest.split_at(writes);
+    execute_with_clock(before, bar, c2h, dma, log, &|| false, clock)?;
+    let started = clock.now();
+    execute_with_clock(registers, bar, c2h, dma, log, &|| false, clock)?;
+    observe(BatchPhase::Readout(clock.now().saturating_duration_since(started)));
+    for step in rest {
+        let read =
+            if let Step::Read { frames, frame } = step { Some((clock.now(), read_len(*frames, *frame))) } else { None };
+        plain_step(step, bar, c2h, dma, log, &|| false, clock)?;
+        if let Some((started, bytes)) = read {
+            observe(BatchPhase::Read(clock.now().saturating_duration_since(started), bytes));
+        }
+    }
+    Ok(())
 }
 
 /// Runs steps that need only the register window and the C2H stream (no AFE step) on any `Bus`: the unit, or a model
@@ -132,8 +313,12 @@ fn execute_with_clock<B: crate::dho::bus::Bus, R: std::io::Read>(
     stop: &impl Fn() -> bool,
     clock: &impl super::time::Clock,
 ) -> Result<(), String> {
-    for s in steps {
+    let mut steps = steps.iter().peekable();
+    while let Some(s) = steps.next() {
         plain_step(s, bar, c2h, dma, log, stop, clock)?;
+        if matches!(s, Step::Wr(_)) && !matches!(steps.peek(), Some(Step::Wr(_))) {
+            bar.settle();
+        }
     }
     Ok(())
 }
@@ -176,9 +361,31 @@ fn poll<B: crate::dho::bus::Bus>(
     stop: &impl Fn() -> bool,
     clock: &impl super::time::Clock,
 ) -> Result<(), String> {
+    poll_after(step, bar, log, stop, clock, Duration::ZERO)
+}
+
+fn poll_after(
+    step: &Step,
+    bar: &mut impl crate::dho::bus::Bus,
+    log: &mut impl FnMut(String),
+    stop: &impl Fn() -> bool,
+    clock: &impl super::time::Clock,
+    delay: Duration,
+) -> Result<(), String> {
     let Step::Poll { reg, bit, ms, what } = step else { return Ok(()) };
     let t = clock.now();
     let mut last = bar.rd(*reg);
+    let delay = delay.min(STOP_POLL);
+    if last & bit == 0 && !delay.is_zero() {
+        if stop() {
+            return Err(NEW_SETTINGS.into());
+        }
+        clock.wait(delay);
+        last = bar.rd(*reg);
+        if last & bit == 0 && stop() {
+            return Err(NEW_SETTINGS.into());
+        }
+    }
     let mut k = 0u32;
     while last & bit == 0 && clock.now().saturating_duration_since(t).as_millis() < *ms as u128 {
         clock.wait(std::time::Duration::from_micros(500));
@@ -216,3 +423,6 @@ fn poll<B: crate::dho::bus::Bus>(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

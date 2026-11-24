@@ -54,49 +54,9 @@ impl Recovery {
     }
 }
 
-/// A failed helper operation selects a CPU picture in this same presentation step.
-pub fn render_or_cpu<T, E>(
-    context: &mut T,
-    draw: impl FnOnce(&mut T) -> Result<(), E>,
-    cpu: impl FnOnce(&mut T),
-    failed: impl FnOnce(&mut T, E),
-) -> bool {
-    match draw(context) {
-        Ok(()) => true,
-        Err(error) => {
-            failed(context, error);
-            cpu(context);
-            false
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Read;
-
-    #[test]
-    fn helper_death_draws_cpu_next_step() {
-        let mut child = std::process::Command::new("sh")
-            .args(["-c", "exec sleep 60"])
-            .stdout(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
-        child.kill().unwrap();
-        child.wait().unwrap();
-        let mut output = child.stdout.take().unwrap();
-        let mut canvas = crate::gfx::Canvas::new(16, 16);
-        let failed = std::cell::Cell::new(false);
-        let gpu = render_or_cpu(
-            &mut canvas,
-            |_| output.read_exact(&mut [0u8; 4]),
-            |canvas| canvas.clear(0x123456),
-            |_, _| failed.set(true),
-        );
-        assert!(!gpu && failed.get());
-        assert!(canvas.px.iter().all(|p| *p == 0x123456));
-    }
 
     #[test]
     fn three_failed_restarts_stay_on_cpu() {

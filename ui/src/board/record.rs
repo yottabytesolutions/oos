@@ -47,12 +47,87 @@ pub fn frame_mean(len: usize, at: impl Fn(usize) -> f32) -> Option<f64> {
     (n > 0).then(|| sum / n as f64)
 }
 
+/// Use a fixed trigger when supplied, otherwise refine it with screen-point smoothing.
+/// The raw deep window only uses the near search.
+pub(crate) fn smoothed_edge(
+    f: &Frame,
+    m: &Model,
+    src: &(impl crate::trignear::TriggerSamples + ?Sized),
+    len: usize,
+    (n, window, first): (usize, f64, f64),
+    near_only: bool,
+) -> Option<f64> {
+    f.fixed_ti.or_else(|| smoothed_edge_with(f, m, src, len, (n, window, first), near_only, None))
+}
+
+fn smoothed_edge_with(
+    f: &Frame,
+    m: &Model,
+    src: &(impl crate::trignear::TriggerSamples + ?Sized),
+    len: usize,
+    (n, window, first): (usize, f64, f64),
+    near_only: bool,
+    wide: Option<&mut crate::trignear::WideRefine<'_>>,
+) -> Option<f64> {
+    let span = (window / f.dt).ceil() as usize / 2;
+    let col = (window / n as f64 / f.dt).floor().clamp(1.0, 256.0) as usize;
+    let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
+    let fits = trigger_fits(f.dt, (window, first, len));
+    let level = sw_trig_level_of(m, src.len(), |i| src.at(i));
+    let hyst = m.trig_hyst_div() * m.ch[m.trig_src].volts_per_div();
+    if near_only {
+        let found =
+            crate::trignear::edge_near_window(src, 0, src.len(), f.pre, level, hyst, rising, either, span, col, fits);
+        return Some(found.and_then(|r| r.0).unwrap_or(f.pre as f64));
+    }
+    let trigger = crate::fastdraw::EdgeSearch { level, hysteresis: hyst, rising, either };
+    let require_end_rail = !crate::deepmeas::deep_pairs(f);
+    let found =
+        crate::trignear::edge_smooth_near_with(src, (f.pre, span, col), trigger, &fits, require_end_rail, wide).0;
+    // A filtered comparator can fire without a crossing at this estimated software level.
+    found.or((m.trig_coupling() != TrigCoup::Dc).then_some(f.pre as f64))
+}
+
+fn trigger_fits(dt: f64, (window, first, len): (f64, f64, usize)) -> impl Fn(f64) -> bool {
+    let (first, last) = (-first / dt, len as f64 - 1.0 - (first + window) / dt);
+    move |t| first > last || (first..=last).contains(&t)
+}
+
 /// The software trigger of `to_record`: the event nearest the hardware trigger point as a fractional sample index
 /// of `f`, None without one (or in roll and scan).
 pub fn trigger_point(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) -> Option<f64> {
+    trigger_point_with(f, m, (n, window, t_first), None)
+}
+
+fn trigger_point_with(
+    f: &Frame,
+    m: &Model,
+    (n, window, t_first): (usize, f64, f64),
+    wide: Option<&mut crate::trignear::WideRefine<'_>>,
+) -> Option<f64> {
+    if f.fixed_ti.is_some() {
+        return f.fixed_ti;
+    }
+    if f.roll || f.scan {
+        return None;
+    }
+    let len = f.ch.iter().map(Vec::len).max().unwrap_or(0);
+    if m.trig_type == TrigType::Edge && m.trig_line().is_none() && f.ch[m.trig_src].len() > 1 {
+        let smooth = smoothed_edge_with(
+            f,
+            m,
+            f.ch[m.trig_src].as_slice(),
+            len,
+            (n, window, t_first),
+            crate::deepmeas::deep_raw_frame(f),
+            wide,
+        );
+        if smooth.is_some() {
+            return smooth;
+        }
+    }
     // the software trigger looks only around the hardware trigger point: searching whole 100 k-point frames for
     // every record cost most of the frame time; the video trigger counts fields and keeps the whole frame
-    let len = f.ch.iter().map(|v| v.len()).max().unwrap_or(0);
     let screen = (window / f.dt).ceil() as usize;
     // the hardware trigger already put the event near `pre`: look a tenth of a screen around it, plus the time the
     // trigger condition needs before its decision (pulse widths, timeouts, Nth-edge idle time)
@@ -71,65 +146,7 @@ pub fn trigger_point(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) 
     let hyst: [f32; NCH] = std::array::from_fn(|c| m.trig_hyst_div() * m.ch[c].volts_per_div());
     let inp = oos_dsp::trigger::Input { ch: refs, dt: f.dt, hyst };
     let usable = m.trig_channels().iter().enumerate().all(|(c, &u)| !u || !refs[c].is_empty());
-    // plain edge trigger on a channel: the edge of the set direction nearest the hardware point, on the signal smoothed to
-    // one screen point (fastdraw::edge_smooth; the hardware point is not always on the right edge, trigger.md 8)
-    let smooth = (m.trig_type == TrigType::Edge
-        && m.trig_line().is_none()
-        && !f.roll
-        && !f.scan
-        && f.fixed_ti.is_none()
-        && f.ch[m.trig_src].len() > 1)
-        .then(|| {
-            let col = (window / n as f64 / f.dt).floor().clamp(1.0, 256.0) as usize;
-            let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
-            // the screen window stays inside the frame where it can
-            let (first, last) = (-t_first / f.dt, len as f64 - 1.0 - (t_first + window) / f.dt);
-            let fits = |t: f64| first > last || (first..=last).contains(&t);
-            let (src, level) = (&f.ch[m.trig_src], sw_trig_level(m, f));
-            // the raw screen window of a deep record (`deepmeas`): the near search alone, else the hardware point.
-            // Its pair frames place the picture; the wide search over millions of samples without an edge near the
-            // trigger point (a flat source, Auto) cost about 160 ms of the UI thread per window on the unit
-            if crate::deepmeas::deep_raw_frame(f) {
-                let near = crate::trignear::edge_near_window(
-                    src,
-                    0,
-                    src.len(),
-                    f.pre,
-                    level,
-                    hyst[m.trig_src],
-                    rising,
-                    either,
-                    screen / 2,
-                    col,
-                    fits,
-                );
-                return Some(near.and_then(|r| r.0).unwrap_or(f.pre as f64));
-            }
-            let found = crate::trignear::edge_smooth_near(
-                src,
-                f.pre,
-                level,
-                hyst[m.trig_src],
-                rising,
-                either,
-                screen / 2,
-                col,
-                fits,
-            )
-            .0;
-            // a filtered trigger path (coupling) can fire where the samples show no crossing of that level: the
-            // hardware point stands
-            found.or((m.trig_coupling() != TrigCoup::Dc).then_some(f.pre as f64))
-        })
-        .flatten();
-    let found = if let Some(t) = f.fixed_ti {
-        // read again in STOP: the trigger of the record as it was shown
-        Some(t)
-    } else if f.roll || f.scan {
-        None
-    } else if smooth.is_some() {
-        smooth
-    } else if let Some(n) = m.trig_line() {
+    if let Some(n) = m.trig_line() {
         // the hardware trigger on an LA line: the analog samples cannot refine it. Without any edge on the line the
         // frame came from the auto trigger.
         f.la.as_ref().filter(|l| crate::ui::la::line_moves(l, n)).map(|_| f.pre as f64)
@@ -147,33 +164,53 @@ pub fn trigger_point(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) 
         // a pattern over D lines: as above; the frame counts as triggered when the pattern occurs in it
         f.la.as_ref().filter(|l| crate::ui::la::pattern_at(&l.words, &m.pat_la, 0).is_some()).map(|_| f.pre as f64)
     } else if usable {
-        // nearest the hardware trigger among the events that leave the screen window inside the frame: the frame holds
-        // little more than the window, and a noisy slow edge can cross the level far from `pre`
-        let (first, last) = (-t_first / f.dt, len as f64 - 1.0 - (t_first + window) / f.dt);
-        let fits = |t: &f64| first > last || (first..=last).contains(t);
-        let nearest = |a: &f64, b: &f64| (a - f.pre as f64).abs().total_cmp(&(b - f.pre as f64).abs());
-        let all: Vec<f64> = crate::trig::find_all(m, &inp).into_iter().map(|t| t + lo as f64).collect();
-        all.iter().copied().filter(fits).min_by(nearest).or_else(|| {
-            // nothing of the set kind near `pre`: the hardware can fire on the other edge of a clean signal, so look
-            // up to half a screen around it (edge trigger only, the others have their own time conditions)
-            if m.trig_type != TrigType::Edge || near >= screen / 2 {
-                return all.first().map(|_| f.pre as f64);
-            }
-            let (lo2, hi2) = (f.pre.saturating_sub(screen / 2), (f.pre + screen / 2).min(len));
-            let refs2: [&[f32]; NCH] =
-                std::array::from_fn(|c| if f.ch[c].len() < hi2 || lo2 >= hi2 { &e[..] } else { &f.ch[c][lo2..hi2] });
-            let inp2 = oos_dsp::trigger::Input { ch: refs2, dt: f.dt, hyst };
-            let wide: Vec<f64> = crate::trig::find_all(m, &inp2).into_iter().map(|t| t + lo2 as f64).collect();
-            wide.iter()
-                .copied()
-                .filter(fits)
-                .min_by(nearest)
-                .or_else(|| (!all.is_empty() || !wide.is_empty()).then_some(f.pre as f64))
-        })
+        event_near(f, m, (lo, near, screen / 2), (window, t_first, len), &inp)
     } else {
         None
+    }
+}
+
+fn event_near(
+    f: &Frame,
+    m: &Model,
+    (lo, near, half_screen): (usize, usize, usize),
+    (window, first, len): (f64, f64, usize),
+    input: &oos_dsp::trigger::Input<'_>,
+) -> Option<f64> {
+    let fits = trigger_fits(f.dt, (window, first, len));
+    let distance = |t: f64| (t - f.pre as f64).abs();
+    if m.trig_type != TrigType::Edge {
+        let all = crate::trig::find_all(m, input);
+        return all
+            .iter()
+            .map(|t| t + lo as f64)
+            .filter(|&t| fits(t))
+            .min_by(|&a, &b| distance(a).total_cmp(&distance(b)))
+            .or_else(|| (!all.is_empty()).then_some(f.pre as f64));
+    }
+    let source = m.trig_src;
+    let nearest = |samples: &[f32], base: usize| {
+        let mut found = None;
+        let mut any = false;
+        oos_dsp::edges::visit_edges(samples, m.trig_level, input.hyst[source], |edge| {
+            if m.slope == Slope::Either || edge.rising == (m.slope == Slope::Rise) {
+                any = true;
+                let time = base as f64 + edge.t;
+                if fits(time) && found.is_none_or(|old| distance(time).total_cmp(&distance(old)).is_lt()) {
+                    found = Some(time);
+                }
+            }
+        });
+        (found, any)
     };
-    found
+    let (found, any) = nearest(input.ch[source], lo);
+    if found.is_some() || near >= half_screen {
+        return found.or(any.then_some(f.pre as f64));
+    }
+    let first = f.pre.saturating_sub(half_screen);
+    let end = (f.pre + half_screen).min(len);
+    let (wide, any_wide) = nearest(f.ch[source].get(first..end).unwrap_or_default(), first);
+    wide.or((any || any_wide).then_some(f.pre as f64))
 }
 
 /// Turns the latest frame into a screen record: software trigger (oos-dsp) closest to the hardware trigger point,
@@ -190,7 +227,17 @@ pub fn display_record(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64)
 }
 
 pub(crate) fn record_trigger(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) -> (f64, bool) {
-    let found = trigger_point(f, m, n, window, t_first);
+    record_trigger_with(f, m, (n, window, t_first), None)
+}
+
+pub(crate) fn record_trigger_with(
+    f: &Frame,
+    m: &Model,
+    geometry: (usize, f64, f64),
+    wide: Option<&mut crate::trignear::WideRefine<'_>>,
+) -> (f64, bool) {
+    let (_, window, t_first) = geometry;
+    let found = trigger_point_with(f, m, geometry, wide);
     // roll: right-aligned like a chart recorder, the start of the stream may be left of the buffer (blank)
     let ti = if f.roll {
         let len = f.ch.iter().map(|v| v.len()).max().unwrap_or(0) as f64;
@@ -249,91 +296,101 @@ fn resample(
     ti: f64,
     triggered: bool,
 ) -> crate::wave::Record {
+    let mut ch = Default::default();
+    let pairs = resample_channels(f, m, (n, window, t_first), ti, &mut ch);
+    // LA: the same shift as the analog record (software trigger at `ti` instead of the hardware point `pre`)
+    let la = f.la.as_ref().map(|l| crate::ui::la::LaRec { t0: l.t0 - (ti - f.pre as f64) * f.dt, ..l.clone() });
+    crate::wave::Record {
+        t0: t_first,
+        dt: window / n.max(1) as f64,
+        ch,
+        triggered,
+        partial: f.partial,
+        raw: None,
+        la,
+        pairs,
+    }
+}
+
+/// Screen samples only, with space supplied by the caller.
+pub(crate) fn resample_channels(
+    f: &Frame,
+    m: &Model,
+    (n, window, first): (usize, f64, f64),
+    ti: f64,
+    channels: &mut [Vec<f32>; NCH],
+) -> bool {
     #[cfg(test)]
     RESAMPLES.with(|count| count.set(count.get() + 1));
     let dt = window / n.max(1) as f64;
-    // several samples per point and no averaging: the points become min/max pairs (the peak-detect branch below)
     let pairs = dt / f.dt >= 2.0 && m.acq != AcqMode::HiRes;
-    let mut ch: [Vec<f32>; NCH] = Default::default();
-    for c in 0..NCH {
-        let v = &f.ch[c];
-        if v.len() < 2 {
-            continue;
-        }
-        let per = dt / f.dt; // samples per output point
-        let sparse = !f.envelope && f.dt > 2.0 * dt;
-        if per >= 2.0 && m.acq == AcqMode::HiRes {
-            // high res: the mean of the samples behind each point. A software mode: the hardware has no such filter,
-            // so it only gains where the record holds more samples than the screen has points.
-            ch[c] = (0..n)
-                .map(|k| {
-                    let x = ti + (t_first + (k as f64 + 0.5) * dt) / f.dt;
-                    let a = (x - per / 2.0).max(0.0) as usize;
-                    let b = ((x + per / 2.0).ceil().max(0.0) as usize).min(v.len());
-                    let s = v[a.min(b)..b].iter().filter(|y| y.is_finite());
-                    let (sum, cnt) = s.fold((0.0f64, 0u32), |(t, n), &y| (t + y as f64, n + 1));
-                    if cnt > 0 {
-                        (sum / cnt as f64) as f32
-                    } else {
-                        f32::NAN
-                    }
-                })
-                .collect();
-            continue;
-        }
-        if pairs {
-            // dense views (several samples per screen point): peak detect. Points 2j and 2j+1 share one span (two
-            // output points wide); 2j gets its minimum, 2j+1 its maximum, so noise and one-sample spikes stay
-            // visible like on the stock display. One pass per pair.
-            let mut out = vec![f32::NAN; n];
-            for j in 0..n.div_ceil(2) {
-                let xm = ti + (t_first + (2 * j) as f64 * dt + 0.5 * dt) / f.dt;
-                if xm < -per || xm >= v.len() as f64 + per {
-                    continue;
-                }
-                let a = (xm - per).max(0.0) as usize;
-                let b = ((xm + per).ceil() as usize).min(v.len());
-                // the extremes of the span (`fastdraw::min_max`, NEON; NaN gaps are skipped as by the filter below);
-                // an infinite sample takes the filtered loop. A 10 M deep raw window took 197 ms on the unit's UI
-                // thread with the scalar loop alone
-                let span = &v[a.min(b)..b];
-                let (mut lo, mut hi) = crate::fastdraw::min_max(span);
-                if lo.is_infinite() && lo < 0.0 || hi.is_infinite() && hi > 0.0 {
-                    (lo, hi) = (f32::INFINITY, f32::NEG_INFINITY);
-                    for &y in span.iter().filter(|y| y.is_finite()) {
-                        lo = lo.min(y);
-                        hi = hi.max(y);
-                    }
-                }
-                if lo <= hi {
-                    out[2 * j] = lo;
-                    if 2 * j + 1 < n {
-                        out[2 * j + 1] = hi;
-                    }
-                }
-            }
-            ch[c] = out;
-            continue;
-        }
-        // sparse views (less than one sample per two screen points, fast time bases): windowed sinc like the stock
-        // "Auto" interpolation; otherwise linear
-        if sparse {
-            let mut out = Vec::with_capacity(n);
-            oos_dsp::interp::lanczos8_grid(v, ti + t_first / f.dt, dt / f.dt, n, &mut out);
-            ch[c] = out;
-            continue;
-        }
-        ch[c] = (0..n)
-            .map(|k| {
-                let x = ti + (t_first + k as f64 * dt) / f.dt;
-                let y = if sparse { oos_dsp::interp::lanczos8(v, x) } else { oos_dsp::interp::linear(v, x) };
-                y.unwrap_or(f32::NAN)
-            })
-            .collect();
+    for (values, out) in f.ch.iter().zip(channels) {
+        resample_channel(values, (f.dt, f.envelope), m.acq, (n, dt, first), ti, out);
     }
-    // LA: the same shift as the analog record (software trigger at `ti` instead of the hardware point `pre`)
-    let la = f.la.as_ref().map(|l| crate::ui::la::LaRec { t0: l.t0 - (ti - f.pre as f64) * f.dt, ..l.clone() });
-    crate::wave::Record { t0: t_first, dt, ch, triggered, partial: f.partial, raw: None, la, pairs }
+    pairs
+}
+
+pub(crate) fn resample_channel(
+    values: &[f32],
+    (sample_dt, envelope): (f64, bool),
+    mode: AcqMode,
+    (n, dt, first): (usize, f64, f64),
+    ti: f64,
+    out: &mut Vec<f32>,
+) {
+    if values.len() < 2 {
+        out.clear();
+        return;
+    }
+    let per = dt / sample_dt;
+    if per >= 2.0 && mode != AcqMode::HiRes {
+        crate::picture::deposit::envelope::adapt::pairs::screen_envelope(
+            values,
+            (sample_dt, per),
+            (n, dt, first),
+            ti,
+            out,
+        );
+        return;
+    }
+    crate::drawpipe::stage::fixture_stage!(
+        Resample,
+        resample_volts(values, (sample_dt, envelope), (n, dt, first), ti, out)
+    );
+}
+
+fn resample_volts(
+    values: &[f32],
+    (sample_dt, envelope): (f64, bool),
+    (n, dt, first): (usize, f64, f64),
+    ti: f64,
+    out: &mut Vec<f32>,
+) {
+    let per = dt / sample_dt;
+    out.clear();
+    if per >= 2.0 {
+        out.extend((0..n).map(|k| {
+            let x = ti + (first + (k as f64 + 0.5) * dt) / sample_dt;
+            let a = (x - per / 2.0).max(0.0) as usize;
+            let b = ((x + per / 2.0).ceil().max(0.0) as usize).min(values.len());
+            let (sum, count) = values[a.min(b)..b]
+                .iter()
+                .filter(|y| y.is_finite())
+                .fold((0.0f64, 0u32), |(sum, count), &y| (sum + f64::from(y), count + 1));
+            if count > 0 {
+                (sum / f64::from(count)) as f32
+            } else {
+                f32::NAN
+            }
+        }));
+    } else if !envelope && sample_dt > 2.0 * dt {
+        oos_dsp::interp::lanczos8_grid(values, ti + first / sample_dt, dt / sample_dt, n, out);
+    } else {
+        out.extend((0..n).map(|k| {
+            let x = ti + (first + k as f64 * dt) / sample_dt;
+            oos_dsp::interp::linear(values, x).unwrap_or(f32::NAN)
+        }));
+    }
 }
 
 #[cfg(test)]

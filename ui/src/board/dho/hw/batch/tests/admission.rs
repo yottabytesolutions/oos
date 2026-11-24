@@ -57,7 +57,7 @@ fn admitted_board_bounds_pacing_and_warm_lookup() {
 #[test]
 fn retained_frame_keeps_old_plan_charged_across_format_replacement() {
     retaining_overlap(64 << 20, 74);
-    retaining_overlap(48 << 20, 256);
+    retaining_overlap(40 << 20, 256);
 }
 
 fn retaining_overlap(bytes: usize, entries: usize) {
@@ -68,6 +68,7 @@ fn retaining_overlap(bytes: usize, entries: usize) {
     pipe.publish_view(&m, 970, 448, sw.interp, id);
     fund(&pipe, bytes, entries);
     assert!(tap::admit(&pipe, &b, &p, id));
+    let drain = pipe.tap_drain();
     let raw = oos_hal::dho::seq::raw_settings(&b);
     let mut frame = tap::storage(&raw, oos_hal::dho::seq::frame_bytes(&raw, &p)).unwrap();
     let charge = pipe.reserve_plan(id).unwrap();
@@ -79,7 +80,7 @@ fn retaining_overlap(bytes: usize, entries: usize) {
     let retained = Arc::new(frame);
     drop(charge);
     assert!(!tap::admit(&pipe, &raw, &p, id), "old and new FIFO grants overlap");
-    assert_eq!(pipe.tap_drain(), 37, "old reader retains its drain contract");
+    assert_eq!(pipe.tap_drain(), drain, "old reader retains its drain contract");
     let result = crate::board::QueuedFrame::new(retained.clone(), crate::board::PictureEligibility::Pending)
         .read(|f| crate::wave::hw_record(&m, f));
     assert!(result.raw.is_some());

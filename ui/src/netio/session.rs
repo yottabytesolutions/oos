@@ -72,18 +72,15 @@ async fn conversation(
         ports.enqueue().record(accepted);
         let reply = tokio::select! {
             biased;
-            result = read_clear(socket, &mut buffer, &cleared), if clearable => {
+            result = wait_for_input(socket, &mut buffer, &cleared, protocol, clearable) => {
                 result?;
-                continue;
-            }
-            reply = receive(replies, request_id, protocol) => reply?,
-            result = disconnected(socket), if !clearable => {
-                result?;
+                if clearable { continue; }
                 if !matches!(protocol, Protocol::Raw) { return Ok(()); }
                 read_closed.store(true, Ordering::Release);
                 ports.notify_frame();
                 receive(replies, request_id, protocol).await?
             }
+            reply = receive(replies, request_id, protocol) => reply?,
         };
         let close = reply.closes();
         let start = tokio::time::Instant::now();
@@ -163,6 +160,32 @@ async fn read(socket: &TcpStream, buffer: &mut Vec<u8>, limit: usize, cleared: &
             Err(e) => return Err(e),
         }
     }
+}
+
+async fn wait_for_input(
+    socket: &TcpStream,
+    buffer: &mut Vec<u8>,
+    cleared: &AtomicBool,
+    protocol: Protocol,
+    clearable: bool,
+) -> io::Result<()> {
+    if clearable {
+        read_clear(socket, buffer, cleared).await
+    } else if matches!(protocol, Protocol::Raw) {
+        raw_read_closed(socket, buffer, cleared).await
+    } else {
+        disconnected(socket).await
+    }
+}
+
+// A pending raw program still watches for EOF behind pipelined data.
+async fn raw_read_closed(socket: &TcpStream, buffer: &mut Vec<u8>, cleared: &AtomicBool) -> io::Result<()> {
+    while buffer.len() < MAX_PROGRAM {
+        if !read(socket, buffer, MAX_PROGRAM, cleared).await? {
+            return Ok(());
+        }
+    }
+    disconnected(socket).await
 }
 
 pub(super) async fn disconnected(socket: &TcpStream) -> io::Result<()> {

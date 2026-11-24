@@ -15,13 +15,15 @@
 mod process;
 pub mod recovery;
 #[cfg(any(target_os = "linux", test))]
+mod response;
+#[cfg(any(target_os = "linux", test))]
 mod upload;
 use crate::gfx::{Canvas, Rect};
 use crate::ui::TraceJob;
 use crate::wave::Phosphor;
 
 pub const MAGIC: u32 = 0x4753_4f4f;
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 const K_HELLO: u32 = 1;
 const K_TARGET: u32 = 2;
 const K_FRAME: u32 = 4;
@@ -133,19 +135,6 @@ struct FrameMsg {
     j: [JobMsg; MAX_JOBS],
 }
 
-#[repr(C)]
-#[derive(Default, Clone, Copy)]
-struct DoneMsg {
-    magic: u32,
-    kind: u32,
-    status: u32,
-    pad: u32,
-    ms_upload: f32,
-    ms_draw: f32,
-    ms_read: f32,
-    pad2: f32,
-}
-
 /// Two rows differ: eight bytes at a time (musl's memcmp, which `==` on byte slices calls, goes byte by byte and
 /// took 7.5 ms for the 5 MB of a frame on the unit).
 fn differ(a: &[u8], b: &[u8]) -> bool {
@@ -176,18 +165,13 @@ pub struct Quad<'a> {
     pub phz: &'a Phosphor,
 }
 
-/// Times of the last frame (ms): copying into the arena here; upload, draw and read back in the helper; and the whole
-/// wait for its answer.
+/// Times of the last frame (ms): copying into the arena here, and upload, draw and readback in the helper.
 #[derive(Clone, Copy, Default, Debug)]
 pub struct Times {
     pub copy: f32,
     pub upload: f32,
     pub draw: f32,
     pub read: f32,
-    /// how long `collect` waited
-    pub wait: f32,
-    /// from sending to the answer
-    pub latency: f32,
     /// the helper's whole time (upload and draw) of the last frame of the panel and of the monitor
     pub panel: f32,
     pub monitor: f32,
@@ -200,9 +184,26 @@ pub struct Ticket {
     sent: std::time::Instant,
     /// a frame of the monitor (its time goes to `Times::monitor`)
     monitor: bool,
+    #[cfg(target_os = "linux")]
+    response: response::Response,
 }
 
 impl Ticket {
+    #[cfg(target_os = "linux")]
+    fn new(readback: Option<(usize, i32, i32)>, sent: std::time::Instant, monitor: bool) -> Self {
+        Self { readback, sent, monitor, response: Default::default() }
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn submitted(&self) -> std::time::Instant {
+        self.sent
+    }
+
+    #[cfg(target_os = "linux")]
+    pub(crate) fn deadline(&self) -> std::time::Instant {
+        self.sent + std::time::Duration::from_millis(1500)
+    }
+
     /// The picture of this frame comes back (`collect` puts it into its canvas).
     pub fn reads(&self) -> bool {
         self.readback.is_some()
@@ -216,7 +217,7 @@ pub use imp::Gpu;
 mod imp {
     use super::*;
     use crate::gfx::{Cmd, CMD_GLYPH, CMD_IMAGE, CMD_IMAGE_KEY};
-    use std::io::{Read, Write};
+    use std::io::{self, Read, Write};
     use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
     use std::os::unix::net::UnixStream;
     use std::time::Duration;
@@ -275,7 +276,7 @@ mod imp {
 
     impl Gpu {
         /// Starts the helper; it answers once it has a GPU context (a few hundred ms).
-        pub fn start(helper: &str) -> Result<Gpu, String> {
+        pub fn start(helper: &str, cpu: Option<usize>) -> Result<Gpu, String> {
             let fd = unsafe { libc::memfd_create(c"oos-gpu".as_ptr(), libc::MFD_CLOEXEC) };
             if fd < 0 {
                 return Err(format!("memfd: {}", std::io::Error::last_os_error()));
@@ -285,7 +286,7 @@ mod imp {
             if unsafe { libc::ftruncate(fd, ARENA as libc::off_t) } != 0 {
                 return Err(format!("arena: {}", std::io::Error::last_os_error()));
             }
-            let (mut child, ours) = lifecycle::spawn(helper)?;
+            let (mut child, ours) = lifecycle::spawn(helper, cpu)?;
             let arena = unsafe {
                 libc::mmap(std::ptr::null_mut(), ARENA, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0)
             };
@@ -315,59 +316,11 @@ mod imp {
             Ok(g)
         }
 
-        fn wait(&mut self, t: Duration) -> Result<DoneMsg, String> {
-            let _ = self.sock.set_read_timeout(Some(t));
-            let mut d = DoneMsg::default();
-            // SAFETY: DoneMsg is plain integers and floats
-            let buf = unsafe {
-                std::slice::from_raw_parts_mut(&mut d as *mut DoneMsg as *mut u8, std::mem::size_of::<DoneMsg>())
-            };
-            self.sock.read_exact(buf).map_err(|e| format!("no answer: {}", e))?;
-            if d.magic != MAGIC || d.kind != K_DONE {
-                return Err("bad answer".into());
-            }
-            if d.status != 0 {
-                return Err(format!("helper error {}", d.status));
-            }
-            self.times = Times { upload: d.ms_upload, draw: d.ms_draw, read: d.ms_read, ..self.times };
-            Ok(d)
-        }
-
-        /// A scan-out buffer of the display as target `index` (the helper keeps the descriptor).
-        pub fn target_dmabuf(&mut self, index: usize, w: i32, h: i32, pitch: i32, fd: OwnedFd) -> Result<(), String> {
-            let m = TargetMsg {
-                magic: MAGIC,
-                kind: K_TARGET,
-                index: index as u32,
-                w,
-                h,
-                pitch,
-                fourcc: FOURCC_XRGB8888,
-                memory: 0,
-            };
-            send_fd(&self.sock, bytes(&m), Some(fd.as_raw_fd())).map_err(|e| format!("target: {}", e))?;
-            drop(fd);
-            self.wait(Duration::from_secs(2))?;
-            self.targets[index] = Some((w, h, false));
-            Ok(())
-        }
-
-        /// A target in the helper's own memory, read back after every frame (tests).
-        pub fn target_memory(&mut self, index: usize, w: i32, h: i32) -> Result<(), String> {
-            let m = TargetMsg {
-                magic: MAGIC,
-                kind: K_TARGET,
-                index: index as u32,
-                w,
-                h,
-                pitch: w * 4,
-                fourcc: FOURCC_XRGB8888,
-                memory: 1,
-            };
-            send_fd(&self.sock, bytes(&m), None).map_err(|e| format!("target: {}", e))?;
-            self.wait(Duration::from_secs(2))?;
-            self.targets[index] = Some((w, h, true));
-            Ok(())
+        fn wait(&mut self, timeout: Duration) -> Result<Duration, String> {
+            self.sock.set_read_timeout(Some(timeout)).map_err(|e| e.to_string())?;
+            let mut response = response::Response::default();
+            self.sock.read_exact(response.remaining()).map_err(|e| format!("no answer: {e}"))?;
+            response.decode(&mut self.times)
         }
 
         /// Puts the quads together in target `index`, on `clear` first when given (xrgb); with `back` the picture is
@@ -383,7 +336,7 @@ mod imp {
             self.collect(t, back)
         }
 
-        /// Sends a frame and returns at once: the helper works while the caller draws the next one. The layers and
+        /// Sends a frame and returns at once. The layers and
         /// maps are copied now; the arena half of this target must not hold a frame still in work (collect first).
         pub fn submit(
             &mut self,
@@ -620,15 +573,39 @@ mod imp {
             let t1 = std::time::Instant::now();
             self.sock.write_all(bytes(&f)).map_err(|e| format!("frame: {}", e))?;
             self.times.copy = (t1 - t0).as_secs_f32() * 1e3;
-            Ok(Ticket { readback: read.then_some((f.readback_off as usize, tw, th)), sent: t1, monitor: half == 1 })
+            Ok(Ticket::new(read.then_some((f.readback_off as usize, tw, th)), t1, half == 1))
         }
 
         /// Waits for a frame `submit` sent; with `back` its picture (asked for when it was sent) comes into it.
         pub fn collect(&mut self, t: Ticket, back: Option<&mut Canvas>) -> Result<(), String> {
-            let w0 = std::time::Instant::now();
             self.wait(Duration::from_millis(1500))?;
-            self.times.wait = w0.elapsed().as_secs_f32() * 1e3;
-            self.times.latency = t.sent.elapsed().as_secs_f32() * 1e3;
+            self.finish(&t, back)
+        }
+
+        pub(crate) fn reply_fd(&self) -> i32 {
+            self.sock.as_raw_fd()
+        }
+
+        /// Poll one reply in FIFO order. Keep any partial stream reply with its ticket.
+        pub(crate) fn try_done(
+            &mut self,
+            ticket: &mut Ticket,
+            now: std::time::Instant,
+        ) -> Result<Option<Duration>, String> {
+            let fd = self.reply_fd();
+            let expired = now >= ticket.deadline();
+            ticket.response.poll(&mut self.times, expired, |buf| {
+                // SAFETY: buf is writable for its length; recv does not retain it.
+                let n = unsafe { libc::recv(fd, buf.as_mut_ptr().cast(), buf.len(), libc::MSG_DONTWAIT) };
+                if n < 0 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(n as usize)
+                }
+            })
+        }
+
+        pub(crate) fn finish(&mut self, t: &Ticket, back: Option<&mut Canvas>) -> Result<(), String> {
             let ms = self.times.upload + self.times.draw;
             if t.monitor {
                 self.times.monitor = ms;
@@ -694,7 +671,7 @@ pub struct Gpu {
 
 #[cfg(not(target_os = "linux"))]
 impl Gpu {
-    pub fn start(_: &str) -> Result<Gpu, String> {
+    pub fn start(_: &str, _: Option<usize>) -> Result<Gpu, String> {
         Err("the GPU path runs on Linux only".into())
     }
     pub fn target_memory(&mut self, _: usize, _: i32, _: i32) -> Result<(), String> {
@@ -714,6 +691,13 @@ impl Gpu {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    impl Ticket {
+        pub(crate) fn fixture(sent: std::time::Instant) -> Self {
+            Self::new(None, sent, false)
+        }
+    }
 
     #[test]
     fn rows_that_differ_anywhere_are_found() {
@@ -738,7 +722,7 @@ mod tests {
                 size_of::<QuadMsg>(),
                 size_of::<JobMsg>(),
                 size_of::<FrameMsg>(),
-                size_of::<DoneMsg>(),
+                response::SIZE,
                 size_of::<Cmd>()
             ),
             (24, 32, 96, 112, 2224, 32, 24)

@@ -20,6 +20,7 @@ pub(super) struct Runtime {
     pub(super) started: Instant,
     pub(in crate::ui) query_time: query_time::QueryTime,
     pub(super) gpu: String,
+    pub(super) gpu_pinned_cpu: Option<usize>,
     pub(super) persistence: bool,
     retired: Vec<std::thread::JoinHandle<()>>,
 }
@@ -33,6 +34,7 @@ impl Runtime {
             clocks: None,
             storage: None,
             gpu: String::new(),
+            gpu_pinned_cpu: None,
             persistence: true,
             retired: Vec::new(),
             started: Instant::now(),
@@ -52,6 +54,11 @@ impl Runtime {
 }
 
 pub(super) fn stop_workers(ui: &mut Ui, deadline: Instant) {
+    if let Source::Hw { shared, .. } = &ui.src {
+        let mut g = crate::perfguard::deep::ui_lock(shared);
+        g.record_flow.shutdown = true;
+        g.record_flow.wake();
+    }
     if let Some(clocks) = &ui.host.runtime().clocks {
         clocks.restore();
     }

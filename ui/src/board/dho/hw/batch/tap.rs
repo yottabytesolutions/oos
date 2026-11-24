@@ -22,6 +22,7 @@ pub(super) fn reserve(
     raw: Option<&Frame>,
     deposit: Option<Identity>,
     prepared: Option<Arc<TapReservation>>,
+    canceled: &dyn Fn() -> bool,
 ) -> Result<(Frame, Option<Arc<TapReservation>>), crate::drawpipe::Lost> {
     use crate::drawpipe::Lost;
     let identity = deposit.filter(|_| s.la.is_none() && pipe.accepting());
@@ -30,7 +31,7 @@ pub(super) fn reserve(
     }
     let storage = if raw.is_some() { Frame::default() } else { storage(s, fb).ok_or(Lost::Error)? };
     let reservation = prepared
-        .or_else(|| identity.and_then(|id| pipe.reserve_waveform(raw.unwrap_or(&storage), id)))
+        .or_else(|| identity.and_then(|id| pipe.reserve_waveform_until(raw.unwrap_or(&storage), id, canceled)))
         .ok_or(Lost::Settings)?;
     if !reservation.covers(raw.unwrap_or(&storage)) {
         return Err(Lost::Error);
@@ -52,43 +53,28 @@ pub(super) fn admit(pipe: &Pipe, s: &Settings, p: &hz::Params, id: Identity) -> 
         return false;
     }
     let fb = oos_hal::dho::seq::frame_bytes(s, p);
-    let raw = if super::super::raw_newest(s, p) {
-        oos_hal::dho::seq::raw_settings(s)
-    } else {
-        super::super::deep_raw_settings(s, p).unwrap_or_else(|| s.clone())
-    };
-    let replay = oos_hal::dho::seq::frame_bytes(&raw, p);
+    let raw = super::super::raw_replay_settings(s, p, true);
+    let raw = raw.as_ref().unwrap_or(s);
+    let replay = oos_hal::dho::seq::frame_bytes(raw, p);
     let format =
         [fb as u64, replay as u64, s.mask as u64, p.rate, p.memsel as u64, oos_hal::dho::seq::compress_k(s, p) as u64];
     if pipe.has_tap_plan(id, format) {
         return true;
     }
-    let Some(maximum) = samples(s, fb).zip(samples(&raw, replay)).map(|(a, b)| a.max(b)).filter(|&n| n > 0) else {
+    let Some(maximum) = samples(s, fb).zip(samples(raw, replay)).map(|(a, b)| a.max(b)).filter(|&n| n > 0) else {
         return false;
     };
-    if !pipe.admit_taps(id, format, maximum, cycle_limit(s)) {
+    if !pipe.admit_taps(id, format, maximum, Duration::from_secs(1)) {
         return false;
     }
     // The two extra funded slots cover these temporary descriptor probes, one at a time.
-    for (settings, bytes) in [(s, fb), (&raw, replay)] {
+    for (settings, bytes) in [(s, fb), (raw, replay)] {
         if storage(settings, bytes).is_none_or(|f| f.ch.iter().map(Vec::capacity).sum::<usize>() > maximum) {
             pipe.retire_tap_plan();
             return false;
         }
     }
     true
-}
-
-// Preserve the reviewed four-channel Auto useful-record floors, even with one useful record per read.
-fn cycle_limit(s: &Settings) -> Duration {
-    if s.mask == 15 && s.depth <= super::super::LIVE_DEPTH {
-        for (division, rate) in [(1e-6, 1770), (10e-6, 400)] {
-            if (s.tdiv - division).abs() < division * 1e-6 {
-                return Duration::from_nanos(1_000_000_000 / rate);
-            }
-        }
-    }
-    Duration::from_secs(1)
 }
 
 fn capacities(s: &Settings, fb: usize) -> Option<[usize; 4]> {
@@ -113,8 +99,8 @@ pub(in crate::board::dho::hw) fn source_reservation(
     if held() {
         return Err(());
     }
-    let reservation = pipe.reserve_plan(id).ok_or(())?;
-    pipe.wait_for_tap_cycle(&reservation).ok_or(())?;
+    let reservation = pipe.reserve_plan_until(id, &held).ok_or(())?;
+    pipe.wait_for_tap_cycle_until(&reservation, &held).ok_or(())?;
     if held() {
         Err(())
     } else {

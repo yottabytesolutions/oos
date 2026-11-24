@@ -41,6 +41,42 @@ pub fn pin_current_thread(_: &[usize]) -> io::Result<()> {
     Ok(())
 }
 
+/// Pin a Linux child before exec so the helper and its future threads inherit the CPU.
+#[cfg(target_os = "linux")]
+pub fn pin_child(command: &mut std::process::Command, cpu: usize) -> io::Result<()> {
+    use std::os::unix::process::CommandExt;
+    if cpu >= libc::CPU_SETSIZE as usize {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "CPU index exceeds affinity set"));
+    }
+    // SAFETY: only the affinity syscall runs in the child, using a stack set and a
+    // validated CPU index. On failure last_os_error captures errno without allocating.
+    unsafe { command.pre_exec(move || pin_current_thread(&[cpu])) };
+    Ok(())
+}
+
+/// Pins the calling thread and gives it SCHED_FIFO priority 1. Restores its affinity if SCHED_FIFO fails.
+#[cfg(target_os = "linux")]
+pub fn fifo_current_thread(cpu: usize) -> io::Result<()> {
+    let size = std::mem::size_of::<libc::cpu_set_t>();
+    // SAFETY: zero is valid for both records, and libc uses the local pointers only during each call.
+    let (mut original, mut param): (libc::cpu_set_t, libc::sched_param) = unsafe { std::mem::zeroed() };
+    param.sched_priority = 1;
+    // SAFETY: original is writable and size is exactly the size of its CPU set.
+    status(unsafe { libc::sched_getaffinity(0, size, &mut original) })?;
+    pin_current_thread(&[cpu])?;
+    // SAFETY: pthread_self identifies the live calling thread, and param is initialized.
+    let rc = unsafe { libc::pthread_setschedparam(libc::pthread_self(), libc::SCHED_FIFO, &param) };
+    if rc == 0 {
+        return Ok(());
+    }
+    let error = io::Error::from_raw_os_error(rc);
+    // SAFETY: original remains live and contains the CPU set read from this same thread above.
+    match status(unsafe { libc::sched_setaffinity(0, size, &original) }) {
+        Ok(()) => Err(error),
+        Err(restore) => Err(io::Error::other(format!("{error}, restoring affinity: {restore}"))),
+    }
+}
+
 /// Gives the calling thread SCHED_IDLE priority (nice 10 if unavailable), then
 /// pins it to `cores`. Priority failures are best effort; affinity errors return.
 #[cfg(target_os = "linux")]

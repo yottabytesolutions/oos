@@ -4,6 +4,16 @@
 
 use super::*;
 
+pub(in crate::ui) fn wants_final_record(ui: &Ui, frame: Option<&crate::board::Frame>) -> bool {
+    let m = &ui.m;
+    ui.src.hw_serial()
+        || frame.is_some_and(|f| {
+            crate::compress::live(f) || (crate::deepmeas::want(m).is_some() && crate::deepmeas::deep_pairs(f))
+        })
+        || m.trig_mode == TrigMode::Auto
+            && (m.la_on() || frame.is_some_and(|f| f.acq.1 > crate::compress::MAX_DEPTH as usize))
+}
+
 pub(super) fn apply(ui: &mut Ui) -> bool {
     let Some(prepared) = ui.host.runtime().change.prepared.as_ref() else {
         // Keep servicing the last accepted run and any outstanding final read on rejection.
@@ -29,12 +39,17 @@ pub(super) fn apply(ui: &mut Ui) -> bool {
     let segment_boundary = running && ui.seg_hw_on() && (single || pair_changed);
     if segment_boundary || run_edge && ui.seg_hw_on() {
         restart_segments(ui);
+    } else if running && single && ui.m.segments > 0 {
+        super::consumers::apply_classes(ui, C::HISTORY);
     }
-    if !running && ui.was_running && ui.stop_wants_final() {
+    let hold = !running && (ui.last[0].is_some() || ui.cleared);
+    let mut final_done = ui.src.hw_hold(hold, ui.final_req);
+    // Freeze the source before checking whether a serial capture can still arrive.
+    if hold && ui.was_running && ui.stop_wants_final() {
         ui.final_req += 1;
         ui.stop_final = Some(ui.now + STOP_FINAL_WAIT);
+        final_done = ui.src.hw_hold(hold, ui.final_req);
     }
-    let final_done = ui.src.hw_hold(!running && (ui.last[0].is_some() || ui.cleared), ui.final_req);
     ui.was_running = running;
     if ui.seg_hw_on() || ui.seg_view.is_some() || ui.seg_pos.is_some() {
         ui.seg_poll(running && ui.seg_hw_on());

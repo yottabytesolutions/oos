@@ -16,6 +16,7 @@ pub use counters::AcquisitionCounters;
 pub mod dho;
 pub(crate) mod identity;
 pub(crate) mod record;
+mod record_flow;
 pub mod scripted;
 
 use crate::model::{Coupling, GenCh, Model, NCH, NGEN};
@@ -448,6 +449,7 @@ pub struct Shared {
     /// scan in SINGLE: the sweep is complete and the thread waits for `rearm` (the next SINGLE press)
     pub halted: bool,
     pub rearm: bool,
+    pub(crate) record_flow: record_flow::RecordFlow,
     /// the latest frame (auto set-up and the replay of the screen look at it)
     pub frame: std::sync::Arc<Frame>,
     /// Frames awaiting drawing, oldest first.
@@ -459,9 +461,6 @@ pub struct Shared {
     /// frames decoded, and those dropped from the queue unseen because the screen fell behind (`:SYSTem:STATe?`)
     pub decoded: u64,
     pub dropped: u64,
-    /// frames the screen takes at most (`Ui::fast_max` and the record, 0 = all): the thread decodes no more of the
-    /// newest frames of a batch, the older ones count as dropped without costing the fast cores their decoding
-    pub take: usize,
     /// the offsets of the ADC cores taken off the frames (`Model::cores`, `dho::cores`)
     pub cores: bool,
     pub status: String,
@@ -566,8 +565,7 @@ pub struct HwSeg {
     pub shown: Option<(u32, Frame)>,
 }
 
-/// Default UI frame bound; older frames are dropped when the screen cannot keep up.
-/// DHO Peak instead holds one hardware batch and pauses its producer until the queue drains.
+/// Maximum records in one UI hand-off.
 pub const QUEUE_MAX: usize = 256;
 /// Samples (all channels) the queue holds at most: deep frames are hundreds of MB each.
 pub const QUEUE_SAMPLES: usize = 32 << 20;

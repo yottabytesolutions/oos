@@ -5,7 +5,7 @@ mod rows;
 pub(crate) use rows::RowBand;
 
 use super::{trace_columns, Model, HDIV, NCH};
-use std::ops::Range;
+use std::{ops::Range, sync::OnceLock};
 
 /// Hit-count maps (one per channel) of the waveform area: the digital phosphor.
 pub struct Phosphor {
@@ -13,21 +13,30 @@ pub struct Phosphor {
     pub w: usize,
     /// Fixed at construction. Replace the phosphor to resize its maps and row revisions together.
     pub h: usize,
-    pub map: [Vec<u16>; NCH],
-    wide: Option<[Vec<u32>; NCH]>,
+    map: [Vec<u16>; NCH],
+    wide: [Vec<u32>; NCH],
+    wide_active: bool,
+    maxima: [OnceLock<u32>; NCH],
     dirty: dirty::Dirty,
+    touched: [rows::Touched; NCH],
     published: Range<usize>,
+    weight: f64,
 }
 
 impl Phosphor {
     pub fn new(w: usize, h: usize) -> Phosphor {
-        Phosphor { w, h, map: Default::default(), wide: None, dirty: dirty::Dirty::new(h), published: 0..0 }.init()
-    }
-    fn init(mut self) -> Phosphor {
-        for c in 0..NCH {
-            self.map[c] = vec![0; self.w * self.h];
+        Phosphor {
+            w,
+            h,
+            map: std::array::from_fn(|_| vec![0; w * h]),
+            wide: Default::default(),
+            wide_active: false,
+            maxima: Default::default(),
+            dirty: dirty::Dirty::new(h),
+            touched: std::array::from_fn(|_| rows::Touched::new(h)),
+            published: 0..0,
+            weight: 0.0,
         }
-        self
     }
     pub(crate) fn publish(&mut self) {
         self.published = self.dirty.publish();
@@ -39,7 +48,7 @@ impl Phosphor {
     }
 
     pub(crate) fn is_wide(&self) -> bool {
-        self.wide.is_some()
+        self.wide_active
     }
 
     pub(crate) fn set_format(&mut self, format: crate::picture::deposit::count::CountFormat) {
@@ -47,35 +56,47 @@ impl Phosphor {
         if self.is_wide() == (format == CountFormat::Wide) {
             return;
         }
-        match format {
+        self.wide_active = match format {
             CountFormat::Wide => {
-                self.wide = Some(std::array::from_fn(|c| self.map[c].drain(..).map(u32::from).collect()));
-                self.map = Default::default();
+                for (wide, narrow) in self.wide.iter_mut().zip(&mut self.map) {
+                    wide.extend(narrow.drain(..).map(u32::from));
+                }
+                true
             }
             CountFormat::Narrow => {
                 self.clear_counts();
-                self.wide = None;
-                self.map = std::array::from_fn(|_| vec![0; self.w * self.h]);
+                for (wide, narrow) in self.wide.iter_mut().zip(&mut self.map) {
+                    narrow.resize(wide.len(), 0);
+                    wide.clear();
+                }
+                false
             }
-        }
+        };
         self.dirty.invalidate();
     }
 
+    #[cfg(test)]
     pub(crate) fn wide_map_mut(&mut self, c: usize) -> &mut [u32] {
-        &mut self.wide.as_mut().expect("wide deposit selects wide picture storage")[c]
+        self.mark_rows(c, 0..self.h);
+        &mut self.wide[c]
     }
 
     pub(crate) fn count(&self, c: usize, i: usize) -> u32 {
-        match &self.wide {
-            Some(maps) => maps[c][i],
-            None => u32::from(self.map[c][i]),
+        match self.wide_active {
+            true => self.wide[c][i],
+            false => u32::from(self.map[c][i]),
         }
     }
 
     pub(crate) fn channel_max(&self, c: usize) -> u32 {
-        match &self.wide {
-            Some(maps) => maps[c].iter().copied().max().unwrap_or(0),
-            None => self.map[c].iter().copied().max().unwrap_or(0) as u32,
+        *self.maxima[c].get_or_init(|| self.scan_max(c))
+    }
+
+    fn scan_max(&self, c: usize) -> u32 {
+        if self.is_wide() {
+            self.wide[c].iter().copied().max().unwrap_or(0)
+        } else {
+            u32::from(self.map[c].iter().copied().max().unwrap_or(0))
         }
     }
 
@@ -91,8 +112,26 @@ impl Phosphor {
         }
     }
 
+    pub(crate) fn add_weight(&mut self, weight: f64) {
+        self.weight += weight;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn weight(&self) -> f64 {
+        self.weight
+    }
+
     pub(crate) fn clear_counts(&mut self) {
-        self.map_rows(|_| 0);
+        self.weight = 0.0;
+        // Channels with no writes since the last clear have no counts to erase.
+        for (channel, touched) in self.touched.iter_mut().enumerate() {
+            let changed = match self.wide_active {
+                true => touched.clear(&mut self.wide[channel], self.w),
+                false => touched.clear(&mut self.map[channel], self.w),
+            };
+            self.dirty.mark(channel, changed);
+            self.maxima[channel].take();
+        }
     }
 
     /// Multiplies every count by f (0..1).
@@ -101,29 +140,32 @@ impl Phosphor {
         if k >= 65536 {
             return;
         }
+        self.weight *= f64::from(k) / 65536.0;
         self.map_rows(|value| ((u64::from(value) * u64::from(k)) >> 16) as u32);
     }
 
     /// Halves every count (non-zero counts stay >= 1, so rare hits survive): keeps the density ratios when the
     /// counts approach saturation under long persistence.
     pub fn halve(&mut self) {
+        self.weight *= 0.5;
         self.map_rows(|value| if value == 0 { 0 } else { (value >> 1).max(1) });
     }
 
     /// Highest sum of the maps of the channels in `on` at one pixel (colour grade).
     pub fn merged_max(&self, on: [bool; NCH]) -> u32 {
+        let mut channels = (0..NCH).filter(|&c| on[c]);
+        let Some(first) = channels.next() else { return 0 };
+        if channels.next().is_none() {
+            return self.channel_max(first);
+        }
         if self.is_wide() {
             return (0..self.w * self.h)
                 .map(|i| (0..NCH).filter(|&c| on[c]).map(|c| self.count(c, i)).sum())
                 .max()
                 .unwrap_or(0);
         }
-        let maps: Vec<&[u16]> = (0..NCH).filter(|&c| on[c]).map(|c| self.map[c].as_slice()).collect();
-        match maps.len() {
-            0 => 0,
-            1 => maps[0].iter().copied().max().unwrap_or(0) as u32,
-            _ => (0..self.w * self.h).map(|i| maps.iter().map(|m| m[i] as u32).sum::<u32>()).max().unwrap_or(0),
-        }
+        let maps = std::array::from_fn::<_, NCH, _>(|c| on[c].then_some(self.map[c].as_slice()));
+        (0..self.w * self.h).map(|i| maps.iter().flatten().map(|map| u32::from(map[i])).sum::<u32>()).max().unwrap_or(0)
     }
 
     /// Draws a record channel into the map: every segment between two samples adds `w` to the pixels it covers,
@@ -145,9 +187,9 @@ impl Phosphor {
         pairs: bool,
     ) {
         let (pw, ph) = (self.w, self.h);
-        let rows = match &mut self.wide {
-            Some(maps) => draw_trace(&mut maps[c], pw, ph, 0, c, m, view, rec_t0, dt, v, w, z, pairs),
-            None => draw_trace(&mut self.map[c], pw, ph, 0, c, m, view, rec_t0, dt, v, w, z, pairs),
+        let rows = match self.wide_active {
+            true => draw_trace(&mut self.wide[c], pw, ph, 0, c, m, view, rec_t0, dt, v, w, z, pairs),
+            false => draw_trace(&mut self.map[c], pw, ph, 0, c, m, view, rec_t0, dt, v, w, z, pairs),
         };
         self.mark_rows(c, rows);
     }
@@ -169,14 +211,15 @@ impl Phosphor {
     }
 
     pub(crate) fn edit_wide_channel(&mut self, channel: usize, apply: impl FnOnce(&mut [u32]) -> Range<usize>) {
-        let rows = apply(self.wide_map_mut(channel));
+        let rows = apply(&mut self.wide[channel]);
         self.mark_rows(channel, rows);
     }
 
     #[cfg(test)]
     pub(crate) fn clear_channel(&mut self, channel: usize) {
         self.map[channel].fill(0);
-        self.mark_rows(channel, 0..self.h);
+        self.dirty.mark(channel, 0..self.h);
+        self.maxima[channel].take();
     }
 
     #[cfg(test)]
@@ -191,6 +234,8 @@ impl Phosphor {
 
     #[inline]
     fn mark_rows(&mut self, channel: usize, rows: Range<usize>) {
+        self.maxima[channel].take();
+        self.touched[channel].mark(rows.clone());
         self.dirty.mark(channel, rows);
     }
 
@@ -220,11 +265,12 @@ impl Phosphor {
     fn map_rows(&mut self, mut apply: impl FnMut(u32) -> u32) {
         let width = self.w.max(1);
         for c in 0..NCH {
-            let rows = match &mut self.wide {
-                Some(maps) => map_rows(&mut maps[c], width, &mut apply),
-                None => map_rows(&mut self.map[c], width, &mut apply),
+            let rows = match self.wide_active {
+                true => map_rows(&mut self.wide[c], width, &mut apply),
+                false => map_rows(&mut self.map[c], width, &mut apply),
             };
-            self.mark_rows(c, rows);
+            self.dirty.mark(c, rows);
+            self.maxima[c].take();
         }
     }
 
@@ -251,40 +297,6 @@ impl Phosphor {
             }
             band.into_range()
         });
-    }
-}
-
-#[cfg(test)]
-mod decay_tests {
-    use super::*;
-    use crate::picture::deposit::count::CountFormat;
-
-    #[test]
-    fn fully_decayed_traces_stop_publishing_rows() {
-        for format in [CountFormat::Narrow, CountFormat::Wide] {
-            let mut ph = Phosphor::new(2, 4);
-            ph.edit_channel(NCH - 1, |map| {
-                map[4] = 2;
-                2..3
-            });
-            ph.set_format(format);
-            ph.publish();
-            assert_eq!(ph.published_rows(), 2..3);
-            ph.decay(1.0);
-            ph.publish();
-            assert!(ph.published_rows().is_empty());
-            for expected in [1, 0] {
-                ph.decay(0.5);
-                ph.publish();
-                assert_eq!(ph.count(NCH - 1, 4), expected);
-                assert_eq!(ph.published_rows(), 2..3);
-            }
-            for factor in [0.5, 0.0, 0.5] {
-                ph.decay(factor);
-                ph.publish();
-                assert!(ph.published_rows().is_empty());
-            }
-        }
     }
 }
 
@@ -349,74 +361,4 @@ fn draw_trace<T: crate::picture::deposit::count::Count>(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::picture::deposit::count::CountFormat;
-
-    #[test]
-    fn publication_keeps_consumer_history_and_channel_edits_independent() {
-        let mut ph = Phosphor::new(4, 16);
-        let (first, _) = ph.upload_rows(0, None);
-        let (other, _) = ph.upload_rows(1, None);
-        ph.edit_channel(0, |map| {
-            map[8] = 24;
-            2..3
-        });
-        ph.publish();
-        assert_eq!(ph.published_rows(), 2..3);
-        ph.publish();
-        assert!(ph.published_rows().is_empty());
-        assert_eq!(ph.upload_rows(0, Some(&first)).1, 2..3);
-        assert_eq!(ph.upload_rows(1, Some(&other)).1, 0..0);
-        ph.clear_counts();
-        ph.publish();
-        assert_eq!(ph.published_rows(), 2..3);
-        ph.clear_counts();
-        ph.publish();
-        assert!(ph.published_rows().is_empty());
-    }
-
-    #[test]
-    fn folded_picture_rows_survive_publication_until_each_consumer_uploads() {
-        let mut ph = Phosphor::new(4, 16);
-        let (first, _) = ph.upload_rows(0, None);
-        ph.edit_channel(0, |map| {
-            map[8] = 24;
-            2..3
-        });
-        ph.publish();
-        assert_eq!(ph.published_rows(), 2..3);
-        assert_eq!(ph.upload_rows(0, Some(&first)).1, 2..3);
-        let (panel, _) = ph.upload_rows(0, Some(&first));
-        ph.edit_channel(0, |map| {
-            map[48] = 24;
-            12..13
-        });
-        ph.publish();
-        assert_eq!(ph.published_rows(), 12..13);
-        assert_eq!(ph.upload_rows(0, Some(&panel)).1, 12..13);
-        assert_eq!(ph.upload_rows(0, Some(&first)).1, 2..13);
-    }
-
-    #[test]
-    fn clearing_wide_storage_invalidates_previous_narrow_upload_rows() {
-        let mut ph = Phosphor::new(4, 16);
-        ph.edit_channel(0, |map| {
-            map[8] = 24;
-            2..3
-        });
-        ph.publish();
-        let (narrow, _) = ph.upload_rows(0, None);
-        ph.set_format(CountFormat::Wide);
-        ph.edit_wide_channel(0, |map| {
-            map[48] = 70_000;
-            12..13
-        });
-        ph.clear();
-        ph.publish();
-        assert_eq!(ph.published_rows(), 2..13);
-        assert!(!ph.is_wide());
-        assert!(ph.maps().iter().flatten().all(|&value| value == 0));
-        assert_eq!(ph.upload_rows(0, Some(&narrow)).1, 0..16);
-    }
-}
+mod tests;

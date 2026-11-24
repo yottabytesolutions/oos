@@ -104,7 +104,7 @@ min/max pair has no sample density. `Replace` and live deposits use the same
 ## Window and grade
 
 - **Min persistence:** follow the frame specification's
-  [window age, eviction and publication contract](frames.md#minimum-persistence-and-gpu-hand-off) and
+  [window retention, eviction and publication contract](frames.md#minimum-persistence-and-gpu-hand-off) and
   [combined capacity bound](frames.md#difference-plane-capacity).
 - **Persistence above Min:** exponential decay with tau = the persistence, in u32 16.16 fixed point. W decays the
   same way. The decay stops when no frames come. Infinite: no decay, halve on saturation with `.max(1)`.
@@ -188,8 +188,8 @@ Existing `stale` and `partial` counters describe legacy routes; target deposits 
 - Dots density normalization: raw at 86 samples per column versus replay at 3.7, main versus zoom, and mixed
   densities sum their own W; equal sample distributions grade equally, including through `Replace`.
 - Window bounds: exercise the [window contract](frames.md#minimum-persistence-and-gpu-hand-off), including a
-  blocked UI slot coalescing old and new batches, exact age boundaries, conservation and expiry on a later step
-  without new input; frozen pictures stay frozen.
+  blocked UI slot coalescing old and new batches, conservation through a skipped step, and retention until
+  the next record, settings change, Clear or Stop. Frozen pictures stay frozen.
 - Capacity: flat dots at the [sample-hit bound](frames.md#difference-plane-capacity), before and after F6,
   cannot wrap. Test the last fitting whole batch and the first exceeding it, a batch near the bound on its own,
   and the combined three-deposit window.

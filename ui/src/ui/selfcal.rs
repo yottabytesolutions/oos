@@ -92,6 +92,7 @@ impl Ui {
                     let chans = channels(self.cal.ch, count);
                     let mut g = crate::perfguard::deep::ui_lock(&sh);
                     (g.cal_req, g.cal_result, g.cal_cancel) = (Some((chans, self.cal.zero, self.cal.adc)), None, false);
+                    g.record_flow.wake();
                     drop(g);
                     self.toast("Self-cal started");
                 } else {

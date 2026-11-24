@@ -74,6 +74,9 @@ impl Output {
     pub fn bounded(limit: usize) -> Self {
         Self { chunks: Vec::new(), capacity: 0, limit, hislip: None }
     }
+    pub(crate) fn set_limit(&mut self, limit: usize) {
+        self.limit = limit;
+    }
     pub fn remaining(&self) -> usize {
         self.limit.saturating_sub(self.capacity + self.chunks.capacity() * std::mem::size_of::<Chunk>() + 64)
     }

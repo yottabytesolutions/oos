@@ -11,10 +11,15 @@ pub const FPGA_VERSION: u32 = 0xe207_2115;
 pub trait Bus {
     fn wr(&mut self, off: u32, v: u32);
     fn rd(&mut self, off: u32) -> u32;
+    /// Settles after the last write of a sequence, before polling or reading.
+    fn settle(&mut self) {}
     /// Applies a write sequence in order.
     fn apply(&mut self, seq: &[Write]) {
         for &(o, v) in seq {
             self.wr(o, v);
+        }
+        if !seq.is_empty() {
+            self.settle();
         }
     }
 }
@@ -139,12 +144,47 @@ impl Bus for Recorder {
     }
 }
 
-/// BAR1 mapped from `/dev/xdma0_bypass`. Writes are spaced by `gap_us` (the verified read-out used 10 us).
+#[cfg(any(target_os = "linux", test))]
+const WRITE_GAP: std::time::Duration = std::time::Duration::from_micros(10);
+
+#[cfg(any(target_os = "linux", test))]
+struct Paced<'a, B, F> {
+    bus: &'a mut B,
+    batch_settle: bool,
+    wait: F,
+}
+
+#[cfg(any(target_os = "linux", test))]
+impl<B: Bus, F: FnMut(std::time::Duration)> Bus for Paced<'_, B, F> {
+    fn wr(&mut self, off: u32, v: u32) {
+        self.bus.wr(off, v);
+        if !self.batch_settle {
+            (self.wait)(WRITE_GAP);
+        }
+    }
+
+    fn rd(&mut self, off: u32) -> u32 {
+        self.bus.rd(off)
+    }
+
+    fn settle(&mut self) {
+        if self.batch_settle {
+            (self.wait)(WRITE_GAP);
+        }
+    }
+}
+
+/// BAR1 mapped from `/dev/xdma0_bypass`. Ordinary writes keep the verified 10 us gap.
 #[cfg(target_os = "linux")]
 pub struct Bar1 {
+    regs: Registers,
+    batch_settle: bool,
+}
+
+#[cfg(target_os = "linux")]
+struct Registers {
     regs: *mut u32,
     _file: std::fs::File,
-    pub gap_us: u64,
 }
 
 #[cfg(target_os = "linux")]
@@ -153,9 +193,21 @@ impl Bar1 {
         Bar1::from_file(std::fs::OpenOptions::new().read(true).write(true).open("/dev/xdma0_bypass")?)
     }
 
+    /// Selects sequence-end pacing for the live batch view of BAR1.
+    pub fn with_batch_settle(mut self, batch_settle: bool) -> Self {
+        self.batch_settle = batch_settle;
+        self
+    }
+
+    /// Borrows BAR1 for live batch operations. With sequence-end pacing, the caller must settle each write group.
+    pub fn batch(&mut self) -> impl Bus + '_ {
+        Paced { bus: &mut self.regs, batch_settle: self.batch_settle, wait: std::thread::sleep }
+    }
+
     /// Maps the 32 KiB of BAR1 of an open `/dev/xdma0_bypass` (a plain file of that size in the tests).
     fn from_file(f: std::fs::File) -> std::io::Result<Bar1> {
         use std::os::unix::io::AsRawFd;
+        // SAFETY: the open file stays owned by the mapping, and the return pointer is checked for MAP_FAILED.
         let p = unsafe {
             libc::mmap(
                 std::ptr::null_mut(),
@@ -169,35 +221,50 @@ impl Bar1 {
         if p == libc::MAP_FAILED {
             return Err(std::io::Error::last_os_error());
         }
-        Ok(Bar1 { regs: p as *mut u32, _file: f, gap_us: 10 })
+        Ok(Bar1 { regs: Registers { regs: p.cast(), _file: f }, batch_settle: false })
     }
 }
 
 /// Unmaps BAR1. The file closes by itself, but a mapping keeps the device in use: `rmmod xdma` fails while one is left.
 #[cfg(target_os = "linux")]
-impl Drop for Bar1 {
+impl Drop for Registers {
     fn drop(&mut self) {
-        unsafe { libc::munmap(self.regs as *mut libc::c_void, 0x8000) };
+        // SAFETY: this owns exactly the original 32 KiB mapping.
+        unsafe { libc::munmap(self.regs.cast(), 0x8000) };
     }
 }
 
 #[cfg(target_os = "linux")]
 impl Bus for Bar1 {
     fn wr(&mut self, off: u32, v: u32) {
+        Paced { bus: &mut self.regs, batch_settle: false, wait: std::thread::sleep }.wr(off, v);
+    }
+
+    fn rd(&mut self, off: u32) -> u32 {
+        self.regs.rd(off)
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Bus for Registers {
+    fn wr(&mut self, off: u32, v: u32) {
         assert!(off < 0x8000 && off % 4 == 0);
+        // SAFETY: the asserted offset addresses an aligned word in the owned mapping.
         unsafe { std::ptr::write_volatile(self.regs.add((off >> 2) as usize), v) };
-        if self.gap_us > 0 {
-            std::thread::sleep(std::time::Duration::from_micros(self.gap_us));
-        }
     }
     fn rd(&mut self, off: u32) -> u32 {
         assert!(off < 0x8000 && off % 4 == 0);
+        // SAFETY: the asserted offset addresses an aligned word in the owned mapping.
         unsafe { std::ptr::read_volatile(self.regs.add((off >> 2) as usize)) }
     }
 }
 
 #[cfg(target_os = "linux")]
-unsafe impl Send for Bar1 {}
+// SAFETY: the mapping and backing file are owned, and all register access requires an exclusive borrow.
+unsafe impl Send for Registers {}
+
+#[cfg(test)]
+mod write_gap_tests;
 
 #[cfg(test)]
 mod tests {

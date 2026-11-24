@@ -4,7 +4,10 @@
 //! The DHO's switches in system.conf and the environment (`sysconf::Switches`), parsed once at start.
 
 use super::hw;
-use crate::sysconf::switches::{text, Env};
+use crate::{
+    drawpipe::conf_value,
+    sysconf::switches::{text, BatchDump, Env},
+};
 
 /// The frame-header log (`OOS_FRAME_HEADER`, trigger.md 8): unset, set (every frame), or `off` (only the frames
 /// whose edge is off the trigger point, and a count of all frames every 10,000; docs/protocols/acquisition-start.md,
@@ -18,9 +21,9 @@ pub enum HeaderProbe {
 }
 
 impl HeaderProbe {
-    fn of(v: Option<std::ffi::OsString>) -> Self {
-        match v {
-            None => Self::Off,
+    fn parse(env: Env, conf: &str) -> Self {
+        match env("OOS_FRAME_HEADER") {
+            None => Self::of_header(conf_value(None, conf, "acq.frame_header").as_deref() == Some("on")),
             Some(v) if v == "off" => Self::OffTrigger,
             Some(_) => Self::All,
         }
@@ -42,7 +45,7 @@ impl HeaderProbe {
 }
 
 /// The board's part of `sysconf::Switches`.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Switches {
     /// OOS_HWAVG=hold: the FPGA average is read as a cumulative average of the count that is shown when complete and
     /// then cleared, else running (spec 01, 6.1; the hardware test in docs/fork/unit-dho804.md decides)
@@ -53,6 +56,7 @@ pub struct Switches {
     /// OOS_FRAME_HEADER set (trigger.md 8): frames are read with the 16-byte header of the stock live loop and their
     /// headers are logged to /tmp/oos-hdr.log next to where the edge actually is
     pub header_probe: HeaderProbe,
+    pub(crate) batch_dump: BatchDump,
     /// `dvm.hw = on`: the DVM reads the FPGA's DVM block (docs/fork/dvm.md)
     pub dvm: bool,
     /// `mask.hw = on`: the mask test runs in the FPGA's mask unit (docs/fork/hwmask.md)
@@ -81,7 +85,8 @@ impl Switches {
         Switches {
             avg_hold: text(env, "OOS_HWAVG").is_some_and(|v| v == "hold"),
             core_offset_tight: hw::core_offset_from(conf),
-            header_probe: HeaderProbe::of(env("OOS_FRAME_HEADER")),
+            header_probe: HeaderProbe::parse(env, conf),
+            batch_dump: BatchDump::parse(env, conf),
             dvm: hw::dvm_hw_from(conf),
             mask: hw::mask_hw_from(conf),
             zone: hw::zone_hw_from(conf),
@@ -110,10 +115,14 @@ mod tests {
     // Break it catches: OOS_FRAME_HEADER=off read as "log every frame", or read again in the decode loop (1dc4009c).
     #[test]
     fn the_header_log_has_its_mode_from_the_switch() {
-        let mode = |v: Option<&str>| HeaderProbe::of(v.map(std::ffi::OsString::from));
-        assert_eq!(mode(None), HeaderProbe::Off);
-        assert_eq!(mode(Some("1")), HeaderProbe::All);
-        assert_eq!(mode(Some("off")), HeaderProbe::OffTrigger);
+        let mode = |v: Option<&str>, conf| {
+            HeaderProbe::parse(&|key| (key == "OOS_FRAME_HEADER").then_some(v).flatten().map(Into::into), conf)
+        };
+        assert_eq!(mode(None, ""), HeaderProbe::Off);
+        assert_eq!(mode(None, "acq.frame_header = off"), HeaderProbe::Off);
+        assert_eq!(mode(None, "acq.frame_header = on"), HeaderProbe::All);
+        assert_eq!(mode(Some("1"), "acq.frame_header = off"), HeaderProbe::All);
+        assert_eq!(mode(Some("off"), "acq.frame_header = on"), HeaderProbe::OffTrigger);
         assert!(!HeaderProbe::Off.on() && HeaderProbe::All.on() && HeaderProbe::OffTrigger.on());
     }
 

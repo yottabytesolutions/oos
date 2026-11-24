@@ -4,25 +4,75 @@ use super::count::{Count, CountFormat};
 use crate::model::NCH;
 use std::ops::Range;
 
+mod dirty;
+use dirty::Dirty;
+
 /// Column differences with a sentinel row below the picture.
 pub(crate) struct DiffPlane {
     band_cols: usize,
     rows: usize,
     pub(crate) d: Vec<u16>,
     touched: Range<usize>,
+    dirty: Dirty,
 }
 
 /// Owned column band. No other thread can borrow its differences while it is in a pool job.
 pub(crate) struct DiffBand {
     pub(crate) channel: usize,
     pub(crate) first: usize,
-    pub(crate) plane: DiffPlane,
+    // Keep jobs small. This backing moves with its band and is allocated once per geometry.
+    pub(crate) plane: Box<DiffPlane>,
     picture_cols: usize,
     run: Vec<u16>,
     wide: Option<(Vec<u32>, Vec<u32>)>,
 }
 
 impl DiffBand {
+    /// Geometry/format-only preflight. Caller checks every band and aggregate
+    /// identity/hit budget before mutating any band or crediting first use.
+    pub(crate) fn can_merge_picture(&self, other: &Self) -> bool {
+        self.channel == other.channel
+            && self.first == other.first
+            && self.picture_cols == other.picture_cols
+            && self.plane.band_cols == other.plane.band_cols
+            && self.plane.rows == other.plane.rows
+            && self.format() == other.format()
+    }
+
+    /// No allocation or lease transfer. Caller has admitted each input at the
+    /// same composition clock and checked the aggregate format hit bound.
+    pub(crate) fn merge_picture(&mut self, other: &Self) -> bool {
+        if !self.can_merge_picture(other) {
+            return false;
+        }
+        let t = other.plane.touched.clone();
+        if t.start >= t.end {
+            return true;
+        }
+        let width = self.plane.band_cols;
+        let cells = t.start * width..(t.end + 1) * width;
+        match (&mut self.wide, &other.wide) {
+            (Some((a, _)), Some((b, _))) => {
+                merge_picture_cells(&mut a[cells.clone()], &b[cells]);
+            }
+            (None, None) => {
+                merge_picture_cells(&mut self.plane.d[cells.clone()], &other.plane.d[cells]);
+            }
+            _ => unreachable!("format checked before mutation"),
+        }
+        self.include(t);
+        self.plane.dirty.merge(&other.plane.dirty);
+        true
+    }
+
+    #[cfg(test)]
+    pub(crate) fn test_backing(&self) -> (usize, usize) {
+        self.wide.as_ref().map_or_else(
+            || (self.plane.d.as_ptr() as usize, 2 * (self.plane.d.capacity() + self.run.capacity())),
+            |(diff, run)| (diff.as_ptr() as usize, 4 * (diff.capacity() + run.capacity())),
+        )
+    }
+
     pub(crate) fn bands((cols, rows): (usize, usize), used: [bool; NCH]) -> Vec<Self> {
         let count = used.iter().filter(|&&on| on).count().max(1);
         let band_cols = cols.div_ceil(4usize.div_ceil(count)).max(1);
@@ -36,7 +86,13 @@ impl DiffBand {
                         channel,
                         first,
                         picture_cols: cols,
-                        plane: DiffPlane { band_cols: width, rows, d: vec![0; width * (rows + 1)], touched: rows..0 },
+                        plane: Box::new(DiffPlane {
+                            band_cols: width,
+                            rows,
+                            d: vec![0; width * (rows + 1)],
+                            touched: rows..0,
+                            dirty: Dirty::new(width * (rows + 1)),
+                        }),
                         run: vec![0; width],
                         wide: None,
                     }
@@ -71,21 +127,36 @@ impl DiffBand {
             }
         }
         self.plane.touched = self.plane.rows..0;
+        self.plane.dirty.reset();
     }
 
     #[cfg(test)]
     pub(crate) fn test_span(&mut self, row: usize, weight: u16) {
+        let width = self.plane.band_cols;
         match &mut self.wide {
-            Some((diff, _)) => crate::fastdraw::diff_span(diff, self.plane.band_cols, 0, row, row, weight),
-            None => crate::fastdraw::diff_span(&mut self.plane.d, self.plane.band_cols, 0, row, row, weight),
+            Some((diff, _)) => crate::fastdraw::diff_span(diff, width, 0, row, row, weight),
+            None => crate::fastdraw::diff_span(&mut self.plane.d, width, 0, row, row, weight),
         }
         self.touch(row..row + 1);
     }
 
     pub(crate) fn paint(&mut self, samples: super::kernel::SamplesRef<'_>, plan: &super::standard::FastPlan) {
+        if let Some(spans) = plan
+            .raw()
+            .and_then(|(projection, trace)| projection.ch[self.channel].and(trace.spans[self.channel].as_ref()))
+        {
+            let diff = &mut self.plane;
+            let columns = (self.first, diff.band_cols);
+            let rows = match &mut self.wide {
+                Some((cells, _)) => diff.dirty.paint(cells, columns, spans),
+                None => diff.dirty.paint(&mut diff.d, columns, spans),
+            };
+            self.include(rows);
+            return;
+        }
         let rows = match &mut self.wide {
-            Some((diff, _)) => super::standard::add_sample_band(self.channel, diff, self.first, samples, plan),
-            None => super::standard::add_sample_band(self.channel, &mut self.plane.d, self.first, samples, plan),
+            Some((diff, _)) => paint_band(self.channel, diff, self.first, samples, plan),
+            None => paint_band(self.channel, &mut self.plane.d, self.first, samples, plan),
         };
         self.touch(rows);
     }
@@ -125,19 +196,26 @@ impl DiffBand {
     }
 
     pub(crate) fn touch(&mut self, rows: Range<usize>) {
+        self.plane.dirty.include_rows(rows.clone());
+        self.include(rows);
+    }
+
+    fn include(&mut self, rows: Range<usize>) {
         if !rows.is_empty() {
             self.plane.touched = self.plane.touched.start.min(rows.start)..self.plane.touched.end.max(rows.end);
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn fixture_dirty_rows(&self) -> Range<usize> {
+        self.plane.touched.clone()
+    }
+
     pub(crate) fn clear(&mut self) {
-        if self.plane.touched.start <= self.plane.touched.end {
-            let range = self.plane.touched.start * self.plane.band_cols
-                ..(self.plane.touched.end.min(self.plane.rows) + 1) * self.plane.band_cols;
-            match &mut self.wide {
-                Some((diff, _)) => diff[range].fill(0),
-                None => self.plane.d[range].fill(0),
-            }
+        let plane = &mut self.plane;
+        match &mut self.wide {
+            Some((diff, _)) => plane.dirty.clear(diff, plane.band_cols),
+            None => plane.dirty.clear(&mut plane.d, plane.band_cols),
         }
         self.plane.touched = self.plane.rows..0;
     }
@@ -301,3 +379,26 @@ mod allocation_tests {
         }
     }
 }
+
+fn merge_picture_cells<T: Count>(a: &mut [T], b: &[T]) {
+    for (sum, delta) in a.iter_mut().zip(b) {
+        *sum = sum.wrapping_add(*delta);
+    }
+}
+
+#[cfg(test)]
+mod same_picture_merge_tests;
+
+fn paint_band<T: Count>(
+    channel: usize,
+    diff: &mut [T],
+    first: usize,
+    samples: super::kernel::SamplesRef<'_>,
+    plan: &super::standard::FastPlan,
+) -> Range<usize> {
+    plan.paint_zoom_lines(diff, first, channel)
+        .unwrap_or_else(|| super::standard::add_sample_band(channel, diff, first, samples, plan))
+}
+
+#[cfg(test)]
+mod fixture_tests;

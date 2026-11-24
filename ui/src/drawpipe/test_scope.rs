@@ -8,6 +8,7 @@ use std::sync::OnceLock;
 
 thread_local! {
     static CURRENT: Cell<Option<&'static State>> = const { Cell::new(None) };
+    static WORKER_COUNTERS: Cell<Option<&'static Counters>> = const { Cell::new(None) };
 }
 
 pub(super) struct State {
@@ -17,6 +18,24 @@ pub(super) struct State {
 
 pub(super) fn state() -> Option<&'static State> {
     CURRENT.with(Cell::get)
+}
+
+pub(super) fn counters() -> Option<&'static Counters> {
+    WORKER_COUNTERS.get().or_else(|| state().map(|state| state.counters))
+}
+
+pub(super) struct WorkerCounters(Option<&'static Counters>, std::marker::PhantomData<std::rc::Rc<()>>);
+
+impl WorkerCounters {
+    pub(super) fn enter(counters: &'static Counters) -> Self {
+        Self(WORKER_COUNTERS.replace(Some(counters)), Default::default())
+    }
+}
+
+impl Drop for WorkerCounters {
+    fn drop(&mut self) {
+        WORKER_COUNTERS.set(self.0);
+    }
 }
 
 impl State {

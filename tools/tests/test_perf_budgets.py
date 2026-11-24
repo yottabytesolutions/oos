@@ -65,7 +65,6 @@ class PerfBudgets(unittest.TestCase):
                          'build.route.ui.wfm_total - before',
                          '(2 * crate::perfguard::ROUNDS * 16 * build.frames) as u64',
                          'sampled claims must be exercised', 'compare(&picture(',
-                         'reference.route.ui.fast_take, candidate.route.ui.fast_take',
                          'reference.route.ui.wfm_total, candidate.route.ui.wfm_total']:
             self.assertIn(contract, source)
 

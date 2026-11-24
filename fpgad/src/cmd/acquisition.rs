@@ -2,7 +2,7 @@
 // Copyright (C) 2026 Julian Decker
 
 use super::Opt;
-use oos_hal::dho::seq::{self, Settings};
+use oos_hal::dho::seq::{self, Playback, Settings};
 use oos_hal::dho::{afe, tpu};
 
 struct Parser {
@@ -103,8 +103,8 @@ impl Parser {
     fn flag(&mut self, a: &str) -> Result<(), String> {
         match a {
             "--normal" => self.s.auto = false,
-            "--play4" => self.s.play4 = true,
-            "--play-last" => self.s.play4 = false,
+            "--play4" => self.s.playback = Playback::Raw,
+            "--play-last" => self.s.playback = Playback::Last,
             "--keep-config" => self.s.blocks = 0,
             "--header" => self.s.header = true,
             "--no-read" => self.no_read = true,

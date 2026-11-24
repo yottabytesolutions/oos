@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Frame-owned FIFO execution, continuation ownership and parked reply delivery.
-use super::Program;
+//! Frame-owned execution with one continuation per waiting connection.
+use super::{Canvas, Program, Ui};
 use crate::netport::{Envelope, Ports, RemoteRequest, Reply, Reservation};
-use std::time::Duration;
+use std::{collections::VecDeque, sync::atomic::Ordering, time::Duration};
 
 pub(super) struct Transport {
     pub(super) endpoint: crate::netio::Endpoint,
@@ -17,7 +17,7 @@ impl Default for Transport {
 
 #[derive(Default)]
 pub(super) struct Intake {
-    active: Option<Active>,
+    waiting: VecDeque<Active>,
     parked: Option<Reply>,
 }
 struct Active {
@@ -31,9 +31,10 @@ impl Intake {
         &mut self,
         ports: &Ports,
         mut elapsed: impl FnMut() -> Duration,
-        mut execute: impl FnMut(&mut Program) -> Option<Vec<u8>>,
+        mut execute: impl FnMut(&mut Program, &mut Reservation) -> Option<Vec<u8>>,
     ) {
-        for _ in 0..8 {
+        let waiting = self.waiting.len();
+        for turn in 0..crate::netport::MAX_CLIENTS {
             if elapsed() >= Duration::from_micros(500) {
                 ports.notify_frame();
                 break;
@@ -41,62 +42,71 @@ impl Intake {
             if !ports.flush(&mut self.parked) {
                 return;
             }
-            if self.active.is_none() {
-                if ports.requests().is_empty() {
-                    break;
-                }
-                let Some(reservation) = ports.budget().reserve_available() else { break };
-                let Some(request) = ports.requests().take(1).pop() else { break };
-                let RemoteRequest::Program(text) = request.request() else { continue };
-                let mut program = Program::new(text);
-                program.output = Some(crate::netport::Output::bounded(reservation.capacity()));
-                self.active = Some(Active { request, program, reservation });
-            }
-            let Some(mut active) = self.active.take() else { break };
+            let active = if turn < waiting { self.waiting.pop_front() } else { Self::take(ports) };
+            let Some(mut active) = active else { return };
             if active.request.cancelled() {
                 continue;
             }
-            if active.program.waiting.is_some()
-                && active.request.read_closed().load(std::sync::atomic::Ordering::Acquire)
-            {
+            if active.program.waiting.is_some() && active.read_closed() {
                 self.parked = Some(Reply::new(active.request.id(), Vec::new(), active.reservation));
                 continue;
             }
-            let Some(mut bytes) = execute(&mut active.program) else {
-                if active.request.read_closed().load(std::sync::atomic::Ordering::Acquire) {
-                    self.parked = Some(Reply::new(active.request.id(), Vec::new(), active.reservation));
-                    continue;
-                }
-                self.active = Some(active);
-                break;
-            };
-            let mut output = active.program.output.take().unwrap_or_default();
-            if !bytes.is_empty() {
-                let _ = output.push(std::mem::take(&mut bytes));
+            if let Some(bytes) = execute(&mut active.program, &mut active.reservation) {
+                self.parked = Some(active.reply(bytes));
+            } else if active.read_closed() {
+                self.parked = Some(Reply::new(active.request.id(), Vec::new(), active.reservation));
+            } else {
+                active.reservation.retain(active.program.output.as_ref().map_or(0, crate::netport::Output::capacity));
+                self.waiting.push_back(active);
             }
-            if active.program.has_reply {
-                let _ = output.push(vec![b'\n']);
-            }
-            self.parked = Some(Reply::from_output(active.request.id(), output, active.reservation));
         }
-        // A completion at the quota boundary still has to reach IO on a later intake.
-        if self.parked.is_some() {
+        if self.parked.is_some() || !ports.requests().is_empty() {
             ports.notify_frame();
         }
     }
+
+    fn take(ports: &Ports) -> Option<Active> {
+        if ports.requests().is_empty() {
+            return None;
+        }
+        let reservation = ports.budget().reserve_available()?;
+        let request = ports.requests().take(1).pop()?;
+        let RemoteRequest::Program(text) = request.request() else { return None };
+        let mut program = Program::new(text);
+        program.output = Some(crate::netport::Output::bounded(reservation.capacity()));
+        Some(Active { request, program, reservation })
+    }
+
     #[cfg(test)]
     pub(super) fn active_is_empty(&self) -> bool {
-        self.active.is_none()
+        self.waiting.is_empty() && self.parked.is_none()
     }
+
     #[cfg(test)]
     pub(super) fn pending(&self) -> bool {
-        self.active.as_ref().is_some_and(|a| a.program.waiting.is_some())
+        self.waiting.iter().any(|a| a.program.waiting.is_some())
     }
+
     #[cfg(test)]
     pub(super) fn cancelled(&self) -> bool {
-        self.active
-            .as_ref()
-            .is_none_or(|a| a.request.cancelled() || a.request.read_closed().load(std::sync::atomic::Ordering::Acquire))
+        self.waiting.iter().all(|a| a.request.cancelled() || a.read_closed())
+    }
+}
+
+impl Active {
+    fn read_closed(&self) -> bool {
+        self.request.read_closed().load(Ordering::Acquire)
+    }
+
+    fn reply(mut self, bytes: Vec<u8>) -> Reply {
+        let mut output = self.program.output.take().unwrap_or_default();
+        if !bytes.is_empty() {
+            let _ = output.push(bytes);
+        }
+        if self.program.has_reply {
+            let _ = output.push(vec![b'\n']);
+        }
+        Reply::from_output(self.request.id(), output, self.reservation)
     }
 }
 
@@ -104,6 +114,49 @@ impl Intake {
 mod tests;
 
 impl super::Scpi {
+    pub fn poll(&mut self, ui: &mut Ui, cv: &Canvas) {
+        let Some(ports) = self.transport.endpoint.ports(&self.acl) else { return };
+        let start = std::time::Instant::now();
+        let mut intake = std::mem::take(&mut self.transport.intake);
+        intake.poll(
+            &ports,
+            || start.elapsed(),
+            |program, reservation| self.poll_raw_program(ui, cv, program, reservation),
+        );
+        self.transport.intake = intake;
+    }
+
+    fn poll_raw_program(
+        &mut self,
+        ui: &mut Ui,
+        cv: &Canvas,
+        program: &mut Program,
+        reservation: &mut Reservation,
+    ) -> Option<Vec<u8>> {
+        if let Some(fence) = &program.waiting {
+            match fence.state(ui) {
+                crate::ui::OperationState::Pending => return None,
+                crate::ui::OperationState::Cancelled => {}
+                crate::ui::OperationState::Complete => {
+                    // The reply, separator and newline need space beyond the retained prefix.
+                    if !reservation.expand_available(256) {
+                        return None;
+                    }
+                    if let Some(output) = &mut program.output {
+                        output.set_limit(reservation.capacity());
+                    }
+                }
+            }
+        }
+        self.waveform.resume(program.waveform.take());
+        let reply = self.poll_program(ui, cv, program);
+        if reply.is_none() {
+            program.waveform = Some(self.waveform.read());
+        }
+        self.waveform.resume(None);
+        reply
+    }
+
     pub fn open_with_runtime(
         port: impl Into<crate::net6::Port>,
         v6: bool,

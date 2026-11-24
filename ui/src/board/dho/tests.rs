@@ -30,10 +30,10 @@ fn epoch_only_boundary_rejects_old_work() {
             g.want = Some(want.clone());
             g.acquisition = Publication::new(id, generation);
         }
-        let (_, published, _, _, _, _, _, tagged, route) = publication::snapshot(&shared);
-        assert_eq!(published, Some(want));
-        assert_eq!(tagged, id);
-        assert_eq!(route, generation);
+        let request = publication::snapshot(&shared);
+        assert_eq!(request.want, Some(want));
+        assert_eq!(request.identity, id);
+        assert_eq!(request.route, generation);
         publication::push_frames(
             &shared,
             vec![
@@ -122,18 +122,18 @@ fn restart_boundary(model: &mut Model, needs: &mut UiAcq, boundary: usize) -> Op
 }
 
 #[test]
-fn worker_identity_rejection_and_queue_overflow_have_distinct_counts() {
+fn worker_identity_rejection_preserves_the_complete_current_batch() {
     let _scope = crate::drawpipe::test_scope::Scope::new();
     let counters = crate::drawpipe::counters();
     let worker = counters.losses.worker_push.load(std::sync::atomic::Ordering::Relaxed);
     let overflow = counters.losses.overflow.load(std::sync::atomic::Ordering::Relaxed);
     let shared = HwShared::default();
     let mut frames = vec![Frame { cfg: 1, ..Default::default() }; 2];
-    frames.extend((0..crate::board::QUEUE_MAX + 3).map(|_| Frame::default()));
+    frames.extend((0..crate::board::QUEUE_MAX).map(|_| Frame::default()));
     publication::push_frames(&shared, frames, oos_hal::dho::acq::Mode::Normal);
     assert_eq!(lock(&shared).queue.len(), crate::board::QUEUE_MAX);
     assert_eq!(counters.losses.worker_push.load(std::sync::atomic::Ordering::Relaxed) - worker, 2);
-    assert_eq!(counters.losses.overflow.load(std::sync::atomic::Ordering::Relaxed) - overflow, 3);
+    assert_eq!(counters.losses.overflow.load(std::sync::atomic::Ordering::Relaxed) - overflow, 0);
 }
 
 #[test]

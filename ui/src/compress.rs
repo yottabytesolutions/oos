@@ -11,6 +11,7 @@
 //! (`allowed`).
 
 use crate::board::Frame;
+#[cfg(test)]
 use crate::fastdraw::Map;
 use crate::model::*;
 
@@ -119,6 +120,7 @@ pub fn smooth_len(x_per_point: f64) -> usize {
 
 /// Per screen column (0..`w`) the minimum and maximum of the pairs whose block centre lies in it, mapped like
 /// `fastdraw::deposit` maps samples (`m` in points; pair i covers points 2i and 2i+1, its centre is point 2i + 1).
+#[cfg(test)]
 pub fn ranges(v: &[f32], m: &Map, w: usize) -> Vec<Option<(f32, f32)>> {
     let mut out = vec![None; w];
     if m.x_per_sample <= 0.0 {
@@ -147,16 +149,25 @@ pub fn ranges(v: &[f32], m: &Map, w: usize) -> Vec<Option<(f32, f32)>> {
 #[cfg(test)]
 pub fn deposit_pairs(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16, dots: bool) {
     let mut spans = crate::fastdraw::Spans::default();
-    spans_into(w, h, v, m, dots, &mut spans);
+    crate::picture::deposit::envelope::adapt::pairs::spans_into(
+        v,
+        &mut Default::default(),
+        m,
+        (w, h),
+        dots,
+        &mut spans,
+    );
     for (c, &(r0, r1)) in spans.rows.iter().enumerate() {
         for r in r0..=r1 {
-            let pixel = &mut map[r as usize * w + c];
+            let pixel = &mut map[r as usize * w + spans.c0 + c];
             *pixel = pixel.saturating_add(wgt);
         }
     }
 }
 
-pub(crate) fn spans_into(w: usize, h: usize, v: &[f32], m: &Map, dots: bool, spans: &mut crate::fastdraw::Spans) {
+#[cfg(test)]
+// The pre-adapter compress::spans_into body, retained as the pixel reference.
+pub(crate) fn reference_spans(w: usize, h: usize, v: &[f32], m: &Map, dots: bool, spans: &mut crate::fastdraw::Spans) {
     let cols = ranges(v, m, w);
     spans.c0 = 0;
     spans.rows.clear();
@@ -181,6 +192,7 @@ pub(crate) fn spans_into(w: usize, h: usize, v: &[f32], m: &Map, dots: bool, spa
 }
 
 /// The range of the last pair whose centre lies left of column `c`.
+#[cfg(test)]
 fn last_before(v: &[f32], m: &Map, c: usize) -> Option<(f32, f32)> {
     // centre of pair i: PAIR * i + PAIR / 2 points, left of the column while below `edge`
     let edge = m.ti + (c as f64 - m.x0) / m.x_per_sample;

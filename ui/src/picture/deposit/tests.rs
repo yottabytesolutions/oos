@@ -6,64 +6,108 @@ use crate::fastdraw::{Codes, Samples};
 use crate::model::*;
 
 #[test]
+fn pacing_observes_the_publication_after_an_occupied_slot_is_released() {
+    use super::{Deposit, Handoff};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+
+    let handoff = Handoff::default();
+    let deposit = || Deposit::new(1, (1, 1), None, [true; 4]);
+    assert!(handoff.put(deposit()).is_ok());
+    let read = Instant::now();
+    let mut next = deposit();
+    next.extent.include(read);
+    next.records = 1;
+    let released = AtomicBool::new(false);
+    let period = crate::drawpipe::budget::PICTURE_PERIOD;
+    std::thread::scope(|scope| {
+        let ready = scope.spawn(|| {
+            let calls = std::cell::Cell::new(0u64);
+            let now = || {
+                let service = calls.get();
+                calls.set(service + 1);
+                let delay = if released.load(Ordering::Acquire) { period } else { Duration::ZERO };
+                read + delay + Duration::from_micros(service)
+            };
+            let elapsed = handoff
+                .send_timed_with(next, false, now, |origin, published| {
+                    assert_eq!(origin, Some(read));
+                    assert_eq!(published - read, period + Duration::from_micros(1));
+                })
+                .ok();
+            assert_eq!(elapsed, Some(Duration::from_micros(1)));
+        });
+        handoff.wait_for_sender();
+        released.store(true, Ordering::Release);
+        assert!(handoff.take().is_some());
+        ready.join().unwrap();
+    });
+}
+
+fn channel_codes<'a>(bytes: &'a [u8], words: &'a [u16], channels: usize, c: usize, scale: f32) -> Codes<'a> {
+    Codes {
+        bytes,
+        words: Some(words),
+        stride: channels,
+        word: if channels == 4 { [2, 0, 3, 1][c] } else { c },
+        n: 4096,
+        corrected: None,
+        affine: (scale * (c + 1) as f32 * if c.is_multiple_of(2) { 1.0 } else { -1.0 }, 5.0 + c as f32 * 0.3),
+        volt: |x, (scale, offset)| x as f32 * scale - offset,
+    }
+}
+
+#[test]
 fn codes_and_volts_place_and_deposit_identically() {
-    for channels in [1, 2, 4] {
-        for dots in [false, true] {
-            for scale in [0.01, -0.01] {
-                let mut m = Model { dots: if dots { DotsMode::On } else { DotsMode::Off }, ..Default::default() };
-                for (c, ch) in m.ch.iter_mut().enumerate() {
-                    ch.on = c < channels;
-                    ch.offset = c as f32 * 0.2;
-                }
-                let words: Vec<u16> = (0..4096 * channels).map(|i| ((i * 37 + i / 101) % 1024) as u16).collect();
-                let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
-                let codes = |c| Codes {
-                    bytes: &bytes,
-                    words: Some(&words),
-                    stride: channels,
-                    word: c,
-                    n: 4096,
-                    affine: (scale, 5.0),
-                    volt: |x, (scale, offset)| x as f32 * scale - offset,
-                };
-                let volts: [Vec<f32>; NCH] = std::array::from_fn(|c| {
-                    if c < channels {
-                        (0..4096).map(|i| codes(c).at(i)).collect()
-                    } else {
-                        Vec::new()
+    for (width, height) in [(97, 48), (970, 448)] {
+        for channels in [1, 2, 3, 4] {
+            for dots in [false, true] {
+                for scale in [0.01, -0.01] {
+                    let mut m = Model { dots: if dots { DotsMode::On } else { DotsMode::Off }, ..Default::default() };
+                    for (c, ch) in m.ch.iter_mut().enumerate() {
+                        ch.on = c < channels;
+                        ch.offset = c as f32 * 0.2;
                     }
-                });
-                let frame = crate::board::Frame {
-                    dt: m.time_per_div() as f64 * HDIV as f64 / 4096.0,
-                    pre: 2048,
-                    ..Default::default()
-                };
-                let meta = standard::frame_timing(&m, &frame);
-                let proj = standard::projection(&m, 97, 48, 97.0 / 4096.0);
-                let raw = kernel::place(
-                    std::array::from_fn(|c| {
+                    let words: Vec<u16> = (0..4096 * channels).map(|i| ((i * 37 + i / 101) % 1024) as u16).collect();
+                    let bytes: Vec<u8> = words.iter().flat_map(|w| w.to_le_bytes()).collect();
+                    let codes = |c| channel_codes(&bytes, &words, channels, c, scale);
+                    let volts: [Vec<f32>; NCH] = std::array::from_fn(|c| {
                         if c < channels {
-                            SamplesRef::Codes(codes(c))
+                            (0..4096).map(|i| codes(c).at(i)).collect()
                         } else {
-                            SamplesRef::Volts(&[])
+                            Vec::new()
                         }
-                    }),
-                    &meta,
-                    &proj,
-                    0.0,
-                    [true; NCH],
-                );
-                let decoded_samples = std::array::from_fn(|c| SamplesRef::Volts(&volts[c]));
-                let decoded = kernel::place(decoded_samples, &meta, &proj, 0.0, [true; NCH]);
-                assert_eq!(raw.trace.trigger_at, decoded.trace.trigger_at);
-                assert_eq!(raw.trace.outcome, decoded.trace.outcome);
-                compare_planes(
-                    &proj,
-                    &raw,
-                    &decoded,
-                    std::array::from_fn(|c| (c < channels).then(|| codes(c))),
-                    &volts,
-                );
+                    });
+                    let frame = crate::board::Frame {
+                        dt: m.time_per_div() as f64 * HDIV as f64 / 4096.0,
+                        pre: 2048,
+                        ..Default::default()
+                    };
+                    let meta = standard::frame_timing(&m, &frame);
+                    let proj = standard::projection(&m, width, height, width as f64 / 4096.0);
+                    let raw = kernel::place(
+                        std::array::from_fn(|c| {
+                            if c < channels {
+                                SamplesRef::Codes(codes(c))
+                            } else {
+                                SamplesRef::Volts(&[])
+                            }
+                        }),
+                        &meta,
+                        &proj,
+                        0.0,
+                        [true; NCH],
+                    );
+                    let decoded_samples = std::array::from_fn(|c| SamplesRef::Volts(&volts[c]));
+                    let decoded = kernel::place(decoded_samples, &meta, &proj, 0.0, [true; NCH]);
+                    compare_planes(
+                        &proj,
+                        &raw,
+                        &decoded,
+                        std::array::from_fn(|c| (c < channels).then(|| codes(c))),
+                        &volts,
+                    );
+                }
             }
         }
     }
@@ -76,6 +120,8 @@ fn compare_planes(
     codes: [Option<Codes<'_>>; NCH],
     volts: &[Vec<f32>; NCH],
 ) {
+    assert_eq!(raw.trace.trigger_at, decoded.trace.trigger_at);
+    assert_eq!(raw.trace.outcome, decoded.trace.outcome);
     for c in 0..NCH {
         assert_eq!(
             raw.fold[c].map(|f| (f.n, f.min, f.max, f.sum, f.sumsq)),

@@ -128,7 +128,7 @@ impl Ui {
                     time,
                     elapsed,
                     seed: self.rng.next(),
-                    switches: *self.switches(),
+                    switches: self.switches().clone(),
                     identity: (id.gen(), id.epoch()),
                 };
                 if worker.thread.submit(job).is_ok() {

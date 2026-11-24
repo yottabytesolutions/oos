@@ -21,7 +21,7 @@ mod compress;
 mod decode;
 mod deepmeas;
 mod drawpipe;
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", test))]
 mod drm;
 mod ethlink;
 mod fastdraw;
@@ -94,7 +94,7 @@ fn source(args: &[String], switches: &sysconf::Switches) -> Source {
         placement::place(placement::Role::Ui, switches);
         let program_afe = args.iter().any(|a| a == "--afe");
         let o = board::Spawn { mask, program_afe, cal_dir, start_up: arg(args, "--start-up") };
-        let shared = board::board().spawn(o, *switches);
+        let shared = board::board().spawn(o, switches.clone());
         return Source::Hw { shared, seen: 0 };
     }
     if let Some(path) = arg(args, "--replay") {
@@ -149,7 +149,7 @@ pub fn main() {
     };
     let startup = store::startup::Startup::device(&args);
     let switches = sysconf::Switches::read();
-    let mut ui = Ui::new(source(&args, &switches), ui::host::Host::system(switches));
+    let mut ui = Ui::new(source(&args, &switches), ui::host::Host::system(switches.clone()));
     if args.iter().any(|a| a == "--offline") {
         ui.set_offline(true);
     }
@@ -341,7 +341,7 @@ const HDMI_BG: u32 = 0x0d1117;
 fn start_gpu(disp: &drm::Display, sw: &sysconf::Switches) -> Result<gpu::Gpu, String> {
     placement::pin_to_big_cores(sw.cores);
     placement::place(placement::Role::Ui, sw);
-    let mut g = gpu::Gpu::start(gpu::HELPER)?;
+    let mut g = gpu::Gpu::start(gpu::HELPER, placement::gpu_cpu(sw))?;
     for i in 0..disp.buffers() {
         let (fd, pitch) = disp.export(i).map_err(|e| format!("export: {}", e))?;
         g.target_dmabuf(i, disp.width, disp.height, pitch, fd)?;

@@ -353,18 +353,6 @@ impl Source {
         matches!(self, Source::Demo { .. })
     }
 
-    /// Ask the acquisition thread for one force-trigger pulse. Other sources ignore it.
-    pub fn force_hw(&self) {
-        if let Source::Hw { shared, .. } = self {
-            let mut state = crate::perfguard::deep::ui_lock(shared);
-            state.force = true;
-            #[cfg(test)]
-            {
-                state.force_requests += 1;
-            }
-        }
-    }
-
     /// The generator settings for the hardware thread: every step, the output must follow also while stopped.
     /// Readers of the records that only the UI knows of (protocol watch, XY) for the hardware thread
     /// (`Shared::needs_raw`: no live compression).
@@ -452,24 +440,6 @@ impl Source {
     /// Sample rate and depth as the top bar shows them: of the hardware when it runs, else the model's choice.
     pub fn rate_depth(&self, m: &Model) -> (f64, u64) {
         self.hw_rate_depth().map(|(r, n)| (r, n as u64)).unwrap_or_else(|| m.srate_depth())
-    }
-
-    /// Hardware source in STOP: the view shown (time per div, delay; None: none to read for), and the frame the
-    /// thread has read again from the stored record for it, if a new one came (`board::Shared::stop_view`).
-    pub fn hw_stop(&mut self, view: Option<(f64, f64)>) -> Option<crate::board::Frame> {
-        if let Source::Hw { shared, .. } = self {
-            let mut g = crate::perfguard::deep::ui_lock(shared);
-            g.stop_view = view;
-            return g.replay.take().filter(|_| view.is_some());
-        }
-        None
-    }
-
-    /// Hardware source: every frame of a batch decoded again (the record path, which takes them one by one).
-    pub fn hw_take_all(&mut self) {
-        if let Source::Hw { shared, .. } = self {
-            crate::perfguard::deep::ui_lock(shared).take = 0;
-        }
     }
 
     /// Hardware source: frames decoded and frames dropped unseen so far (`board::Shared`).

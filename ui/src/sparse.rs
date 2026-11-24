@@ -11,7 +11,8 @@
 //! cheaper (short time bases), within half a pixel of the exact points and one pixel on the screen (guarded); `exact`
 //! stays the default until a screenshot comparison on the unit.
 
-use crate::board::{sw_trig_level, Frame};
+use crate::board::Frame;
+use crate::drawpipe::stage::fixture_stage;
 use crate::model::*;
 use crate::wave::Phosphor;
 use std::cell::RefCell;
@@ -31,32 +32,18 @@ pub fn draw_with(ph: &mut Phosphor, m: &Model, f: &Frame, wgt: u16, mode: Interp
     })
 }
 
-pub(crate) fn record_with(m: &Model, f: &Frame, mode: Interp) -> Option<crate::wave::Record> {
-    let mut record = crate::wave::Record {
-        t0: 0.0,
-        dt: 0.0,
-        ch: Default::default(),
-        triggered: true,
-        partial: f.partial,
-        raw: None,
-        la: None,
-        pairs: false,
-    };
-    project(m, f, mode, |c, t0, dt, samples| {
-        record.t0 = t0;
-        record.dt = dt;
-        record.ch[c].extend_from_slice(samples);
-    })?;
-    Some(record)
-}
-
-fn project(m: &Model, f: &Frame, mode: Interp, mut emit: impl FnMut(usize, f64, f64, &[f32])) -> Option<bool> {
+pub(crate) fn project(
+    m: &Model,
+    f: &Frame,
+    mode: Interp,
+    mut emit: impl FnMut(usize, f64, f64, &[f32]),
+) -> Option<bool> {
     let tdiv = m.time_per_div() as f64;
     let window = tdiv * HDIV as f64;
     let t_first = m.delay as f64 - window / 2.0;
     let n = POINTS;
     let dt = window / n as f64;
-    let ti = trigger(f, m, n, window, t_first)?;
+    let ti = fixture_stage!(Trigger, trigger(f, m, n, window, t_first))?;
     // the interpolated branch of `to_record` only: peak detect, high res and min/max pairs go there
     let per = dt / f.dt;
     if f.envelope || per >= 2.0 || m.acq == AcqMode::HiRes {
@@ -70,19 +57,30 @@ fn project(m: &Model, f: &Frame, mode: Interp, mut emit: impl FnMut(usize, f64, 
             if !m.ch[c].on || v.len() < 2 {
                 continue;
             }
-            out.clear();
-            let xs = (0..n).map(|k| ti + (t_first + k as f64 * dt) / f.dt);
-            if sparse && mode == Interp::Fast {
-                fast_many(v, ti + t_first / f.dt, dt / f.dt, n, &mut out);
-            } else if sparse {
-                lanczos8_many(v, xs, &mut out);
-            } else {
-                out.extend(xs.map(|x| oos_dsp::interp::linear(v, x).unwrap_or(f32::NAN)));
-            }
+            fixture_stage!(Resample, c, interpolate(v, f.dt, (n, t_first, dt), ti, (sparse, mode), &mut out));
             emit(c, t_first, dt, &out);
         }
     });
     Some(true)
+}
+
+fn interpolate(
+    v: &[f32],
+    sample_dt: f64,
+    (n, t_first, dt): (usize, f64, f64),
+    ti: f64,
+    (sparse, mode): (bool, Interp),
+    out: &mut Vec<f32>,
+) {
+    out.clear();
+    let xs = (0..n).map(|k| ti + (t_first + k as f64 * dt) / sample_dt);
+    if sparse && mode == Interp::Fast {
+        fast_many(v, ti + t_first / sample_dt, dt / sample_dt, n, out);
+    } else if sparse {
+        lanczos8_many(v, xs, out);
+    } else {
+        out.extend(xs.map(|x| oos_dsp::interp::linear(v, x).unwrap_or(f32::NAN)));
+    }
 }
 
 /// `oos_dsp::interp::lanczos8(v, x).unwrap_or(NAN)` for every x, appended to `out`. Its weights are normalised per
@@ -203,25 +201,7 @@ fn trigger(f: &Frame, m: &Model, n: usize, window: f64, t_first: f64) -> Option<
         return None;
     }
     let len = f.ch.iter().map(|v| v.len()).max().unwrap_or(0);
-    let screen = (window / f.dt).ceil() as usize;
-    let hyst = m.trig_hyst_div() * m.ch[m.trig_src].volts_per_div();
-    let col = (window / n as f64 / f.dt).floor().clamp(1.0, 256.0) as usize;
-    let (rising, either) = (m.slope != Slope::Fall, m.slope == Slope::Either);
-    let (first, last) = (-t_first / f.dt, len as f64 - 1.0 - (t_first + window) / f.dt);
-    let fits = |t: f64| first > last || (first..=last).contains(&t);
-    let found = crate::trignear::edge_smooth_near(
-        &f.ch[m.trig_src],
-        f.pre,
-        sw_trig_level(m, f),
-        hyst,
-        rising,
-        either,
-        screen / 2,
-        col,
-        fits,
-    )
-    .0;
-    found.or((m.trig_coupling() != TrigCoup::Dc).then_some(f.pre as f64))
+    crate::board::record::smoothed_edge(f, m, &f.ch[m.trig_src][..], len, (n, window, t_first), false)
 }
 
 #[cfg(test)]

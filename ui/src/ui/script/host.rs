@@ -45,15 +45,21 @@ fn run_headless(args: &[String]) -> Result<(), String> {
         return Err(format!("--headless-script conflicts with {}", a));
     }
     let path = crate::arg(args, "--script").filter(|p| !p.starts_with("--")).ok_or("--script FILE required")?;
-    let kind = if args.iter().any(|a| a == "--scripted-batch") {
-        Some(BatchKind::parse(&crate::arg(args, "--scripted-batch").ok_or("--scripted-batch KIND required")?)?)
-    } else {
-        None
-    };
+    let batch = scripted_batch(args)?;
     oos_hal::model::init(oos_hal::model::Platform::build(None, None, Some("DHO924S")));
     let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 }, crate::ui::host::Host::headless());
     configure(&mut ui, &path, args)?;
-    run_script(&mut ui, &path, None, kind, true)
+    let batch = batch.map(|(kind, zoom_records)| BatchScript::new(&mut ui, kind).with_zoom_records(zoom_records));
+    run_script(&mut ui, &path, None, batch, true)
+}
+
+fn scripted_batch(args: &[String]) -> Result<Option<(BatchKind, bool)>, String> {
+    if !args.iter().any(|a| a == "--scripted-batch") {
+        return Ok(None);
+    }
+    let value = crate::arg(args, "--scripted-batch").ok_or("--scripted-batch KIND required")?;
+    let (kind, zoom_records) = value.strip_suffix("-zoom-records").map_or((value.as_str(), false), |kind| (kind, true));
+    Ok(Some((BatchKind::parse(kind)?, zoom_records)))
 }
 
 fn configure(ui: &mut Ui, path: &str, args: &[String]) -> Result<Option<gpu::Gpu>, String> {
@@ -68,7 +74,7 @@ fn configure(ui: &mut Ui, path: &str, args: &[String]) -> Result<Option<gpu::Gpu
     }
     crate::arg(args, "--gpu")
         .map(|helper| {
-            let mut g = gpu::Gpu::start(&helper)?;
+            let mut g = gpu::Gpu::start(&helper, None)?;
             g.target_memory(0, ui.scr.w, ui.scr.h)?;
             Ok(g)
         })
@@ -92,7 +98,7 @@ pub struct HostScript {
 }
 
 impl HostScript {
-    fn new(ui: &mut Ui, mut gpu: Option<gpu::Gpu>, kind: Option<BatchKind>, metadata: bool) -> Result<Self, String> {
+    fn new(ui: &mut Ui, mut gpu: Option<gpu::Gpu>, batch: Option<BatchScript>, metadata: bool) -> Result<Self, String> {
         let hdmi =
             std::env::var("OOS_GPU_HDMI").ok().and_then(|s| crate::ui::Screen::parse(&s)).filter(|_| gpu.is_some());
         if let Some(m) = gpu
@@ -114,7 +120,7 @@ impl HostScript {
             head: None,
             hdmi: hdmi.map(|s| Canvas::new(s.w, s.h)),
             shot_n: 0,
-            batch: kind.map(|k| BatchScript::new(ui, k)),
+            batch,
             metadata,
         })
     }
@@ -192,13 +198,14 @@ pub fn run_script(
     ui: &mut Ui,
     path: &str,
     gpu: Option<gpu::Gpu>,
-    kind: Option<BatchKind>,
+    batch: Option<BatchScript>,
     metadata: bool,
 ) -> Result<(), String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("read script {}: {}", path, e))?;
-    let mut host = HostScript::new(ui, gpu, kind, metadata)?;
+    let scripted = batch.is_some();
+    let mut host = HostScript::new(ui, gpu, batch, metadata)?;
     // The mode comparison fixtures apply their settings before the first synthetic read.
-    let (setup, script) = kind.and_then(|_| text.split_once("\n# first acquisition\n")).unwrap_or(("", &text));
+    let (setup, script) = scripted.then(|| text.split_once("\n# first acquisition\n")).flatten().unwrap_or(("", &text));
     for line in setup.lines() {
         if !matches!(cmd::run(ui, line), cmd::Out::None) {
             return Err("scripted batch setup must precede frames and captures".into());

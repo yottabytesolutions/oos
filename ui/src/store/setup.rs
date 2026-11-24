@@ -91,16 +91,30 @@ const SECTIONS: &[Section] = &[
     Plain(misc::LEGACY),
 ];
 
-fn emit(keys: &[Key], m: &Model, i: usize, prefix: &str, kv: &mut dyn FnMut(&str, String)) {
+fn emit(
+    keys: &[Key],
+    m: &Model,
+    i: usize,
+    prefix: &str,
+    include: &impl Fn(&str) -> bool,
+    kv: &mut dyn FnMut(&str, String),
+) {
     for key in keys {
         if let Some(value) = (key.read)(m, i) {
-            kv(&format!("{prefix}{}", key.name), value);
+            let name = format!("{prefix}{}", key.name);
+            if include(&name) {
+                kv(&name, value);
+            }
         }
     }
 }
 
 /// The setup as ordered key/value lines, with the legacy omission and formatting rules.
 pub fn setup_text(m: &Model) -> String {
+    setup_text_matching(m, |_| true)
+}
+
+pub(crate) fn setup_text_matching(m: &Model, include: impl Fn(&str) -> bool) -> String {
     let mut text = String::from("# OOS setup v1: key = value (oos-ui)\n");
     let mut kv = |key: &str, value: String| {
         text.push_str(key);
@@ -110,20 +124,20 @@ pub fn setup_text(m: &Model) -> String {
     };
     for section in SECTIONS {
         match section {
-            Plain(keys) => emit(keys, m, 0, "", &mut kv),
+            Plain(keys) => emit(keys, m, 0, "", &include, &mut kv),
             Indexed { prefix, count, separator, keys } => {
                 for i in 0..*count {
-                    emit(keys, m, i, &format!("{prefix}{}{separator}", i + 1), &mut kv);
+                    emit(keys, m, i, &format!("{prefix}{}{separator}", i + 1), &include, &mut kv);
                 }
             }
             Maths => {
                 for i in (0..m.maths.len()).filter(|&i| i != m.math_sel) {
-                    emit(math::MATH_CHANNEL, m, i, &format!("m{}.", i + 1), &mut kv);
+                    emit(math::MATH_CHANNEL, m, i, &format!("m{}.", i + 1), &include, &mut kv);
                 }
             }
             Decoders => {
                 for i in (0..DECODERS).filter(|&i| i != m.dec_sel && m.decs[i].is_some()) {
-                    emit(decoder::DECODER, &m.dec_view(i), 0, &format!("d{}.", i + 1), &mut kv);
+                    emit(decoder::DECODER, &m.dec_view(i), 0, &format!("d{}.", i + 1), &include, &mut kv);
                 }
             }
         }

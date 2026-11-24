@@ -20,7 +20,8 @@ pub fn finish_batch(pipe: &Pipe, id: u64) -> Result<Box<dyn RawBatch>, String> {
 #[cfg(test)]
 pub(crate) fn barrier(pipe: &Pipe) {
     let (tx, rx) = std::sync::mpsc::channel();
-    if let Some(sender) = &oos_hal::sync::lock(&pipe.workers).sender {
+    let sender = oos_hal::sync::lock(&pipe.workers).sender.clone();
+    if let Some(sender) = sender {
         sender.send(super::Message::Barrier(tx)).unwrap();
     }
     rx.recv_timeout(crate::ui::lifecycle::test_wait::HANG_GUARD).unwrap();
@@ -38,10 +39,11 @@ mod tests {
         for disconnected in [false, true] {
             let counters = Box::leak(Box::<Counters>::default());
             let pipe = Pipe::start(0, 0, counters);
-            let (tx, rx) = sync_channel(1);
-            assert!(tx.try_send(Message::Wake).is_ok());
-            let _receiver = (!disconnected).then_some(rx);
-            oos_hal::sync::lock(&pipe.workers).sender = Some(tx);
+            let (tx, rx) = sync_channel::<Message>(1);
+            drop(rx);
+            if disconnected {
+                oos_hal::sync::lock(&pipe.workers).sender = Some(tx);
+            }
             let waveform = Arc::new(crate::board::Frame { seq: 4, ..Default::default() });
             for prepared in [false, true] {
                 let raw = Box::new(Bytes(vec![0; 4]));

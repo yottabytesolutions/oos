@@ -1,8 +1,13 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Whole-batch placement and owned column differences. The UI takes one deposit per step.
 
+pub(crate) mod admission;
+pub(crate) mod budget;
+pub(crate) mod clock;
 mod config;
 pub(crate) mod funding;
+pub(crate) mod metrics;
+pub(crate) mod route;
 pub use config::{conf_value, mode_from, Mode};
 mod decoder;
 mod frame;
@@ -11,8 +16,11 @@ pub use frame::draw_frame;
 pub(crate) use frame::draw_frame_reusing;
 mod feed;
 pub(crate) mod reuse;
-mod stage;
+mod source;
+pub(crate) mod stage;
+#[cfg(any(target_os = "linux", test))]
 pub use decoder::IndexedDecodeInto;
+pub(crate) use source::{source_event, wake_source, SourceWake};
 mod losses;
 pub use losses::Losses;
 pub(crate) use losses::Lost;
@@ -49,12 +57,51 @@ pub struct CodeLayout {
     pub stride: usize,
     pub word: [Option<usize>; NCH],
     pub affine: [(f32, f32); NCH],
+    pub(crate) corrected: Option<[crate::fastdraw::CorrectedCodes; NCH]>,
     pub volt: fn(u16, (f32, f32)) -> f32,
+    payload: Option<(usize, usize)>,
+    reduced_capture: bool,
 }
 
 impl CodeLayout {
+    pub(crate) fn uncorrected(
+        stride: usize,
+        word: [Option<usize>; NCH],
+        affine: [(f32, f32); NCH],
+        volt: fn(u16, (f32, f32)) -> f32,
+    ) -> Self {
+        Self { stride, word, affine, volt, corrected: None, payload: None, reduced_capture: false }
+    }
+
+    pub(crate) fn with_reduced_capture(mut self, reduced: bool) -> Self {
+        self.reduced_capture = reduced;
+        self
+    }
+
+    pub(in crate::drawpipe) fn reduced_capture(&self) -> bool {
+        self.reduced_capture
+    }
+
+    pub(crate) fn with_payload(mut self, start: usize, end: usize) -> Self {
+        self.payload = Some((start, end));
+        self
+    }
+
+    pub(in crate::drawpipe) fn has_header(&self) -> bool {
+        self.payload.is_some_and(|(start, _)| start != 0)
+    }
+
+    fn payload<'a>(&self, bytes: &'a [u8]) -> &'a [u8] {
+        self.payload.map_or(bytes, |(start, end)| bytes.get(start..end.min(bytes.len())).unwrap_or(&[]))
+    }
+
+    pub(in crate::drawpipe) fn points(&self, bytes: &[u8]) -> usize {
+        self.payload(bytes).len() / size_of::<u16>() / self.stride
+    }
+
     /// Channel `c` of the read-out `bytes` (empty when not in it).
     pub fn channel<'a>(&self, bytes: &'a [u8], c: usize) -> crate::fastdraw::Codes<'a> {
+        let bytes = self.payload(bytes);
         let words = bytes.len() / 2;
         let (word, n) = match self.word[c] {
             Some(k) if k < words => (k, (words - k).div_ceil(self.stride)),
@@ -63,14 +110,22 @@ impl CodeLayout {
         // SAFETY: u16 has no invalid bit patterns; align_to only hands out the aligned middle part
         let (pre, words, _) = unsafe { bytes.align_to::<u16>() };
         let words = (pre.is_empty() && cfg!(target_endian = "little")).then_some(words);
-        crate::fastdraw::Codes { bytes, words, stride: self.stride, word, n, affine: self.affine[c], volt: self.volt }
+        crate::fastdraw::Codes {
+            bytes,
+            words,
+            stride: self.stride,
+            word,
+            n,
+            affine: self.affine[c],
+            corrected: self.corrected.map(|x| x[c]),
+            volt: self.volt,
+        }
     }
 }
 
 /// The board's view of a frame without decoding it: sets every field of the frame but the channel vectors (left
-/// empty) as the decode would, and says where the channels are; None where only the decode will do (compressed or
-/// with a header).
-pub type CodesInto = Arc<dyn Fn(&[u8], &mut Frame) -> Option<CodeLayout> + Send + Sync>;
+/// empty) as the decode would, and says where the channel words are within its DMA frame.
+pub type CodesInto = Arc<dyn Fn(usize, &[u8], &mut Frame) -> Option<CodeLayout> + Send + Sync>;
 
 /// Frames acquired, used (drawn into the picture) and dropped, since the start; in both modes.
 #[derive(Default)]
@@ -85,6 +140,8 @@ pub struct Counters {
     pub timing: crate::claim_timing::Timing,
     pub losses: Losses,
     pub acquisition: crate::board::AcquisitionCounters,
+    pub(crate) metrics: metrics::Metrics,
+    pub(crate) routes: route::RouteCounters,
     #[cfg(test)]
     pub(crate) diagnostics_disabled: std::sync::atomic::AtomicBool,
 }
@@ -92,8 +149,8 @@ pub struct Counters {
 /// The process's counters (the acquisition thread, the workers and the UI add to them).
 pub fn counters() -> &'static Counters {
     #[cfg(test)]
-    if let Some(state) = test_scope::state() {
-        return state.counters;
+    if let Some(counters) = test_scope::counters() {
+        return counters;
     }
     static C: OnceLock<Counters> = OnceLock::new();
     C.get_or_init(Counters::default)
@@ -103,6 +160,11 @@ pub fn counters() -> &'static Counters {
 pub trait RawBatch: Send + Sync {
     fn bytes(&self) -> &[u8];
     fn into_any(self: Box<Self>) -> Box<dyn Any + Send>;
+    #[cfg(any(target_os = "linux", test))]
+    #[doc(hidden)]
+    fn take_route_trace(&mut self) -> Option<Box<route::RouteTrace>> {
+        None
+    }
 }
 
 /// Decodes the frame bytes into a kept frame (the board's decoder with the batch's settings).
@@ -112,6 +174,7 @@ pub type DecodeInto = Arc<dyn Fn(&[u8], &mut Frame) + Send + Sync>;
 struct Lease {
     raw: Option<Box<dyn RawBatch>>,
     home: Sender<Box<dyn RawBatch>>,
+    source: Arc<source::SourceWake>,
 }
 
 impl Drop for Lease {
@@ -119,6 +182,7 @@ impl Drop for Lease {
         if let Some(r) = self.raw.take() {
             // the pool is gone only when the pipe is: nothing to return to
             let _ = self.home.send(r);
+            self.source.notify();
         }
     }
 }
@@ -141,7 +205,7 @@ struct Batch {
     counters: &'static Counters,
     live: Arc<AtomicUsize>,
     newest: Option<Arc<Frame>>,
-    fed: std::time::Instant,
+    clock: clock::StageClock,
     lease: Lease,
 }
 
@@ -149,6 +213,9 @@ impl Drop for Batch {
     fn drop(&mut self) {
         let left = self.frames.saturating_sub(self.next.load(Ordering::Relaxed));
         self.counters.discard(Lost::Unclaimed, left as u64);
+        if left > 0 {
+            self.counters.metrics.discarded(self.header.identity(), self.clock);
+        }
         self.live.fetch_sub(1, Ordering::Release);
     }
 }
@@ -159,6 +226,7 @@ struct View {
     interp: Interp,
     w: usize,
     h: usize,
+    zoom: Option<route::ZoomView>,
 }
 
 #[derive(Default)]
@@ -183,39 +251,81 @@ pub struct Pipe {
     view: Arc<Mutex<ViewState>>,
     counters: &'static Counters,
     workers: Mutex<shutdown::Workers>,
+    admission: Arc<admission::Admission>,
     slot: Arc<Handoff>,
     live: Arc<AtomicUsize>,
     home: Sender<Box<dyn RawBatch>>,
+    source: Arc<source::SourceWake>,
     pool: Mutex<Receiver<Box<dyn RawBatch>>>,
 }
 
-#[derive(Default)]
-pub struct Accepted {
-    pub frames: u64,
-    pub triggered: u64,
-    pub folds: crate::framestats::Folds,
-    pub newest: Option<std::time::Instant>,
-    pub stale: u64,
-    pub(crate) window_frames: Option<u64>,
-}
+mod accepted;
+pub use accepted::Accepted;
 
 impl Pipe {
-    pub fn set_view(&self, m: Option<&Model>, w: usize, h: usize, interp: Interp) {
-        feed::set_view(self, m, w, h, interp, None);
+    #[cfg(target_os = "linux")]
+    pub(crate) fn fixture_view_generation(&self) -> u64 {
+        oos_hal::sync::lock(&self.view).gen
     }
 
+    pub fn set_view(&self, m: Option<&Model>, w: usize, h: usize, interp: Interp) {
+        feed::set_view(self, m, (w, h), interp, None, None);
+    }
+
+    #[cfg(test)]
     pub fn publish_view(&self, m: &Model, w: usize, h: usize, interp: Interp, identity: oos_core::change::Identity) {
-        feed::set_view(self, Some(m), w, h, interp, Some(identity));
+        self.publish_picture_view(m, (w, h), interp, identity, None);
+    }
+
+    pub(crate) fn publish_picture_view(
+        &self,
+        m: &Model,
+        size: (usize, usize),
+        interp: Interp,
+        identity: oos_core::change::Identity,
+        zoom: Option<route::ZoomView>,
+    ) {
+        feed::set_view(self, Some(m), size, interp, Some(identity), zoom);
     }
 
     pub fn set_identity(&self, identity: oos_core::change::Identity) {
         let mut view = oos_hal::sync::lock(&self.view);
+        if !same_pair(view.identity, Some(identity)) {
+            self.counters.metrics.set_identity(identity);
+            self.admission.set_identity(identity);
+            self.source.notify();
+        }
         view.identity = Some(identity);
         self.slot.set_tap_identity(identity);
     }
 
     pub fn accepting(&self) -> bool {
         !oos_hal::sync::lock(&self.workers).closed && oos_hal::sync::lock(&self.view).view.is_some()
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn source_generation(&self) -> u64 {
+        self.source.generation()
+    }
+
+    /// Return on DMA release or a new command. A deadline keeps the acquisition thread's
+    /// periodic instrument housekeeping running while the FPGA is unarmed.
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn wait_source(&self, observed: u64, deadline: std::time::Duration) -> Option<std::time::Duration> {
+        self.source.wait(observed, deadline)
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn note_source_wait(&self, identity: oos_core::change::Identity, elapsed: Option<std::time::Duration>) {
+        if let Some(elapsed) = elapsed {
+            self.counters.metrics.source_wait(identity, elapsed);
+        }
+    }
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn return_buffer(&self, buffer: Box<dyn RawBatch>) {
+        if self.home.send(buffer).is_ok() {
+            self.source.notify();
+        }
     }
 
     pub fn take_buffer(&self) -> Option<Box<dyn Any + Send>> {
@@ -281,107 +391,22 @@ impl Pipe {
         self.slot.take_preview(state.tap_view(size), frame)
     }
 
+    #[cfg(test)]
     pub(crate) fn accept_into(
         &self,
         ph: &mut Phosphor,
         clear: &mut bool,
         stats: Stats<'_>,
-        window: Option<(&mut DepositWindow, std::time::Instant)>,
+        window: Option<&mut DepositWindow>,
     ) -> Accepted {
-        let mut claim = self.slot.claim();
-        let mut window = window;
-        if claim.is_none() && window.as_ref().is_none_or(|(retained, _)| retained.is_empty()) {
-            if let Some((retained, _)) = window {
-                retained.idle();
-            }
-            return Accepted::default();
-        }
-        let state = oos_hal::sync::lock(&self.view);
-        let view = state.view.clone();
-        let mapping_gen = state.mapping_gen;
-        let identity = state.identity;
-        drop(state);
-        let size = (ph.w, ph.h);
-        let mapping_matches =
-            |d: &Deposit| d.size() == size && view.as_ref().is_some_and(|v| d.matches(v.gen, v.w, v.h));
-        let mut accepted = Accepted::default();
-        let mut rebuild = false;
-        if let Some((retained, now)) = &mut window {
-            rebuild = retained.expire(*now, &self.slot, |d| {
-                mapping_matches(d) && d.identity.map(|id| id.epoch()) == identity.map(|id| id.epoch())
-            });
-        }
-        if let Some(deposit) = claim.as_mut().and_then(|claim| claim.deposit.take()) {
-            let same_acquisition = same_pair(deposit.identity, identity);
-            if mapping_matches(&deposit) && same_acquisition {
-                let taps = deposit.taps.clone();
-                accepted = self.fold_pending(deposit, ph, clear, stats, identity, window.as_mut());
-                self.slot.settle_taps(&taps, (accepted.frames > 0).then_some(mapping_gen));
-                rebuild |= accepted.frames > 0;
-            } else {
-                deposit.reject(identity, self.counters);
-                self.slot.recycle(deposit);
-            }
-        }
-        if claim.is_some() {
-            drop(claim);
-            self.wake();
-        }
-        if let Some((retained, _)) = window {
-            if accepted.frames == 0 {
-                retained.idle();
-            }
-            if rebuild {
-                *clear = false;
-                accepted.window_frames = Some(retained.rebuild(ph));
-            }
-        }
-        accepted
-    }
-
-    fn fold_pending(
-        &self,
-        mut deposit: Deposit,
-        ph: &mut Phosphor,
-        clear: &mut bool,
-        stats: Stats<'_>,
-        identity: Option<oos_core::change::Identity>,
-        window: Option<&mut (&mut DepositWindow, std::time::Instant)>,
-    ) -> Accepted {
-        if let Some((_, now)) = window.as_ref() {
-            if deposit.extent.expired(*now) {
-                self.counters.reject(losses::Rejection::Age, deposit.records);
-                Counters::add(&self.counters.dropped, deposit.records);
-                deposit.discard_folds(self.counters);
-                self.slot.recycle(deposit);
-                return Accepted::default();
-            }
-        }
-        let accepted = crate::picture::accept_deposit(&mut deposit, stats, identity, self.counters);
-        if self.counters.diagnostics_enabled() {
-            self.counters.timing.picture(deposit.progress.sample, accepted.newest.map(|fed| fed.elapsed()));
-        }
-        if let Some((retained, _)) = window.filter(|_| accepted.frames > 0) {
-            retained.push(deposit, &self.slot);
-        } else {
-            if accepted.frames > 0 {
-                if std::mem::take(clear) {
-                    ph.clear();
-                }
-                if deposit.format() == crate::picture::deposit::count::CountFormat::Wide {
-                    ph.set_format(deposit.format());
-                }
-                for band in &mut deposit.planes {
-                    band.fold_picture([None, None], ph);
-                }
-            }
-            self.slot.recycle(deposit);
-        }
-        accepted
+        stage::owner::Owner::default().compose_owned(self, ph, clear, stats, window)
     }
 
     fn wake(&self) {
-        if let Some(tx) = &oos_hal::sync::lock(&self.workers).sender {
+        let workers = oos_hal::sync::lock(&self.workers);
+        let Some(tx) = &workers.sender else { return };
+        if !workers.wake_pending.swap(true, Ordering::AcqRel) {
+            // A full channel already makes the coordinator runnable. Keep the request pending either way.
             let _ = tx.try_send(Message::Wake);
         }
     }
@@ -544,7 +569,7 @@ mod tests {
             pipe.set_view(Some(&m), w, h, Interp::Exact);
             let (cs, cp) = (s.clone(), p);
             let codes: CodesInto =
-                Arc::new(move |c: &[u8], f: &mut Frame| crate::board::dho::hw::codes_into(c, &cs, &cp, 0, f));
+                Arc::new(move |_, c: &[u8], f: &mut Frame| crate::board::dho::hw::codes_into(c, &cs, &cp, 0, f));
             pipe.feed_codes(Box::new(Bytes(bytes.clone())), fb, 9, 0, dec(&s, &p), Some(codes));
             settle(&pipe);
             let mut got = Phosphor::new(w, h);
@@ -561,7 +586,7 @@ mod tests {
 
     // Break it catches: a frame moved to an edge outside the near window where the search must stay near (AC, LF
     // reject; an edge trigger on an exact `pre`), on the decoded frame or from the words; a far edge no longer found
-    // where the wide search must stay (decimated reads, other trigger types, noise reject, holdoff); a DC refinement
+    // where the wide search must stay (decimated edge reads); a DC refinement
     // that differs from `trignear::edge_smooth_near` (the refinement before the near-only paths).
     #[test]
     fn near_only_where_the_hardware_point_stands_wide_elsewhere() {
@@ -602,7 +627,7 @@ mod tests {
             let ta = draw_frame(&mut a, &m, &fe, Interp::Exact, Some(Stats { edges: &mut sa.0, off: &mut sa.1 }));
             let mut meta = g0.clone();
             meta.pre_exact = exact;
-            let codes = Arc::new(move |_: &[u8], f: &mut Frame| {
+            let codes = Arc::new(move |_, _: &[u8], f: &mut Frame| {
                 f.clone_from(&meta);
                 Some(lay)
             });
@@ -613,7 +638,10 @@ mod tests {
             let accepted = pipe.accept(&mut b, &mut false, &mut sb.0, &mut sb.1);
             assert_eq!((accepted.frames, accepted.triggered), (1, u64::from(ta)), "{name}");
             assert!(a.maps()[0] == b.maps()[0] && sa == sb, "{name}: codes path differs");
-            if near {
+            if m.trig_type == TrigType::Pulse {
+                assert_eq!(sa, ([0; 4], (0.0, 0.0)));
+                assert!(a.maps()[0] == at_pre.maps()[0], "{name}: hardware event stays at pre");
+            } else if near {
                 assert_eq!(sa.0, [0, 0, 0, 1], "{}", name);
                 assert!(a.maps()[0] == at_pre.maps()[0], "{}: not drawn at the hardware point", name);
             } else {
@@ -860,7 +888,7 @@ mod tests {
         let pipe = Pipe::start(1, 0, fresh());
         pipe.set_view(Some(&m), w, h, Interp::Exact);
         let cs = s.clone();
-        let codes: CodesInto = Arc::new(move |bytes, f| crate::board::dho::hw::codes_into(bytes, &cs, &p, 0, f));
+        let codes: CodesInto = Arc::new(move |_, bytes, f| crate::board::dho::hw::codes_into(bytes, &cs, &p, 0, f));
         let decode = dec(&s, &p);
         let mut buffer = Some(Box::new(Bytes(bytes.clone())));
         let mut draw_codes = || {

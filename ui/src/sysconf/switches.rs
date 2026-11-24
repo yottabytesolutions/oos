@@ -6,14 +6,24 @@
 //! configuration: what a scope without a system.conf and without overrides does. Tests use it.
 
 use crate::drawpipe::{conf_value, Mode};
+use crate::pacing::{ClockMode, FlipDivisor};
 use crate::sparse::Interp;
 use std::ffi::OsString;
+
+mod cpu;
+mod dump;
+mod source;
+pub(crate) use cpu::GpuCpu;
+pub(crate) use dump::BatchDump;
+use source::SourceOverhead;
+#[cfg(any(target_os = "linux", test))]
+pub(crate) use source::StopSlot;
 
 /// An environment lookup: the variable's value as the OS has it, None when it is not set.
 pub type Env<'a> = &'a dyn Fn(&str) -> Option<OsString>;
 
 /// The fork's switches of one process.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Switches {
     /// OOS_DEMO_LOOP: channel mask the demo generator's output is looped back into (0: none)
     pub demo_loop: u32,
@@ -28,8 +38,9 @@ pub struct Switches {
     pub fixed_time: Option<f64>,
     /// interpolation of sparse frames (`sparse::interp_from`)
     pub interp: Interp,
-    /// Thread/IRQ placement and reversible RUN clock floors.
+    /// Thread/IRQ placement, RUN clock floors and frame pacing.
     pub perf: Performance,
+    pub(crate) source: SourceOverhead,
     /// IPv6 (`net6::enabled_from`)
     pub ipv6: bool,
     /// the board's own switches
@@ -42,6 +53,9 @@ pub struct Switches {
 pub struct Performance {
     place: bool,
     floors: crate::system::clocks::Config,
+    pub(crate) pacing_clock: ClockMode,
+    pub(crate) flip_divisor: FlipDivisor,
+    pub(crate) gpu_cpu: GpuCpu,
 }
 
 impl Performance {
@@ -75,9 +89,38 @@ impl Switches {
             fixed_time: text(env, "OOS_FIXED_TIME").and_then(|v| v.parse().ok()),
             interp: crate::sparse::interp_from(text(env, "OOS_INTERP").as_deref(), conf),
             perf: Performance {
+                gpu_cpu: GpuCpu::parse(env, conf),
                 place: conf_value(flag(env, "OOS_PLACE"), conf, "perf.place").as_deref() == Some("on"),
                 floors: crate::system::clocks::Config::parse(conf),
+                pacing_clock: match conf_value(text(env, "OOS_PACING_CLOCK").as_deref(), conf, "pacing.clock")
+                    .as_deref()
+                {
+                    Some("timer") => ClockMode::Timer,
+                    Some("flip") | None => ClockMode::Flip,
+                    Some(value) => {
+                        eprintln!("oos-ui: invalid pacing.clock {value:?}; using default flip");
+                        ClockMode::default()
+                    }
+                },
+                flip_divisor: match conf_value(
+                    text(env, "OOS_PACING_FLIP_DIVISOR").as_deref(),
+                    conf,
+                    "pacing.flip_divisor",
+                )
+                .as_deref()
+                {
+                    Some("2") => FlipDivisor::Two,
+                    Some("3") | None => FlipDivisor::Three,
+                    Some("4") => FlipDivisor::Four,
+                    Some(value) => {
+                        eprintln!("oos-ui: invalid pacing.flip_divisor {value:?}; using default 3");
+                        FlipDivisor::default()
+                    }
+                },
             },
+            source: SourceOverhead::parse(env, conf, |key, value, default| {
+                eprintln!("oos-ui: invalid {key} {value:?}; using default {default}");
+            }),
             ipv6: crate::net6::enabled_from(flag(env, "OOS_IPV6"), conf),
             board: crate::board::BoardSwitches::parse(env, conf, settings),
             memory: crate::system::memory::Limits::parse(conf),
@@ -110,6 +153,40 @@ mod tests {
         assert_eq!((s.demo_loop, s.compress, s.pipeline, s.interp), (0, false, Mode::Batch, Interp::Exact));
         assert!(!s.perf.place() && !s.ipv6);
         assert_eq!(s.board, crate::board::BoardSwitches::parse(&|_| None, "", ""));
+    }
+
+    #[test]
+    fn pacing_clock_is_a_startup_switch_with_flip_as_default() {
+        let parse = |value: Option<&str>, conf| {
+            Switches::parse(
+                &|key| (key == "OOS_PACING_CLOCK").then_some(value).flatten().map(OsString::from),
+                conf,
+                "",
+                crate::placement::Cores::default(),
+            )
+            .perf
+            .pacing_clock
+        };
+        assert_eq!(Switches::default().perf.pacing_clock, ClockMode::Flip);
+        assert_eq!(parse(None, "pacing.clock = timer"), ClockMode::Timer);
+        assert_eq!(parse(Some("flip"), "pacing.clock = timer"), ClockMode::Flip);
+        assert_eq!(parse(Some("invalid"), "pacing.clock = timer"), ClockMode::Flip);
+    }
+
+    #[test]
+    fn flip_divisor_accepts_two_through_four_and_defaults_to_three() {
+        let parse = |value: Option<&str>, conf| {
+            let env = |key: &str| (key == "OOS_PACING_FLIP_DIVISOR").then_some(value).flatten().map(OsString::from);
+            Switches::parse(&env, conf, "", Default::default()).perf.flip_divisor
+        };
+        assert_eq!(Switches::default().perf.flip_divisor, FlipDivisor::Three);
+        assert_eq!(parse(None, "pacing.flip_divisor = 2 # comment"), FlipDivisor::Two);
+        assert_eq!(parse(None, "pacing.flip_divisor = 3"), FlipDivisor::Three);
+        assert_eq!(parse(None, "pacing.flip_divisor = 4"), FlipDivisor::Four);
+        assert_eq!(parse(Some("4"), "pacing.flip_divisor = 2"), FlipDivisor::Four);
+        for invalid in ["", "1", "5", "3.0", "-3"] {
+            assert_eq!(parse(Some(invalid), "pacing.flip_divisor = 2"), FlipDivisor::Three);
+        }
     }
 
     #[test]

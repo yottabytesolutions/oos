@@ -30,6 +30,7 @@ pub fn run(mut sample: impl FnMut(&str, &mut dyn FnMut())) {
         stride: 1,
         word: 0,
         n,
+        corrected: None,
         affine: (1.0 / 7500.0, 32768.0 / 7500.0),
         volt: |x, (a, b)| x as f32 * a - b,
     };

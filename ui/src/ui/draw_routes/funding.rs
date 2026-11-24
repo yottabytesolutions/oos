@@ -10,7 +10,7 @@ fn configured_first_whole_b_step_consumes_every_owned_tap() {
             let sw =
                 crate::sysconf::Switches::parse(&|_| None, drawpipe::funding::TEST_PROFILE, "", Default::default());
             let mut route = Route::new(BatchKind::Raw, true, 4, tdiv);
-            route.ui.host = route.ui.host.with_switches(sw);
+            route.ui.host = route.ui.host.with_switches(sw.clone());
             let id = change::acquisition::script_prepare(&mut route.ui);
             let pipe = drawpipe::pipe(drawpipe::Access::Existing).unwrap();
             let input = route.source.next_batch(&route.ui.m, &sw, records, None).unwrap();

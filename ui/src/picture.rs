@@ -4,12 +4,46 @@ pub(crate) mod deposit;
 
 use crate::drawpipe::{Accepted, Counters, Stats};
 use crate::wave::Phosphor;
-use deposit::{Deposit, Handoff};
+use deposit::{count::CountFormat, Deposit, DiffBand, Handoff};
 use oos_core::change::Identity;
 use std::collections::VecDeque;
-use std::time::Instant;
 
 const MAX_DEPOSITS: usize = 3;
+
+/// Values for the overview and for the optional zoom detail of the same picture.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PerMap<T> {
+    main: T,
+    zoom: Option<T>,
+}
+
+impl<T> PerMap<T> {
+    pub(crate) fn new(main: T, zoom: Option<T>) -> Self {
+        Self { main, zoom }
+    }
+
+    pub(crate) fn main(self) -> T {
+        self.main
+    }
+
+    pub(crate) fn zoom(self) -> Option<T> {
+        self.zoom
+    }
+
+    pub(crate) fn into_parts(self) -> (T, Option<T>) {
+        (self.main, self.zoom)
+    }
+}
+
+impl PerMap<&mut Phosphor> {
+    pub(crate) fn as_mut(&mut self) -> PerMap<&mut Phosphor> {
+        PerMap::new(self.main, self.zoom.as_deref_mut())
+    }
+
+    pub(crate) fn sizes(&self) -> PerMap<(usize, usize)> {
+        PerMap::new((self.main.w, self.main.h), self.zoom.as_ref().map(|ph| (ph.w, ph.h)))
+    }
+}
 
 #[derive(Default)]
 pub(crate) struct DepositWindow {
@@ -18,6 +52,7 @@ pub(crate) struct DepositWindow {
 }
 
 impl DepositWindow {
+    #[cfg(test)]
     pub(crate) fn is_empty(&self) -> bool {
         self.deposits.is_empty()
     }
@@ -33,9 +68,9 @@ impl DepositWindow {
         self.target = 0.0;
     }
 
-    pub(crate) fn expire(&mut self, now: Instant, slot: &Handoff, valid: impl Fn(&Deposit) -> bool) -> bool {
+    pub(crate) fn remove_invalid(&mut self, slot: &Handoff, valid: impl Fn(&Deposit) -> bool) -> bool {
         let mut changed = false;
-        while let Some(old) = self.deposits.pop_front_if(|d| !valid(d) || d.extent.expired(now)) {
+        while let Some(old) = self.deposits.pop_front_if(|d| !valid(d)) {
             slot.recycle(old);
             changed = true;
         }
@@ -53,6 +88,7 @@ impl DepositWindow {
         let mut keep = 0;
         for older in self.deposits.iter().rev().take(MAX_DEPOSITS - 1) {
             if records >= target
+                || older.sizes() != deposit.sizes()
                 || older.format() != deposit.format()
                 || hits.saturating_add(older.extent.hits()) > deposit.format().hit_limit()
             {
@@ -66,19 +102,56 @@ impl DepositWindow {
         for old in self.deposits.drain(..evict) {
             slot.recycle(old);
         }
-        deposit.planes.sort_unstable_by_key(|band| (band.channel, band.first));
+        deposit.sort_bands();
         self.deposits.push_back(deposit);
     }
 
+    #[cfg(test)]
     pub(crate) fn rebuild(&mut self, ph: &mut Phosphor) -> u64 {
-        ph.clear_counts();
+        self.rebuild_picture(PerMap::new(ph, None))
+    }
+
+    pub(crate) fn rebuild_picture(&mut self, picture: PerMap<&mut Phosphor>) -> u64 {
+        let (main, mut zoom) = picture.into_parts();
+        main.clear_counts();
+        if let Some(ph) = zoom.as_deref_mut() {
+            ph.clear_counts();
+        }
         let Some((newest, prior)) = self.deposits.make_contiguous().split_last_mut() else { return 0 };
-        ph.set_format(newest.format());
-        for (i, band) in newest.planes.iter_mut().enumerate() {
-            band.fold_picture(std::array::from_fn(|j| prior.get(j).map(|deposit| &deposit.planes[i])), ph);
+        let format = newest.format();
+        let weight = newest.weights();
+        fold_map(
+            main,
+            &mut newest.planes,
+            std::array::from_fn(|j| prior.get(j).map(|d| d.planes.as_slice())),
+            format,
+            weight.main() + prior.iter().map(|d| d.weights().main()).sum::<f64>(),
+        );
+        if let Some((ph, planes)) = zoom.zip(newest.zoom_planes_mut()) {
+            fold_map(
+                ph,
+                planes,
+                std::array::from_fn(|j| prior.get(j).and_then(Deposit::zoom_planes)),
+                format,
+                weight.zoom().unwrap_or_default() + prior.iter().filter_map(|d| d.weights().zoom()).sum::<f64>(),
+            );
         }
         newest.records + prior.iter().map(|deposit| deposit.records).sum::<u64>()
     }
+}
+
+fn fold_map(
+    ph: &mut Phosphor,
+    newest: &mut [DiffBand],
+    earlier: [Option<&[DiffBand]>; 2],
+    format: CountFormat,
+    weight: f64,
+) {
+    ph.set_format(format);
+    for (i, band) in newest.iter_mut().enumerate() {
+        band.fold_picture(earlier.map(|bands| bands.map(|bands| &bands[i])), ph);
+    }
+    ph.add_weight(weight);
 }
 
 /// Account for newly accepted records once, even if their planes contribute to later pictures.
@@ -106,7 +179,12 @@ pub(crate) fn accept_deposit(
         triggered: deposit.triggered,
         folds,
         newest: deposit.extent.newest(),
+        #[cfg(feature = "private-picture-counts")]
+        oldest: deposit.extent.eligible_oldest(),
         stale: deposit.progress.stale,
         ..Accepted::default()
     }
 }
+
+#[cfg(test)]
+mod owner_mechanics_tests;

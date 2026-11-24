@@ -115,40 +115,35 @@ Commands and the want are separate channels, so their order needs a rule:
 
 ### Locking
 
-- `AcqWant` and `Readings` are latest-value cells (a mutex held only for a copy or a swap, never across IO).
-- `AcqCmd` and `Frame`/`MeasRead` go through bounded channels.
-- `Batch` moves into the pipe with its buffer; the buffer comes back through the pipe's free list (picture.md).
-- The thread never holds a lock across a register access, a C2H read or a decode. Today it does not either, but the
-  rule now holds by construction: no `Shared` guard lives in the loop.
+The DHO worker copies the ordinary batch inputs from `Shared` in one snapshot. That includes settings,
+identity, route, ADC core matching and raw measurement requests. Its result publishes trigger, mask and zone
+readings, raw-window availability and decoded counts together. On the deposit route those fields are visible
+before dispatch. On the record route the same transaction enqueues frames after checking their identity.
+
+Shutdown, force, calibration, segment controls and wait cancellation still use live checks. No `Shared` guard
+spans register IO, DMA, decode, admission waits or diagnostics recording.
 
 ## Thread structure
 
-Today: one closure of about 890 lines (`hw.rs` 1263-2154) with about 30 loop-local variables. Target: `AcqLoop`, a
-struct that owns the state, and one function per phase. One pass:
+`board/dho/hw/plan.rs` translates the model and plans the ring read. `window.rs` owns live and replay windows.
+`trigger.rs` maps trigger settings. `decode.rs` converts a captured record using its own metadata.
 
-```
-loop {
-    service()            board readings, LA probe, self-calibration, generator
-    apply()              take AcqWant; configure on change; drop what the old gen left
-    units()              DVM, core trim, slot dump: only with nothing armed
-    match mode {
-        Slow::Roll | Slow::Scan => stream(),
-        _ if segments    => segments(),
-        _                => batch(),
-    }
-}
-```
+The thread starts `AcqLoop`. Each pass services readings, self-calibration and the generator, then applies
+settings and STOP. It polls the DVM, slot dump and core trim when segments are idle. The worker then streams
+roll/scan, handles segments or runs an ordinary batch. `hw/acq/roll.rs` owns the stream and sweep.
 
-`AcqLoop` groups its state by phase, so each function borrows only its part:
-
-| Part | Contents (today's locals) |
+| State | Owner |
 |---|---|
-| `Io` | `bar`, `c2h`, `afe_bus`, `state`, `current`, cal tables |
-| `Buffers` | `dma`, `raw_dma`, `pool_made` |
-| `Stream` | `rolling`, `ring`, `ring_la`, `sweep`, `sweep_la`, `cursor`, `last_info`, `halted`, `done_seen`, `published` |
-| `BatchState` | `armed`, `paused`, `fresh`, `single_done`, `fill`, `cap`, `helper`, `help_cost`, `comp_last`, `deep_last`, `la_fails` |
-| `Units` | `avg`, `counting`, `dvm_run`, `guard`, `slots_done`, trim state |
-| `Service` | `afg_io`, `afg_done`, `xadc_at` |
+| Register bus, C2H, AFE, sequencer and calibration tables | `Io` |
+| Applied pair, settings and mode | `Configured` |
+| DMA buffers, arm, fill, average and first-record selection | `BatchState` |
+| Last capture and STOP replay | `Replay` |
+| Roll ring, scan sweep and publish cursor | `Stream` |
+| Generator, board readings and frequency counter | `Service` |
+| DVM, slot dump and trim | `Units` |
+
+The following apply, batch and stream contracts also describe later port migration.
+The current worker uses `Shared` for its snapshots and bounded hand-offs.
 
 ### `apply`
 
@@ -178,12 +173,13 @@ One batch: arm, fill, read, post-read reads, publish. In order:
    (stop-exact.md), then no arming while `hold` is set.
 2. SINGLE: one batch per epoch (`single_wants_more`).
 3. Hardware average: clear on `AvgClear`.
-4. Reserve a free DMA buffer before arm or prearm. With none free, wait for buffer return in the same event
-   wait as commands (F3). Report dead time, never read-and-drop for overload. Arm unless already armed ahead
-   under the same `gen` and `epoch`.
+4. Cap the plan by measured cost, hardware, read time and plane capacity. Reserve a DMA destination and any
+   funded tap before arm. An already armed successor keeps its original read geometry. A record-route read
+   waits for the previous record hand-off to drain. Source waits also wake on control or settings changes.
 5. `Force`: one force pulse into the armed batch.
-6. Fill: the Fill plan (`pacing::Fill`) ends the ring fill before a screen step. F2 removes the acquisition
-   helper role; placement and deposit stay on the A53 pool.
+6. The fill phase uses `pacing::Fill` to aim at the next frame deadline. By default DRM flip completion anchors
+   the deadline at every third vblank. The HAL sequences fill and read
+   together so cancellation preserves the register order.
 7. Read the ring (one C2H read, chunked).
 8. Post-read reads, at most one raw re-read per batch, before anything arms again (the ring must stay):
    - LA words of the same record;
@@ -191,8 +187,9 @@ One batch: arm, fill, read, post-read reads, publish. In order:
    - deep record: the screen window raw, at most every `deepmeas::PERIOD`.
 
    The two raw reads are `MeasRead`s (records.md).
-9. Unit counters of this batch: trigger status, mask, zone, average progress. They go into `Readings`.
-10. Arm ahead (`prearm`) where nothing needs this ring any more.
+9. Read trigger, mask and zone status for the batch result. Log hardware average progress when enabled.
+10. With `acq.prearm = on`, arm ahead where nothing needs this ring any more. The deposit route waits for the
+    prior publication before submitting the completed read. See [admission and telemetry](frames.md#admission).
 11. Publish the buffer with every kept record as one `Batch`. The pool routes by BatchMeta to Deposit or
     RecordBatch and decodes the newest record for readers, not drawing. RecordBatch already contains the newest
     record, so it is not decoded twice. `MeasRead`s go to the measurement path.
@@ -220,6 +217,12 @@ What changes against today:
 - `segments` stays `seg_step`. Read-back segments are `Frame`s with `mode = segment`. They go to the record path,
   not to the pipe, through their own bounded channel with back-pressure, not through the `Frame` cell. Acquisition is
   stopped during read-back, so waiting for space there blocks nothing else.
+
+### Source switches
+
+`acq.write_gap` defaults to `0`, grouping writes for the ordinary batch. Set it to `10` for the per-write delay.
+`acq.sched` defaults to `fifo` for real-time acquisition scheduling. Set it to `other` for normal scheduling.
+See [acquisition source overhead](system.md#acquisition-source-overhead).
 
 ## Rules
 
@@ -250,8 +253,7 @@ Today the loop is `cfg(target_os = "linux")` and has no host test. Target:
 
 ## Migration
 
-1. Split the closure into `AcqLoop` and the phase functions, with no behaviour change (draw plan step 1b). The
-   existing hw tests and the counters stay equal.
+1. The worker uses `AcqLoop` and phase functions. The same hardware tests and counter checks cover the split.
 2. `AcqWant` with `gen`, `epoch` in `BatchMeta`, `apply` drops the old generation (with draw plan 1c).
 3. `AcqCmd` and `Readings` replace the remaining `Shared` fields, one group per merge (requests with ids first:
    slots, final; then the unit readings).

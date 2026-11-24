@@ -44,6 +44,25 @@ pull request that fixes a mistake: what happened, then the rule.
 
 ## Tests and CI
 
+- Concurrent golden runs in one build profile removed each other's scratch directories. Run the full golden
+  runner once at a time for each profile and target directory.
+- Even vblank sequences ran the UI at 48.7 Hz on the DHO900 timing. Derive the flip stride from the mode timing
+  and test it with the actual totals as well as a 60 Hz mode.
+- Sealing a picture could stage a sixth deposit even though compose tracks five inputs. Check queue capacity
+  before taking the pending slot.
+- A panel timeout left a stale DRM cookie, which cut short the next flip's EBUSY grace period. Read pending
+  events before checking the timeout and discard the cookie before retrying an expired flip.
+
+- A cancellation test counted reads on its source thread's counters and losses on the pipe. Use the pipe's
+  injected instance for both sides of the conservation check, even when dispatch runs on another thread.
+
+- A phosphor clear test seeded visible counts through the raw map and skipped touched-row tracking. Use
+  `edit_channel` or `edit_wide_channel` to seed counts that will be cleared.
+- A reset fixture filled an old intake capacity while deliberately holding its consumer. When the hand-off shrinks,
+  queue only its supported capacity before triggering reset.
+- The intake's wake message could lose a retry when a batch occupied the channel. Keep the wake pending when the
+  channel is full and check it before the coordinator blocks again.
+
 - `/bin/kill -KILL -<pgid>` from procps-ng 4.0.4 parses only the first digit of the group id. A group id starting
   with 1 became `kill(-1)` and killed the CI runner. Put `--` before a negative process id.
 - The soak test compared process-wide live bytes while the test harness was still allocating. Measure the calling

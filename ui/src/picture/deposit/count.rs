@@ -76,10 +76,13 @@ mod tests {
     #[test]
     fn wide_storage_decay_and_channel_sum_have_headroom_and_clear_restores_narrow() {
         let mut ph = Phosphor::new(2, 2);
-        ph.map[0][0] = 123;
+        ph.edit_channel(0, |map| {
+            map[0] = 123;
+            0..1
+        });
         ph.set_format(CountFormat::Wide);
         assert_eq!(ph.count(0, 0), 123, "upgrading persistence keeps its counts");
-        assert!(ph.map.iter().all(Vec::is_empty));
+        assert!(ph.maps().iter().all(Vec::is_empty));
         let maximum = (CountFormat::Wide.hit_limit() * 24) as u32;
         for c in 0..4 {
             ph.wide_map_mut(c)[0] = maximum;
@@ -91,6 +94,6 @@ mod tests {
         assert_eq!(ph.count(0, 0), maximum / 4);
         ph.clear();
         assert!(!ph.is_wide());
-        assert!(ph.map.iter().all(|m| m.len() == 4 && m.iter().all(|&v| v == 0)));
+        assert!(ph.maps().iter().all(|m| m.len() == 4 && m.iter().all(|&v| v == 0)));
     }
 }

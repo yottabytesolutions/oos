@@ -12,7 +12,12 @@ pub fn linear(v: &[f32], x: f64) -> Option<f32> {
     }
     let i = (x as usize).min(v.len() - 2);
     let fr = (x - i as f64) as f32;
-    let (a, b) = (v[i], v[i + 1]);
+    linear_pair(v[i], v[i + 1], fr)
+}
+
+/// Interpolate two consecutive samples with the same arithmetic and gap handling as `linear`.
+#[inline]
+pub fn linear_pair(a: f32, b: f32, fr: f32) -> Option<f32> {
     (a.is_finite() && b.is_finite()).then_some(a * (1.0 - fr) + b * fr)
 }
 
@@ -100,6 +105,10 @@ fn dot16(s: &[f32; 2 * A], w: &[f32; 2 * A]) -> f32 {
     (acc[0] + acc[1]) + (acc[2] + acc[3])
 }
 
+fn phase(x: f64, floor: f64) -> usize {
+    (((x - floor) * PHASES as f64).round() as usize).min(PHASES)
+}
+
 /// `lanczos(v, x, 8)` with a precomputed kernel (1024 phases): no trigonometry per point, for drawing thousands of
 /// screen points per record. Same edge handling (missing neighbours left out, weights renormalised).
 pub fn lanczos8(v: &[f32], x: f64) -> Option<f32> {
@@ -107,7 +116,7 @@ pub fn lanczos8(v: &[f32], x: f64) -> Option<f32> {
         return None;
     }
     let i0 = x.floor() as i64;
-    let p = (((x - i0 as f64) * PHASES as f64).round() as usize).min(PHASES);
+    let p = phase(x, i0 as f64);
     let first = i0 - A as i64 + 1;
     if first >= 0 && first + 2 * A as i64 <= v.len() as i64 {
         // inner part: all neighbours present, the weights of the phase sum to 1
@@ -143,7 +152,7 @@ pub fn lanczos8_grid(v: &[f32], x0: f64, step: f64, n: usize, out: &mut Vec<f32>
         let i0 = x.floor();
         let first = i0 as i64 - A as i64 + 1;
         if x >= 0.0 && first >= 0 && first + 2 * A as i64 <= v.len() as i64 {
-            let p = (((x - i0) * PHASES as f64).round() as usize).min(PHASES);
+            let p = phase(x, i0);
             let s: &[f32; 2 * A] = v[first as usize..first as usize + 2 * A].try_into().unwrap();
             let w: &[f32; 2 * A] = tn[p * 2 * A..(p + 1) * 2 * A].try_into().unwrap();
             let y = dot16(s, w);
@@ -151,6 +160,71 @@ pub fn lanczos8_grid(v: &[f32], x0: f64, step: f64, n: usize, out: &mut Vec<f32>
         } else {
             out.push(lanczos8(v, x).unwrap_or(f32::NAN));
         }
+    }
+}
+
+/// Reusable phases and input support for an exact screen grid. Channels with the same grid can share the plan.
+#[derive(Debug, Default)]
+pub struct Lanczos8Grid {
+    geometry: Option<GridGeometry>,
+    taps: Vec<Option<(usize, usize)>>,
+    support: std::ops::Range<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct GridGeometry {
+    start: f64,
+    step: f64,
+    points: usize,
+    samples: usize,
+}
+
+impl Lanczos8Grid {
+    /// Prepare the phases in full-record coordinates and return the input range needed by `append`.
+    pub fn prepare(&mut self, (start, step): (f64, f64), points: usize, samples: usize) -> std::ops::Range<usize> {
+        let key = GridGeometry { start, step, points, samples };
+        if self.geometry == Some(key) {
+            return self.support.clone();
+        }
+        self.geometry = Some(key);
+        self.taps.clear();
+        let (mut lo, mut hi) = (samples, 0);
+        self.taps.extend((0..points).map(|k| {
+            let x = start + k as f64 * step;
+            if samples < 2 || !(0.0..=(samples - 1) as f64).contains(&x) {
+                return None;
+            }
+            let floor = x.floor();
+            let first = floor as usize + 1;
+            lo = lo.min(first.saturating_sub(A));
+            hi = hi.max((first + A).min(samples));
+            (first >= A && first + A <= samples).then(|| (first - A, phase(x, floor)))
+        }));
+        self.support = lo.min(hi)..hi;
+        self.support.clone()
+    }
+
+    /// Append the exact screen points from the slice of the full record returned by `prepare`.
+    pub fn append(&self, samples: &[f32], out: &mut Vec<f32>) {
+        let Some(key) = self.geometry else { return };
+        assert_eq!(samples.len(), self.support.len(), "input must cover the prepared Lanczos support");
+        let base = self.support.start;
+        let weights = table_norm().as_chunks::<{ 2 * A }>().0;
+        out.extend(self.taps.iter().enumerate().map(|(k, tap)| {
+            if let Some((first, phase)) = *tap {
+                let start = first - base;
+                let source = samples[start..].first_chunk().expect("prepared support includes all 16 taps");
+                let y = dot16(source, &weights[phase]);
+                if y.is_finite() {
+                    return y;
+                }
+            }
+            let x = key.start + k as f64 * key.step;
+            if key.samples < 2 || !(0.0..=(key.samples - 1) as f64).contains(&x) {
+                return f32::NAN;
+            }
+            lanczos8(samples, x - base as f64).unwrap_or(f32::NAN)
+        }));
     }
 }
 
@@ -170,6 +244,29 @@ mod tests {
         for (k, &y) in g.iter().enumerate() {
             let want = lanczos8(&v, x0 + k as f64 * step).unwrap_or(f32::NAN);
             assert!(y == want || (y.is_nan() && want.is_nan()), "k {}: {} vs {}", k, y, want);
+        }
+    }
+
+    #[test]
+    fn prepared_grid_uses_only_its_support_and_preserves_screen_points() {
+        let mut values: Vec<f32> = (0..35_160).map(|k| (k as f32 * 0.373).sin()).collect();
+        values[17_580] = f32::NAN;
+        let mut grid = Lanczos8Grid::default();
+        for (start, step) in [(-5.3, 0.0047), (17_571.37, 0.0047), (35_147.91, 0.0047), (-200.0, 0.0047)] {
+            let (mut expected, mut actual) = (Vec::new(), Vec::new());
+            let count = 3600;
+            let needed = grid.prepare((start, step), count, values.len());
+            assert!(needed.len() <= 33);
+            assert_eq!(grid.prepare((start, step), count, values.len()), needed);
+            grid.append(&values[needed], &mut actual);
+            lanczos8_grid(&values, start, step, count, &mut expected);
+            assert_eq!(expected.len(), actual.len());
+            for (i, (a, b)) in actual.into_iter().zip(expected).enumerate() {
+                assert!(
+                    a.to_bits() == b.to_bits() || (a.is_nan() && b.is_nan()),
+                    "start {start}, point {i}: {a} != {b}"
+                );
+            }
         }
     }
 

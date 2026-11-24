@@ -20,14 +20,30 @@ Single scan only).
   `final_ack` and sleeps 5 ms per pass. Roll, scan, segments, self-cal, the auto set-up levels, counter and DVM keep
   their own paths, as before. RUN or SINGLE clear `hold`; the frames queued before are dropped then, by the UI as it
   releases the hold (`Source::hw_hold`: it takes frames in the same step) and by the thread on its next pass.
-- A batch already armed when STOP comes is finished (its wait is not cut short) and read.
-- Final frame (`Ui::stop_wants_final`): a plain STOP (not the end of Single or segments, not a mask stop, not a history
-  view) while the record shown is of live-compression pairs, or of deep pairs while the deep measurements want samples.
+- A serial capture already armed at STOP can finish. Its first-record wait is capped at two seconds from the first
+  poll that sees STOP, within the UI's three-second wait. A trigger timeout disarms via the acquisition counter,
+  and the worker answers without the 200 ms retry delay. In overlapping Normal-trigger acquisition, a first-record
+  wait with no signal ends at the next control poll (up to 10 ms), followed by the disarm poll (up to 10 ms).
+  A completed overlapping record-queue batch follows normal publication and retains all its eligible records.
+- `acq.stop_slot = zero` is the default in `system.conf`. Each live batch arms at frame zero. After an
+  untriggered serial STOP, the host copy of the last record stays on screen. The arm can overwrite the FPGA
+  copy before a trigger, so firmware ring reread eligibility is cleared.
+- `acq.stop_slot = alternate` is an experiment that needs an operator at the unit. An eligible serial capture
+  starts at a second frame index when the previous record is at zero, so it can preserve the previous slot for
+  raw replay on timeout. The HAL bounds the index by the stock segmented-ring capacity. The
+  [two-slot sequence](../protocols/acquisition-start.md#d-next-frame) still needs live hardware verification,
+  including slot selection with LA enabled.
+  `:SYSTem:STATe?` reports the selected startup value.
+- Final frame (`Ui::stop_wants_final`) applies to a plain serial STOP with a displayed record, to Auto-trigger
+  deep and logic-analyzer views, and to live-compression pairs or deep pairs with raw measurements enabled.
+  An overlapping Normal-trigger STOP on an already-raw deep record or an LA view with no raw read pending settles
+  on the first UI step, as before serial acquisition.
   The UI raises `final_req` and keeps taking records (status STOP) until `final_ack` answers it and the queue is empty,
   at most `STOP_FINAL_WAIT` = 3 s. The thread reads the newest frame of the batch it read last once more, raw
   (`final_replay`: the whole frame for live compression, the deep window for deep pairs; `seq::read_raw_again`), queues
-  it, then answers. The wait ends with the frame, not with the background measurement. That frame is the record on
-  screen; its measurements are made from its samples.
+  it, then answers. A completed serial capture at STOP goes directly to the final queue, including an already-raw
+  capture and its digital samples. On timeout, the previous valid slot can supply the raw read. The selected
+  record supplies the display, measurements, saved data and stopped view rereads.
 - Arming ahead (`acq.prearm = on`, the unit's set-up) is skipped for batches that may be replayed
   (`prearm_keeps_replay`: a live-compression batch, or a compressed deep record with deep measurements on), so the ring
   of the last batch stays for the replay. Prearm's gain is at short time bases; at deep records the read takes most of
@@ -43,6 +59,7 @@ Single scan only).
   the view; that window becomes the record shown and measured, and the raw record of the STOP comes back with the next
   view read as pairs. A view adds nothing to the statistics (`stop_reads_the_record_again_without_counting_it`); a
   time base or delay change clears them, as every setting does. RUN, Clear and the history let the raw record go.
+  In a logic-analyzer view the reread carries the digital samples saved with the same capture, aligned to its trigger.
   The pair picture is drawn by the legacy stopped redraw; moving it to an accumulator input is left to M2.3e.
 
 ## Host tests
@@ -64,6 +81,9 @@ Single scan only).
 - `ui/src/board/dho/hw.rs` `final_replay_at_stop`: replay only for a compressed deep batch whose newest frame is not
   raw, nothing armed ahead, deep measurements on; with prearm on, such a batch is not armed ahead, so the replay
   stays possible; prearm stays for shallow records and without deep measurements.
+- `ui/src/board/dho/hw/stop/tests.rs` scripts trigger completion and timeouts with an injected clock. It verifies
+  slot preservation, counted disarm, calibration and hardware-control interruption. The UI STOP tests cover the
+  first-step Normal-trigger transition and draining a shallow serial capture.
 
 ## On-unit verification
 
@@ -81,7 +101,10 @@ Single scan only).
    and back to 1 ms/div: the values stay valid at every view, the statistics are cleared by the change and the count
    stays 0 while nothing else changes. 10 us/div (a raw window): values of that window; back to 1 ms/div: the values
    of the STOP again. RUN: the values update again.
-4. Normal trigger without a signal, STOP: the STOP completes within 3 s (log: no error), RUN works again.
+4. Normal trigger without a signal, STOP. Verify first-step settlement for overlapping raw or LA views and
+   settlement within 3 s for serial capture, with the last host record still displayed. With an operator
+   present, repeat with `acq.stop_slot = alternate` and check zoom, reread and save of the preceding record.
+   Repeat with a trigger arriving during STOP and verify all three use the completed capture.
 5. `acq.prearm = on` (the unit's set-up): step 3 again, same result; wfm/s at 1 us/div unchanged against prearm without
    the deep measurements (prearm stays on there); no `disarm` errors.
 6. Auto set-up, self-cal, generator changes while stopped: work as before.

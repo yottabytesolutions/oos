@@ -1,26 +1,48 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-/// The latest 256 observations, including zeros. Cursor and lifetime count are independent.
+/// A fixed window of the latest observations, including zeros.
 #[derive(Clone, Debug)]
-pub(crate) struct Ring {
-    values: [u64; 256],
+pub(crate) struct Ring<const N: usize = 256, T = u64> {
+    values: [T; N],
     next: usize,
     len: usize,
     total: u64,
 }
-impl Default for Ring {
+impl<const N: usize, T: Copy + Default> Default for Ring<N, T> {
     fn default() -> Self {
-        Self { values: [0; 256], next: 0, len: 0, total: 0 }
+        Self { values: [T::default(); N], next: 0, len: 0, total: 0 }
     }
 }
-impl Ring {
-    pub(crate) fn add(&mut self, value: u64) {
+impl<const N: usize, T> Ring<N, T> {
+    pub(crate) fn add(&mut self, value: T) {
         self.values[self.next] = value;
-        self.next = (self.next + 1) % 256;
-        self.len = (self.len + 1).min(256);
+        self.next = (self.next + 1) % N;
+        self.len = (self.len + 1).min(N);
         self.total = self.total.saturating_add(1);
     }
 
+    pub(crate) fn samples(&self) -> &[T] {
+        &self.values[..self.len]
+    }
+}
+
+impl<const N: usize, const C: usize> Ring<N, [Option<u64>; C]> {
+    pub(crate) fn quantiles(&self, column: usize) -> [u64; 2] {
+        let mut values = [0; N];
+        let mut len = 0;
+        for value in self.samples().iter().filter_map(|row| row[column]) {
+            values[len] = value;
+            len += 1;
+        }
+        if len == 0 {
+            return [0; 2];
+        }
+        values[..len].sort_unstable();
+        [50, 90].map(|p| values[rank(len, p)])
+    }
+}
+
+impl Ring {
     /// Nearest-rank quantiles; a tail is pending until 50 observations exist.
     pub(crate) fn format(mut self, label: &str, unit: &str) -> String {
         self.values[..self.len].sort_unstable();
@@ -28,7 +50,7 @@ impl Ring {
             if self.len == 0 || (percent == 99 && self.len < 50) {
                 "pending".into()
             } else {
-                self.values[(self.len * percent).div_ceil(100) - 1].to_string()
+                self.values[rank(self.len, percent)].to_string()
             }
         };
         format!(
@@ -41,6 +63,10 @@ impl Ring {
             self.values[..self.len].last().unwrap_or(&0)
         )
     }
+}
+
+fn rank(len: usize, percent: usize) -> usize {
+    (len * percent).div_ceil(100) - 1
 }
 
 #[cfg(test)]

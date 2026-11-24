@@ -2,7 +2,7 @@
 
 //! Deterministic change storm for the test-only allocation observer. No allocator lives here.
 
-use super::HostScript;
+use super::{BatchScript, HostScript};
 use crate::board::scripted::{self, Batch, BatchKind, BatchSource};
 use crate::{cmd, drawpipe, ui::Ui, wave::Source};
 use std::sync::atomic::Ordering;
@@ -16,7 +16,8 @@ pub fn run_observed(mode: &str, steps: usize, mut sample: impl FnMut(usize, [u64
     oos_hal::model::init(oos_hal::model::Platform::build(None, None, Some("DHO924S")));
     let mut ui = Ui::new(Source::Demo { t: 0.0 }, crate::ui::host::Host::headless());
     ui.store_dir = "store".into();
-    let mut host = HostScript::new(&mut ui, None, Some(kind), false)?;
+    let batch = BatchScript::new(&mut ui, kind);
+    let mut host = HostScript::new(&mut ui, None, Some(batch), false)?;
     let time = match mode {
         "pairs" => "200 µs",
         "deep-pairs" => "1 ms",

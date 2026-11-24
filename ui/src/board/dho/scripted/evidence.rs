@@ -48,3 +48,15 @@ pub(crate) fn draw_route_batch(
         plan,
     )
 }
+
+/// One actual production-planned cohort and its original selected indices. Headerless synthetic words only.
+pub(crate) fn planned_picture_cohort(
+    m: &Model,
+    sw: &crate::sysconf::Switches,
+) -> (ScriptBatch, std::ops::Range<usize>, bool, String) {
+    let (input, count, plan) = draw_route_batch(m, sw, 0);
+    let (s, p) = (&input.settings, &input.params);
+    let start = super::super::frame1::first_kept(&input.bytes.0, input.fb, count, sw.board.frame0_drop, (s, p));
+    let keep = super::super::frame1::newest_kept((Some(&input.newest(0)), &[]), (count, sw.board.frame0_drop), (s, p));
+    (input, start..if keep { count } else { count - 1 }, keep, plan)
+}

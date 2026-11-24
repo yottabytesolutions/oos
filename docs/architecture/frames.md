@@ -222,34 +222,28 @@ fn publish(picture: &Picture, arena: &mut Arena);
 `DiffBand<'a>` is an exclusive mutable view of a `DiffPlane` column range, with a local touched-row range.
 The pool splits the backing storage into disjoint bands before dispatch; workers cannot access other bands.
 The completed bands' touched-row ranges are combined before hand-off.
-`RecordRef` is a batch plus index, or a `Waveform`. It yields `SamplesRef` per channel.
-`place` exists today as `fast_plan`; `paint_band` as `fast_deposit_t`. They currently take `&Model` and `&Frame`.
-`fold_t` in `fastdraw.rs` supplies the fold. Dispatch once per channel per record on `SamplesRef`.
-Inside each branch, spans use the generic trait, so inner loops remain monomorphic:
+### Route and envelope
 
-```rust
-pub trait Samples {
-    fn len(&self) -> usize;
-    fn extremes(&self, a: usize, b: usize) -> (f32, f32);
-    fn at(&self, i: usize) -> f32;
-}
-```
+`drawpipe::route::route` chooses the placement adapter from the frozen projection and record metadata.
+The acquisition route tag chooses between deposit work and bounded record delivery. The placement route
+describes how a deposit receives its samples.
 
-The target implementations are explicit:
+| Route | Placement input |
+|---|---|
+| Dense and Peak | Interleaved raw words. The hardware time axis comes from the captured frame. |
+| Boxcar | HiRes moving-window samples. The adapter follows the existing window and edge rules. |
+| Upsampled | Short records on the interpolated screen grid. |
+| Pairs | FPGA-compressed min/max pairs, including deep records. |
+| Screen | The raw measurement window of a deep record. |
+| Dots | Individual points deposited at their rows. |
+| Volts | Decoded waveforms, including stored records and demo sources. |
+| Record | Record consumers and stream modes that use record placement. |
 
-| `SamplesRef` branch | Type implementing `Samples` | Values exposed |
-|---|---|---|
-| `Codes` | `Codes<'a>` (existing) | calibrated raw words |
-| `Pairs` | `Pairs<'a>` (F1 adapter) | source min/max envelope |
-| `Volts` | `[f32]` (existing) | decoded samples |
-| Software HiRes on `Codes` or `Volts` | `Boxcar<S>` with `S: Samples + ?Sized` (F1 adapter borrowing `S`) | boxcar-filtered samples |
-
-Select `Boxcar<Codes<'a>>` or `Boxcar<[f32]>` in the corresponding enum branch before entering the generic
-kernel. The adapter's `len`, `at` and `extremes` describe the filtered sequence, using the existing HiRes window
-and edge rules; `extremes` reduces filtered samples, not raw extremes. It borrows source and reused scratch,
-with no decoded-channel copy or allocation after warm-up. Hardware HiRes needs no adapter. Min/max pairs
-cannot recover a software boxcar sequence; apply software HiRes before pair compression.
-F1 characterisation compares both adapters against the existing decoded HiRes result, including window edges.
+The dense envelope shares column edges across lanes. ADC layouts have strides of one, two or four words.
+Three channels use four lanes with one inactive lane. The envelope applies the eight-phase ADC correction
+before finding column extrema. AArch64 uses NEON for blocks, with scalar edges and tails. Both paths use the
+same calibrated row mapping and include the preceding column's last sample. Workers reuse envelope and
+adapter scratch. The exact screen-grid routes preserve their weighted segments.
 
 ### Threads
 
@@ -296,7 +290,7 @@ Per UI step: apply the `ChangeSet`; mapping drops the window and requests previe
 Snapshot the queued newest-record tap count and process at most B taps, one at a time, independently of whether a
 picture deposit is available or accepted. B comes from the read plan's [tap capacity](#tap-capacity).
 Return each tap's storage before taking the next; never wait for a tap or drain beyond the snapshot count.
-Take the slot; `accept` checks key, epoch, frozen state and minimum-persistence age and counts rejection reasons.
+Take the slot; `accept` checks key, epoch, frozen state and the deposit bounds and counts rejection reasons.
 Blend once per channel over touched rows. Publish dirty rows. W replaces `vmax`; there is no maximum scan.
 
 ### Variants compose
@@ -313,7 +307,7 @@ Blend once per channel over touched rows. Publish dirty rows. W replaces `vmax`;
 | Roll, scan | sweep so far as screen-resolution `Pairs`, `replace(Sweep)` | source |
 | Zoom | second projection and plane set in the same deposit | none |
 | Dots | skip spans; one difference pair per sample in `paint_band` | kernel choice |
-| Persistence | `Blend::Window { min_records, max_age }`, `Decay { tau }`, `Infinite` | policy value |
+| Persistence | `Blend::Window { min_records }`, `Decay { tau }`, `Infinite` | policy value |
 | STOP, SINGLE done | `Frozen`; incoming deposits counted as `rejected.frozen` | state |
 | Replay, preview, stopped mapping change | same `place` and `paint_band` via UI `replace`, mode-specific W per map | none |
 | Measurements, decoders, math, history | per-batch `Waveform` FIFO, `stats`, `MeasRead`; never draw | tap |
@@ -325,14 +319,11 @@ Overlays are separate: compose draws cursor, marker, label and graticule command
 
 ### Minimum persistence and GPU hand-off
 
-Keep the 2026-11-14 window shape: newest whole units until they hold N records, at most 3 units, at most 67 ms old.
-The owner changed the unit to `Deposit` on 2026-11-18. Three ring reads per picture could omit records when reads
-outpace pictures; three deposits do not impose that read-count limit because the UI takes at most one per step.
-`BatchSpan` retains the minimum and maximum `BatchMeta::read_at` of all contributing batches. Coalescing updates
-both; a new batch never refreshes the age of older contents. Minimum persistence uses `now - oldest_read_at` at
-acceptance and on every live window rebuild. If it exceeds 67 ms, exclude the whole deposit, even if its newest
-batch is younger. A deposit expired before first acceptance counts all its records as `rejected.age`; eviction
-after acceptance leaves those records counted once as `deposit.shown`. Frozen pictures keep their specified lifetime.
+Retain the newest whole deposits until they hold the target record count, bounded by three deposits and
+the sample-hit capacity. A picture step accepts every current deposit in its bounded queue. A missed step
+defers those deposits to the next picture. Read and first-trigger timestamps remain available for telemetry.
+At minimum persistence, the last picture stays until a new record, a settings change, Clear or Stop.
+Stop freezes the current picture under the frozen-picture policy.
 
 The accumulator folds up to three deposits' difference planes in one pass, subject also to the
 [combined hit bound](#difference-plane-capacity). At high rates the window is one deposit.
@@ -354,7 +345,29 @@ F2's accumulator ownership, deposit window or W grading.
 ## Performance estimates
 
 Performance budgets below are unverified targets; unit timing must establish feasibility. Capacity bounds above
-are arithmetic requirements. The picture period is 33.3 ms.
+are arithmetic requirements. The picture period comes from the frame clock.
+
+### Admission
+
+The source divides the work budget by measured service cost per record, with a
+minimum of one record.
+Hardware, read time and plane capacity cap that grant. The estimate adds p90 pool wall time and p90 publication
+service time per record across the last 16 successful batches. Each generation and epoch starts at 1 ms per record.
+A successor can fill while a batch is in flight when the measured cost of one record fits the budget. At read
+completion it waits for the prior publication to the UI slot. Above the budget, the source skips prearming and
+waits for the prior publication before starting the next acquisition. A successor already armed under an
+earlier grant retains its read geometry. DMA returns, publication and controls share the source wake. The record
+queue waits for the UI to drain the prior bounded hand-off before another read.
+
+`drawpipe/budget.rs` derives the default work budget (36% of the picture period) and publication budget (75%)
+from the published period. `acq.work_budget_ms` overrides the default work budget. Stage timestamps retain
+each observed batch's read and first-trigger times for latency reporting.
+
+By default `pacing.clock = flip` predicts the deadline from completed DRM page flips and the display refresh
+period. `pacing.flip_divisor` selects two, three (default) or four vblanks per picture. After 50 ms without a
+usable flip, the clock falls back to a timer at the selected period. `pacing.clock = timer` selects the 30 Hz
+timer. The published deadline drives acquisition's fill plan. `pacing.flip_fallback` counts the fallbacks. See
+[acquisition switches](acquisition.md#source-switches) for source-overhead controls.
 
 | Stage | Estimated budget at four channels | Basis |
 |---|---|---|
@@ -409,9 +422,9 @@ startup profile requires `f2.envelope_bytes`, `f2.tap_bytes`, `f2.tap_entries` a
 It also requires positive bounds for the other owners in `f2.window_graphics_bytes`, `f2.dma_bytes`,
 `f2.shared_bytes`, `f2.copies_analysis_bytes` and `f2.runtime_bytes`. The Handoff charges decoded capacity
 and control storage against the tap partition, including raw newest replay and retained old plans. It can
-lengthen the enforced cycle to fit the current geometry, subject to the useful-record floors of the four-channel
-1 and 10 us/div Auto plans. An unfunded or unsupported staged plan uses the existing record path and reports
-the effective route.
+lengthen the enforced cycle to fit the current geometry. The measured work grant applies
+independently of channel count and that tap capacity. An unfunded or unsupported staged plan uses
+the existing record path and reports the effective route.
 
 These declarations check arithmetic and ownership at the Handoff. The device still needs measured
 exclusive shares, DMA and graphics overlap bounds, independent copy and analysis bounds, and verification
@@ -434,7 +447,7 @@ This pressure reaches acquisition through the finite DMA pool, just like deposit
 
 Five difference-plane sets are allocated in total, including recycled sets and sets being handed off. Peak
 occupancy is one open set, one occupied slot and three retained window deposits. The UI validates the slot
-deposit before changing the window. If accepting it would exceed the window's count, age or capacity caps, the
+deposit before changing the window. If accepting it would exceed the window's count or capacity caps, the
 UI evicts and recycles old entries before moving the accepted deposit from the slot into the window. For a full
 window needing one eviction, acceptance leaves three window sets, one open set, an empty slot and one recycled
 set. The pool can move the open set into that slot and reuse the recycled set as the next open set.
@@ -452,36 +465,31 @@ Acquisition reserves a free buffer before arming the next read, including an arm
 it waits on the pool return channel in the same event wait as commands. Triggers during the wait are never read.
 That is reported dead time. There is no read-and-discard overload path.
 
-The deposit route has this conservation rule, checked by a test and reported on the state line. All terms are
-in the `deposit` namespace and count only deposit-route records. Unqualified `lost.*` and `rejected.*` on this
-page and in [picture](picture.md) abbreviate `deposit.lost.*` and `deposit.rejected.*`:
+The deposit route accounts for each read record exactly once at its terminal outcome:
 
 ```text
-deposit.read = deposit.deposited + deposit.lost.settings + deposit.lost.first + deposit.lost.second + deposit.lost.error
-deposit.deposited = deposit.shown + deposit.rejected.stale_key + deposit.rejected.epoch + deposit.rejected.frozen + deposit.rejected.age
+records read = shown + frame-0 loss + identity rejects + other named losses + in flight
 ```
 
-Every term counts records. A record with no bucket is a bug. Account for settings boundaries, incomplete hardware
-averages, un-pause and roll queue clears. Do not count a held window record again each step: `deposit.shown` counts records
-on first picture acceptance. Queued/in-flight records are pending until a terminal bucket is assigned; assert the
-identities after draining, or include pending counts in a live snapshot.
-There is no `lost.overload`. Key, epoch, frozen and age rejections are deliberate. The `RecordBatch` route also
-waits for capacity and propagates back-pressure to the source, as [queues](README.md#queues) requires. Its reads
-are `records.read`, with pending records and intentional identity rejections accounted separately under `records.*`.
-Each read record enters only its batch's route namespace; newest-record taps do not increment `records.read`.
-Record-route reads never enter `deposit.read` or its identity. Neither route drops read records for overload.
+Identity rejects include settings changes, stale keys, and epoch changes. Other losses are reported under
+`lost.*`, including invalid input under `lost.error`. Deposited records remain in flight until first composition
+or rejection. Count retained records only when first shown. After draining the pipeline, the in-flight term
+is zero. The skipped-step script exercises the same equation with only the frame-0 loss bucket populated.
 
-On screen, show `deposit.shown` per second beside trigger status. When available, capture ratio is
-`(deposit.read + records.read) / triggers`, using the trigger count from
-`hal/src/dho/counter.rs`. That counter's operation during batch acquisition is not yet verified on hardware.
-Otherwise show dead time as one minus armed wall-time share. Mark any growth in `lost.*` except `lost.first` in the last
-second. This rate display is part of the target, not a claim about the current UI.
+The `RecordBatch` route also waits for capacity and propagates back-pressure to the source, as
+[queues](README.md#queues) requires. It accounts for reads, pending records and intentional rejections under
+`records.*`. Each read record enters one route, and newest-record taps leave the read total unchanged.
+
+The live trigger status shows newly accepted records per second over the latest one-second display interval,
+alongside source capture duty from `source.v1`. For example, `1.84k wfm/s 62%` shows 1,840 newly accepted
+records per second and 62% of cycle time spent filling. The status shows `--%` when it has no current duty
+sample and marks growth in `lost.*` other than the deliberate first-slot discard with `!`.
+The trigger counter in [the HAL](../../hal/src/dho/counter.rs) could provide a trigger-based capture ratio
+after its operation during batch acquisition is verified on hardware.
 
 ### Counters
 
-One line per stage in `:SYSTem:STATe?`, p50/p90/p99 over the last 256 observations, using the quantile ring from #186
-(`ui/src/perfguard/ring.rs` on that branch). Replace `framecost`'s per-record clock calls and five sums with slice
-rings.
+The state line (`:SYSTem:STATe?`) retains the existing counter fields and appends versioned batch telemetry.
 
 | Counter | Unit | Proves |
 |---|---|---|
@@ -493,15 +501,32 @@ rings.
 | `acq.wait_buffer` | ms/read and count | source back-pressure |
 | `picture.blend` | ms | fold budget |
 | `picture.records` | records/step, including zero | empty pictures; #186's `draw.frames_per_picture` |
+| `step.missed` | steps | skipped flip steps and whole-period timer or flip-fallback overruns |
 | `picture.age` | ms | existing age metric |
 | `deposit.read`, `deposit.deposited`, `deposit.shown` | records | deposit-route progress and conservation |
-| `deposit.lost.settings`, `deposit.lost.first`, `deposit.lost.second`, `deposit.lost.error` | records | losses before deposit |
-| `deposit.rejected.stale_key`, `deposit.rejected.epoch`, `deposit.rejected.frozen`, `deposit.rejected.age` | records | rejection before first acceptance |
+| `deposit.lost.settings`, `lost.frame0`, `lost.frame1`, `deposit.lost.error` | records | losses before deposit |
+| `deposit.rejected.stale_key`, `deposit.rejected.epoch`, `deposit.rejected.frozen` | records | rejection before first acceptance |
 | `records.read`, `records.*` pending and rejection counters | records | separate RecordBatch accounting |
+
+- `StageClock` travels with the batch and records first trigger, read, submit, dequeue, deposit, publication,
+  claim and compose. `stage.v1` reports p50/p90/p99 in microseconds from 1 ms bins. The 255 ms bin includes all higher
+  values. Accepted batches end at CPU composition. Rejected batches contribute only intervals
+  with known endpoints. The first-trigger timestamp is the host observation at the start of ring fill. Each
+  deposit retains four batch clocks, preserving its oldest and newest observations and counting replacements
+  in `stage.truncated`.
+- `work.v1` reports p50/p90 in ns per record over the last 64 batches. Refine, envelope and tiles sum work across
+  workers. Pool reports wall time across placement and tile dispatches, including the serial decoded-dots pass.
+- `route.v1` counts final placement routes for records and counts wide trigger search fallback invocations.
+- `source.v1` reports p50/p90 over the last 64 ordinary reads. Admission counts actual DMA wait calls and reports
+  their combined duration per read that waited. Arm, fill, read and read-out register writes use milliseconds.
+  Records per second and capture duty use the interval between consecutive read completions.
+
+Stage, work and source observations restart when acquisition generation or epoch changes. Route counts accumulate
+for the process lifetime.
 
 ### M12 acceptance
 
-The owner's requirement is 30 fps and zero drops at four channels, Normal, at the fastest time bases.
+The default panel cadence targets 32.5 fps and zero drops at four channels, Normal, at the fastest time bases.
 Source waiting makes a rate floor essential. The unit round must show:
 
 - fps >= 29.5 and `picture.records` p10 > 0;

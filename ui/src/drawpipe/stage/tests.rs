@@ -2,7 +2,34 @@
 
 use super::*;
 use crate::board::scripted::{self, Batch as _};
+use crate::drawpipe::budget::WORK_BUDGET;
 use crate::system::test_allocator::own_high_water;
+
+#[test]
+fn coalesced_records_do_not_dilute_the_current_batch_cost() {
+    use super::super::{
+        clock::StageClock,
+        tests::{batch, dec, model, Bytes},
+    };
+    let pipe = Pipe::start(0, 0, Box::leak(Box::default()));
+    let id = oos_core::change::Identity::default();
+    pipe.publish_view(&model(1e-6, false, false), 97, 48, Interp::Exact, id);
+    let view = oos_hal::sync::lock(&pipe.view).view.clone().unwrap();
+    let (bytes, fb, settings, params) = batch(2, 400, false);
+    let feed = |count| {
+        pipe.feed_batch(Box::new(Bytes(bytes.clone())), fb, 0..count, (0, Some(id)), dec(&settings, &params), None)
+    };
+    let mut painter = Painter::new(1, 0);
+    let current = painter.batch(None, &pipe.slot, &feed(2), &view, Some(id));
+    let mut next = feed(1);
+    Arc::get_mut(&mut next).unwrap().clock =
+        StageClock::from(Instant::now()).with_admission().pool_for_test(Duration::from_millis(2));
+    *oos_hal::sync::lock(&next.header.flight) = Some(pipe.admission.submit(&pipe.source, id, pipe.counters));
+    let deposit = painter.batch(current, &pipe.slot, &next, &view, Some(id)).unwrap();
+    assert_eq!(deposit.records, 3);
+    assert!(owner::publish_completed(&pipe.slot, next, deposit, &pipe.view, pipe.counters).is_none());
+    assert_eq!(pipe.grant(id, 100, WORK_BUDGET).records(), 6, "one record used 2 ms of pool work");
+}
 
 #[test]
 fn short_batches_decode_only_records_without_a_supplied_waveform() {
@@ -353,7 +380,7 @@ fn legal_wide_dots_remap_before_claim_but_normal_lines_keep_narrow_storage() {
         let sw = crate::sysconf::Switches { compress: false, ..Default::default() };
         let (input, frames, _) = scripted::draw_route_batch(&m, &sw, 1);
         let (fb, decode, codes) = (input.frame_bytes(), input.decode(), input.codes());
-        let pipe = Pipe::start(0, 0, counters());
+        let pipe = Pipe::start(0, 0, Box::leak(Box::default()));
         let id = Identity::default();
         pipe.publish_view(&m, 970, 448, sw.interp, id);
         let batch = pipe.feed_batch(Box::new(input.into_bytes()), fb, 0..frames, (0, Some(id)), decode, codes);
@@ -365,5 +392,103 @@ fn legal_wide_dots_remap_before_claim_but_normal_lines_keep_narrow_storage() {
         assert_eq!(d.format(), if dots == DotsMode::On { CountFormat::Wide } else { CountFormat::Narrow });
         assert_eq!(batch.next.load(Ordering::Relaxed), frames);
         assert_eq!(pipe.counters.read().2, 0);
+    }
+}
+
+#[test]
+fn warmed_pool_placement_reuses_rows_envelopes_and_search_storage() {
+    use route::Route;
+    for (expected, mask, acq, tdiv, kind) in [
+        (Route::Dense, 1u32, AcqMode::Normal, 1e-6, None),
+        (Route::Dense, 0b1010, AcqMode::Normal, 1e-6, None),
+        (Route::Dense, 0b1101, AcqMode::Normal, 1e-6, None),
+        (Route::Dense, 15, AcqMode::Normal, 1e-6, None),
+        (Route::Peak, 1, AcqMode::Peak, 1e-6, None),
+        (Route::Boxcar, 15, AcqMode::HiRes, 10e-6, None),
+        (Route::Upsampled, 1, AcqMode::Normal, 20e-9, None),
+        (Route::Pairs, 1, AcqMode::Normal, 200e-6, Some(scripted::BatchKind::LivePairs)),
+        (Route::Pairs, 1, AcqMode::Normal, 1e-3, Some(scripted::BatchKind::DeepPairs)),
+    ] {
+        let mut m = super::super::tests::model(tdiv, false, false);
+        m.acq = acq;
+        m.trig_src = mask.trailing_zeros() as usize;
+        for (channel, config) in m.ch.iter_mut().enumerate() {
+            config.on = mask & (1 << channel) != 0;
+        }
+        let (input, frames) = if let Some(kind) = kind {
+            use scripted::BatchSource;
+            (scripted::source(kind, 123).next_batch(&m, &Default::default(), 3, None).unwrap(), 3)
+        } else {
+            let (input, frames, _) = scripted::draw_route_batch(&m, &Default::default(), 3);
+            (input, frames)
+        };
+        let (fb, decode, codes) = (input.frame_bytes(), input.decode(), input.codes());
+        let pipe = Pipe::start(0, 0, Box::leak(Box::default()));
+        pipe.set_view(Some(&m), 384, 112, Interp::Exact);
+        let view = oos_hal::sync::lock(&pipe.view).view.clone().unwrap();
+        let batch = pipe.feed_batch(Box::new(input.into_bytes()), fb, 0..frames, (0, None), decode, codes);
+        let mut jobs: Vec<_> = (0..frames)
+            .map(|index| {
+                (
+                    batch.clone(),
+                    view.clone(),
+                    Prepared {
+                        index,
+                        decoded_dots: false,
+                        plan: None,
+                        codes: None,
+                        folds: Vec::new(),
+                        measured: false,
+                        refine: Duration::ZERO,
+                        screen: Default::default(),
+                        zoom: None,
+                    },
+                )
+            })
+            .collect();
+        let mut pool = Pool::new(1, 0, |scratch, (batch, view, prepared)| {
+            place(batch, view, prepared, scratch);
+        });
+        pool.map(&mut jobs, true);
+        let (allocations, _) = crate::system::test_allocator::count_own(|| pool.map(&mut jobs, true));
+        assert_eq!(allocations, 0, "{expected:?} {mask:04b}");
+        assert!(jobs.iter().all(|(_, _, p)| p.plan.as_ref().unwrap().route == expected), "{expected:?} {mask:04b}");
+    }
+}
+
+#[test]
+fn warmed_zoom_placement_and_tiles_allocate_nothing() {
+    for dots in [DotsMode::Off, DotsMode::On] {
+        let mut m = super::super::tests::model(10e-6, false, false);
+        m.zoom = true;
+        m.dots = dots;
+        m.zscale = tscales().iter().position(|&t| t == 2e-6).unwrap();
+        m.ch.iter_mut().for_each(|channel| channel.on = true);
+
+        let pipe = Pipe::start(0, 0, Box::leak(Box::default()));
+        let zoom = route::ZoomView::new((384, 144), 2.0, 0.25);
+        pipe.publish_picture_view(&m, (384, 112), Interp::Exact, Default::default(), Some(zoom));
+        let view = oos_hal::sync::lock(&pipe.view).view.clone().unwrap();
+        let (input, frames, _) = scripted::draw_route_batch(&m, &Default::default(), 3);
+        let (fb, decode, codes) = (input.frame_bytes(), input.decode(), input.codes());
+        let batch = pipe.feed_batch(Box::new(input.into_bytes()), fb, 0..frames, (0, None), decode, codes);
+        let mut painter = Painter::new(1, 0);
+        let mut deposit = pipe.slot.acquire_picture(view.gen, view.picture_sizes(), None, [true; NCH]).unwrap();
+        let mut paint = |deposit: &mut Deposit| {
+            let count = painter.place_slice(&batch, &view, 0);
+            painter.draw_tiles(&batch, deposit, count);
+        };
+        paint(&mut deposit);
+        deposit.reset(None);
+        let (allocations, ()) = crate::system::test_allocator::count_own(|| paint(&mut deposit));
+        assert_eq!(allocations, 0, "{dots:?}");
+
+        let mut main = Phosphor::new(384, 112);
+        let mut detail = Phosphor::new(384, 144);
+        deposit.sort_bands();
+        deposit.blend_picture(&mut crate::picture::PerMap::new(&mut main, Some(&mut detail)), true);
+        assert!(main.channel_max(0) > 0);
+        assert!(detail.channel_max(0) > 0);
+        assert_eq!(pipe.slot.backing_count(), 1);
     }
 }

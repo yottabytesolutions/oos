@@ -30,7 +30,7 @@ DSP decoders now live under `dsp/src/decode/`; UI protocol modules supply their 
 
 | Current files under `ui/src/` | Responsibility |
 |---|---|
-| `system/device.rs`, `system/device/` | input/remote intake, nominal 30 Hz frame scheduling, graphics, timers, shutdown |
+| `system/device.rs`, `system/device/` | input/remote intake, panel-locked frame scheduling, graphics, timers, shutdown |
 | `ui.rs`, `ui/` | model, records, maps, measurements, views, menus, input actions and service status |
 | `model.rs`, `model/` | core model exports, platform/capability bridge, protocol bindings and colours |
 | `scpi.rs`, `scpi/`, `cmd.rs` | shared SCPI interpreter and program continuations; script/FIFO command syntax |
@@ -358,7 +358,8 @@ The other buffers do not depend on the acquisition and are bounded by their own 
 the difference planes (open, slot and three window deposits, main and optional zoom), the accumulator Picture, the
 record store (`HISTORY_MAX` x screen record), and each view's maps (`EYE_MAX`, `SPECTRUM_MAX`). The memory budget
 in [Performance budgets](#performance-budgets) is `memplan`'s total plus these constants. The target picture window
-holds at most three whole deposits and 67 ms of age ([picture requirement](picture.md#window-and-grade)).
+holds at most three whole deposits under the [picture capacity bounds](picture.md#window-and-grade).
+At minimum persistence, the last picture stays until a new record, a settings change, Clear or Stop.
 
 - Ring snapshot protocol: the writer appends chunks and never changes a published one. A sweep is a list of chunk
   `Arc`s. Only in-flight work (the records stage, a measure job's copy step) pins a sweep's chunks, for at most one

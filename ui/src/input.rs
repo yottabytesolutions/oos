@@ -188,17 +188,22 @@ impl Inputs {
     }
 
     /// Waits up to `timeout_ms` for input and returns everything that arrived.
-    pub fn poll(&mut self, timeout_ms: i32, wake: &crate::system::intake::Wake) -> Vec<In> {
-        let mut fds = vec![libc::pollfd { fd: wake.fd(), events: libc::POLLIN, revents: 0 }];
-        if let Some(t) = &self.touch {
-            fds.push(libc::pollfd { fd: t.fd, events: libc::POLLIN, revents: 0 });
-        }
-        if self.panel >= 0 {
-            fds.push(libc::pollfd { fd: self.panel, events: libc::POLLIN, revents: 0 });
-        }
-        if self.ctl >= 0 {
-            fds.push(libc::pollfd { fd: self.ctl, events: libc::POLLIN, revents: 0 });
-        }
+    pub fn poll(
+        &mut self,
+        timeout_ms: i32,
+        wake: &crate::system::intake::Wake,
+        display_fds: [Option<i32>; 2],
+    ) -> Vec<In> {
+        let mut fds = [
+            Some(wake.fd()),
+            display_fds[0],
+            display_fds[1],
+            self.touch.as_ref().map(|t| t.fd),
+            Some(self.panel),
+            Some(self.ctl),
+        ]
+        .map(|fd| libc::pollfd { fd: fd.unwrap_or(-1), events: libc::POLLIN, revents: 0 });
+        // SAFETY: fds contains the declared number of writable poll entries.
         unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
         let mut out = Vec::new();
         self.read_touch(&mut out);
@@ -336,7 +341,7 @@ mod tests {
         let thread = std::thread::spawn(move || {
             let mut inputs = Inputs { touch: None, panel: -1, panel_buf: Vec::new(), ctl: -1, ctl_buf: Vec::new() };
             ready.send(()).unwrap();
-            assert!(inputs.poll(-1, worker.wake()).is_empty());
+            assert!(inputs.poll(-1, worker.wake(), [None; 2]).is_empty());
             worker.wake().drain();
             assert_eq!(worker.take(1), vec![7]);
             done.send(()).unwrap();

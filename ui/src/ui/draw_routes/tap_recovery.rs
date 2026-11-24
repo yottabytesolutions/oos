@@ -42,7 +42,7 @@ fn watchdog_step_frees_the_window_and_restart_retains_only_new_deposits() {
     assert!(!route.ui.memory_stopped());
     route.step(1);
     assert_eq!((route.ui.records, route.ui.batch_picture.frames, route.ui.history.len()), (records + 1, 1, 1));
-    assert!(route.ui.ph.map[0].iter().any(|&v| v > 0));
+    assert!(route.ui.ph.maps()[0].iter().any(|&v| v > 0));
 }
 
 fn submit(route: &mut Route, seq: u64, samples: Vec<f32>) -> Arc<Frame> {
@@ -107,6 +107,28 @@ fn assert_mean_stats(ui: &Ui, n: u64, sum: f64, squares: f64, min: f64, max: f64
     }
 }
 
+#[cfg(feature = "private-picture-counts")]
+fn assert_observer_redraw_accounting(before: &str, after: &str) {
+    fn metric(text: &str, key: &str) -> u64 {
+        let prefix = format!("{key}=");
+        let values: Vec<_> = text.split_whitespace().filter_map(|v| v.strip_prefix(&prefix)).collect();
+        assert_eq!(values.len(), 1, "one exact observer field {key}");
+        values[0].parse().expect("observer integer field")
+    }
+    fn stable(text: &str) -> Vec<&str> {
+        text.split_whitespace()
+            .filter(|v| !v.starts_with("ns=") && !v.starts_with("eligible=") && !v.starts_with("empty="))
+            .collect()
+    }
+    assert!(before.contains("fresh.v1") && after.contains("fresh.v1"));
+    let _elapsed = (metric(before, "ns"), metric(after, "ns"));
+    assert_eq!(metric(after, "fresh"), metric(before, "fresh"));
+    assert_eq!(metric(after, "first_records"), metric(before, "first_records"));
+    assert_eq!(metric(after, "eligible") - metric(before, "eligible"), 2);
+    assert_eq!(metric(after, "empty") - metric(before, "empty"), 2);
+    assert_eq!(stable(after), stable(before), "all ordinary counts, losses and latency bins remain unchanged");
+}
+
 #[test]
 fn accepted_tap_redraws_once_after_remap() {
     for queued in [true, false] {
@@ -132,18 +154,24 @@ fn accepted_tap_redraws_once_after_remap() {
 
         let mut expected = Phosphor::new(route.ui.ph.w, route.ui.ph.h);
         drawpipe::draw_frame(&mut expected, &route.ui.m, &tap, crate::sparse::Interp::Exact, None);
-        assert!(expected.map[0].iter().any(|&v| v > 0));
-        assert!(route.ui.ph.map == expected.map, "one copy of the remapped waveform, queued={queued}");
+        assert!(expected.maps()[0].iter().any(|&v| v > 0));
+        assert!(route.ui.ph.maps() == expected.maps(), "one copy of the remapped waveform, queued={queued}");
         assert_eq!(route.ui.batch_picture.frames, 1);
         assert_eq!(last_seq(&route.ui), 2);
         let history: Vec<_> = route.ui.history.iter().map(|r| r.ch[0][r.ch[0].len() / 2]).collect();
         assert_eq!(history, if queued { vec![0.25, 0.75] } else { vec![0.75] });
         assert_eq!(route.ui.records, 1 + u64::from(queued));
         route.ui.step(STEP);
-        assert!(route.ui.ph.map == expected.map);
+        assert!(route.ui.ph.maps() == expected.maps());
         assert_eq!(route.ui.wfm_total, 1 + u64::from(queued));
         assert_eq!(route.ui.fast_edges, edges);
+        #[cfg(not(feature = "private-picture-counts"))]
         assert_eq!((counters.read(), counters.records_text()), accounting);
+        #[cfg(feature = "private-picture-counts")]
+        {
+            assert_eq!(counters.read(), accounting.0);
+            assert_observer_redraw_accounting(&accounting.1, &counters.records_text());
+        }
         if queued {
             assert_mean_stats(&route.ui, 2, 1.0, 0.625, 0.25, 0.75);
         } else {
@@ -171,8 +199,8 @@ fn accepted_queued_tap_redraws_after_switching_to_standard() {
     assert_eq!((current.gen(), current.epoch()), (identity.gen(), identity.epoch()));
     let mut expected = Phosphor::new(route.ui.ph.w, route.ui.ph.h);
     drawpipe::draw_frame(&mut expected, &route.ui.m, &tap, crate::sparse::Interp::Exact, None);
-    assert!(expected.map[0].iter().any(|&v| v > 0));
-    assert!(route.ui.ph.map == expected.map, "Standard draws the accepted tap once");
+    assert!(expected.maps()[0].iter().any(|&v| v > 0));
+    assert!(route.ui.ph.maps() == expected.maps(), "Standard draws the accepted tap once");
     assert_eq!((pipe.tap_count(), last_seq(&route.ui), route.ui.wfm_total), (0, 2, count));
 }
 
@@ -193,11 +221,11 @@ fn pending_tap_remaps_before_its_deposit_is_accepted() {
 
     let mut expected = Phosphor::new(route.ui.ph.w, route.ui.ph.h);
     drawpipe::draw_frame(&mut expected, &route.ui.m, &tap, crate::sparse::Interp::Exact, None);
-    assert!(expected.map[0].iter().any(|&v| v > 0));
-    assert!(route.ui.ph.map == expected.map);
+    assert!(expected.maps()[0].iter().any(|&v| v > 0));
+    assert!(route.ui.ph.maps() == expected.maps());
     assert!(drawpipe::counters().records_text().contains("rejected.stale_key=1 "));
     route.ui.step(STEP);
-    assert!(route.ui.ph.map == expected.map);
+    assert!(route.ui.ph.maps() == expected.maps());
     assert_eq!((last_seq(&route.ui), route.ui.wfm_total, route.ui.history.len()), (2, 2, 2));
     assert_mean_stats(&route.ui, 2, 1.0, 0.625, 0.25, 0.75);
 }
@@ -235,7 +263,7 @@ fn reader_merge_counts_taps_and_keeps_the_newer_fallback_preview() {
     assert_mean_stats(&route.ui, 3, 1.5, 0.875, 0.25, 0.75);
     let mut expected = Phosphor::new(route.ui.ph.w, route.ui.ph.h);
     drawpipe::draw_frame(&mut expected, &route.ui.m, &third, crate::sparse::Interp::Exact, None);
-    assert_eq!(route.ui.ph.map, expected.map, "remapping does not replay a superseded tap");
+    assert_eq!(route.ui.ph.maps(), expected.maps(), "remapping does not replay a superseded tap");
     for consumer in 0..2 {
         assert!(!publish(&route.ui.ph, consumer).is_empty(), "remapping reaches skipped consumers");
         assert!(publish(&route.ui.ph, consumer).is_empty(), "unchanged revisions need no upload");

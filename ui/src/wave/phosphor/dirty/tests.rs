@@ -18,7 +18,7 @@ fn consumers_keep_independent_bands_across_skipped_frames_and_replacements() {
     assert_eq!(dirty.since(0, Some(&monitor)).1, 2..14);
     assert_eq!(dirty.since(1, Some(&panel)).1, 0..16, "channel reordering invalidates the block");
     assert_eq!(Dirty::new(16).since(0, Some(&panel)).1, 0..16);
-    dirty.revisions.get_mut().unwrap().revision = u64::MAX;
+    dirty.revisions[0].get_mut().unwrap().revision = u64::MAX;
     dirty.mark(0, 8..9);
     assert_eq!(dirty.since(0, Some(&panel)).1, 0..16, "revision rollover invalidates old stamps");
 }
@@ -35,7 +35,10 @@ fn clear_decay_halve_and_merge_include_erased_and_new_rows() {
     let mut stamp = None;
     assert_eq!(take(&ph, &mut stamp, 0), 0..16);
     let mut source = Phosphor::new(4, 16);
-    source.map[0][2 * 4] = 24;
+    source.edit_channel(0, |map| {
+        map[2 * 4] = 24;
+        2..3
+    });
     ph.add_maps(&source, [true, false, false, false]);
     assert_eq!(take(&ph, &mut stamp, 0), 2..3);
     ph.decay(1.0);
@@ -48,7 +51,10 @@ fn clear_decay_halve_and_merge_include_erased_and_new_rows() {
     assert_eq!(ph.map[0][8], 6);
     ph.clear();
     source.clear();
-    source.map[0][12 * 4] = 24;
+    source.edit_channel(0, |map| {
+        map[12 * 4] = 24;
+        12..13
+    });
     ph.add_maps(&source, [true, false, false, false]);
     assert_eq!(take(&ph, &mut stamp, 0), 2..13, "cleared trace and new trace form one hull");
     assert_eq!(ph.map[0][8], 0);
@@ -122,7 +128,7 @@ fn worker_mutations_need_no_upload_history_and_first_publication_is_complete() {
     for _ in 0..100 {
         dirty.mark(0, 2..4);
     }
-    assert!(dirty.revisions.get().is_none());
+    assert!(dirty.revisions[0].get().is_none());
     let (first, band) = dirty.since(0, None);
     assert_eq!(band, 0..16);
     dirty.mark(0, 8..9);

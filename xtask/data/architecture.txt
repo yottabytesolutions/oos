@@ -26,6 +26,7 @@ static ui/src/deepmeas.rs DECODE_US
 static ui/src/deepmeas.rs RECORD_US
 static ui/src/deepmeas.rs MEASURE_US
 static ui/src/deepmeas.rs MEASURE_N
+static ui/src/pacing.rs CLOCK
 static ui/src/pacing.rs VIEWS
 static ui/src/pacing.rs WANTED
 static ui/src/pacing.rs APPLIED

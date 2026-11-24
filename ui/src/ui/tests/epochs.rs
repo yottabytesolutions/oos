@@ -276,7 +276,7 @@ fn publication_and_queue_pop_report_stale_frames_at_their_own_sites() {
     ui.step(0.04);
     assert_eq!(loss.ui_publish.load(Relaxed) - before.0, 1);
     oos_hal::sync::lock(&shared).queue.push_back(old.clone().into());
-    ui.src.drain_newest(crate::board::QUEUE_MAX);
+    ui.src.drain_newest();
     oos_hal::sync::lock(&shared).queue.push_back(old.into());
     assert!(ui.src.acquire(&ui.m, 0.04, &mut ui.rng, ui.host.switches()).is_none());
     assert_eq!(loss.queue_pop.load(Relaxed) - before.1, 2);

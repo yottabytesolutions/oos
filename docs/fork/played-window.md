@@ -69,7 +69,9 @@ giving 8,528 bytes per played record. The other rows use the same geometry as th
 
 ## First use on the unit
 
-The near-only refinement has been replayed on the host and awaits unit verification. Use the owner's test
+Verified on a DHO924S on 2026-11-24 and on by default since then: register ladder word-exact against the raw
+record, functional round and 31-view matrix with zero short and zero rejected windows, 1 M depth at 10 µs/div
+46 to 253 records per second. The procedure below is kept for other units and models. Use the owner's test
 release and device lease under the repository's scope rules. Use a CH1 probe-compensation
 signal and a rising Normal edge trigger on CH1 at approximately 0.164 V. Use DC coupling,
 50 mV/div, about -0.136 V offset, 10 µs/div, zero delay, one channel and full capture rate.

@@ -320,9 +320,11 @@ impl Painter {
         d.progress.measured = 0;
         clock.deposit();
         let truncated = d.extent.clocks().push(clock);
-        b.counters.metrics.work(b.header.identity(), &self.cost, records, truncated);
-        if let Some(flight) = oos_hal::sync::lock(&b.header.flight).as_mut() {
-            flight.worked(records, clock.pool_time(self.cost.pool));
+        b.counters.metrics.batch_work(b.header.identity(), &self.cost, records, truncated, clock.is_reference());
+        if clock.trains_admission() {
+            if let Some(flight) = oos_hal::sync::lock(&b.header.flight).as_mut() {
+                flight.worked(records, clock.pool_time(self.cost.pool));
+            }
         }
         Some(d)
     }

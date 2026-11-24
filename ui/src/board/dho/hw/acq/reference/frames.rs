@@ -81,16 +81,25 @@ pub(super) fn decode_reference(
     Some((Arc::new(publication::tag(frame, id)), uncorrected))
 }
 
-pub(super) fn submit_reference(
+pub(super) fn submit_profile(
     pipe: &Pipe,
-    (buffer, fb): (Box<dyn RawBatch>, usize),
-    stage: (Identity, StageClock),
-    (newest, tap): (Arc<Frame>, super::super::batch::Reserved),
-    decode: IndexedDecodeInto,
+    (buffer, fb, avail): (Box<dyn RawBatch>, usize, usize),
+    (id, clock): (Identity, StageClock),
+    (newest, tap): (Option<Arc<Frame>>, super::super::batch::Reserved),
+    callbacks: Callbacks,
     out: &HwShared,
 ) {
-    let fallback =
-        pipe.feed_source((buffer, fb, 0..1, false), stage, (decode, None), (Some(newest.clone()), tap), true);
+    let Some(newest) = newest else {
+        pipe.feed_source((buffer, fb, 0..avail, false), (id, clock.with_admission()), callbacks, (None, None), false);
+        return;
+    };
+    let fallback = pipe.feed_source(
+        (buffer, fb, 0..1, false),
+        (id, clock.with_reference_admission()),
+        (callbacks.0, None),
+        (Some(newest.clone()), tap),
+        true,
+    );
     let mut g = lock(out);
     if !publication::boundary(Some((newest.cfg, newest.stamp)), g.acquisition.identity()) {
         g.frame = newest;
@@ -98,6 +107,34 @@ pub(super) fn submit_reference(
             g.queue.push_back(fallback);
         }
     }
+}
+
+#[cfg(test)]
+pub(in crate::board::dho::hw) fn fixture_profile(
+    pipe: &Pipe,
+    (buffer, fb, range): (Box<dyn RawBatch>, usize, std::ops::Range<usize>),
+    (s, p): (&Settings, &hz::Params),
+    cores: Option<&mut crate::board::dho::cores::Cores>,
+) -> std::time::Duration {
+    use std::time::{Duration, Instant};
+
+    let id = Identity::default();
+    let probe = HeaderProbe::Off;
+    let callbacks = Decoders::default().for_profile(s, *p, probe);
+    let (newest, prepare) = if raw::is_reduced(s) {
+        (None, Duration::ZERO)
+    } else {
+        let at = range.start * fb;
+        let started = Instant::now();
+        let (frame, _) = decode_reference(&buffer.bytes()[at..at + fb], (s, p, probe), cores, (id, 1, None))
+            .expect("a full fixture holds one complete reference record");
+        (Some(frame), started.elapsed())
+    };
+    let from_dma = newest.is_some();
+    assert!(pipe
+        .feed_source((buffer, fb, range, false), (id, Instant::now()), callbacks, (newest, None), from_dma)
+        .is_none());
+    prepare
 }
 
 #[cfg(test)]

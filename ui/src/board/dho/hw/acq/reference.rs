@@ -25,8 +25,11 @@ use std::{io::Read, time::Duration};
 mod frames;
 mod offsets;
 
+#[cfg(test)]
+pub(in crate::board::dho::hw) use frames::fixture_profile;
+
 pub(super) use frames::Decoders;
-use frames::{decode_reference, submit_reference};
+use frames::{decode_reference, submit_profile};
 
 pub(super) fn plan_capture(cycle: &mut raw::ReferenceCycle, request: &Request, want: &mut Settings, auto: bool) {
     if !auto && !raw::is_reduced(want) {
@@ -355,13 +358,8 @@ fn submit_capture_profile(
             counters.metrics.source_uncorrected(id, avail);
         }
     }
-    let (decode, codes) = batch.raw.decoders.for_profile(s, *p, probe);
+    let callbacks = batch.raw.decoders.for_profile(s, *p, probe);
     let buffer = dump::Captured::wrap(dma, pending.map(dump::Pending::trace));
-    let stage = (id, completed.clock.with_admission());
-    if let Some(newest) = newest {
-        submit_reference(pipe, (buffer, fb), stage, (newest, tap), decode, out);
-    } else {
-        pipe.feed_source((buffer, fb, 0..avail, false), stage, (decode, codes), (None, None), false);
-    }
+    submit_profile(pipe, (buffer, fb, avail), (id, completed.clock), (newest, tap), callbacks, out);
     true
 }

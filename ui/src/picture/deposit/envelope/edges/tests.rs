@@ -23,7 +23,7 @@ fn check(edges: &mut ColumnEdges, width: usize, len: usize, map: &Map) {
     }
     assert_eq!(edges.ranges().c0, first, "{map:?}");
     for (offset, column) in (first..=end).enumerate() {
-        let expected = legacy_pair_edge(column, len, map);
+        let expected = exact_pair_edge(column, len, map, (column as f64 - map.x0) / map.x_per_sample);
         assert_eq!(
             (edges.ranges().first[offset], edges.ranges().previous_pair[offset]),
             expected,
@@ -99,6 +99,23 @@ fn fixed_geometry_and_phase_reuse_exact_edges_until_the_length_changes() {
     edges.update(97, 67, &main);
     assert_eq!(edges.ranges().first.last(), Some(&67));
     assert_eq!(edges.rebuilds, (2, 3));
+}
+
+#[test]
+fn fixed_pair_phases_reuse_edges_without_building_moving_phase_thresholds() {
+    let mut edges = ColumnEdges::default();
+    let map = Map { ti: 8790.0, x_per_sample: 0.065536, x0: 512.0, y_per_volt: 1.0, y0: 0.0 };
+    edges.update_for(1024, 17_576, &map, true);
+    let grid = edges.active.unwrap();
+    assert!(edges.grids[grid].forward.is_empty());
+    let (allocations, ()) = crate::system::test_allocator::count_own(|| {
+        edges.update_for(1024, 17_576, &map, true);
+        edges.update_for(1024, 17_574, &map, true);
+        assert!(edges.grids[grid].forward.is_empty());
+        edges.update_for(1024, 17_576, &Map { ti: 8789.5, ..map }, true);
+        assert_eq!(edges.grids[grid].forward.len(), 1025);
+    });
+    assert_eq!(allocations, 0);
 }
 
 #[test]

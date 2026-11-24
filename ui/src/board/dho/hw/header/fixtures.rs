@@ -16,6 +16,18 @@ pub(crate) use super::format::Fixture;
 use super::format::PictureView;
 
 impl Fixture {
+    pub(crate) fn dispatch_capture_profile(&self, pipe: &Pipe, trace: Box<RouteTrace>) -> std::time::Duration {
+        let (s, p) = self.settings();
+        let (bytes, (fb, _, _), _) = self.source();
+        let (_, mut range) = self.expected_route().expect("capture benchmark needs the submitted range");
+        if !super::super::raw::is_reduced(s) {
+            range.end = range.start + 1;
+        }
+        let buffer = super::dump::Captured::wrap(Bytes(bytes), Some(trace));
+        let mut cores = self.cores();
+        super::super::acq::fixture_profile(pipe, (buffer, fb, range), (s, p), self.matching().then_some(&mut cores))
+    }
+
     pub(crate) fn raw_batch_samples(&self) -> bool {
         let (settings, params) = self.settings();
         super::super::decode::pair_step(settings, params) == 1

@@ -49,24 +49,27 @@ fn compare_signal<const N: usize>(signal: impl Fn(usize) -> [u16; 2], pulse: boo
         let mut edges = ColumnEdges::default();
         edges.update_for(WIDTH, words.len(), &map, true);
         let ranges = edges.ranges();
-        let mut legacy = Envelopes::with_capacity(WIDTH);
-        legacy.columns.extend(ranges.first.array_windows().map(|&[a, b]| scalar::reduce(&words, &correction, a..b)));
-        let mut scalar = Envelopes::with_capacity(WIDTH);
-        scalar.columns.extend_from_slice(&legacy.columns);
-        adapt::pairs::join_codes(&words, &correction, &edges, (false, 0.5), &mut legacy);
-        adapt::pairs::join_codes(&words, &correction, &edges, (false, map.x_per_sample), &mut scalar);
+        let scalar = |spacing| {
+            let mut joins = adapt::pairs::CodeJoin::new(&words, &correction, &edges, spacing);
+            ranges
+                .first
+                .array_windows()
+                .enumerate()
+                .map(|(column, &[a, b])| joins.finish(column, [a, b], scalar::reduce(&words, &correction, a..b)))
+                .collect::<Vec<_>>()
+        };
+        let legacy = scalar(0.5);
         let mut current = Envelopes::with_capacity(WIDTH);
-        reduce_columns(&words, &correction, (ranges.c0, &ranges.first, false), &lanes, &mut current);
-        adapt::pairs::join_codes(&words, &correction, &edges, (false, map.x_per_sample), &mut current);
-        assert_eq!(current.columns, scalar.columns, "{density} pairs per column");
+        placement::reduce_pairs(&words, &correction, &edges, (false, map.x_per_sample), &lanes, &mut current);
+        assert_eq!(current.columns, scalar(map.x_per_sample), "{density} pairs per column");
         if density >= 1.0 {
-            assert_eq!(current.columns, legacy.columns, "{density} pairs per column");
+            assert_eq!(current.columns, legacy, "{density} pairs per column");
         } else {
-            assert!(legacy.columns.contains(&Extrema::EMPTY));
+            assert!(legacy.contains(&Extrema::EMPTY));
         }
         assert_eq!(ranges.c0, centre(0));
         assert_eq!(ranges.c0 + current.columns.len() - 1, centre(COUNT - 1));
-        for (i, (span, old)) in current.columns.into_iter().zip(legacy.columns).enumerate() {
+        for (i, (span, old)) in current.columns.into_iter().zip(legacy).enumerate() {
             let column = ranges.c0 + i;
             assert_ne!(span, Extrema::EMPTY, "column {column} at {density} pairs per column");
             if old != Extrema::EMPTY {

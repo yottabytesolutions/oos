@@ -42,6 +42,8 @@ pub use linux::spawn;
 mod pacing;
 mod read;
 mod reference;
+#[cfg(test)]
+pub(super) use reference::fixture_profile;
 mod roll;
 mod service;
 #[cfg(test)]

@@ -4,17 +4,26 @@ use super::*;
 use crate::drawpipe::CodeLayout;
 use crate::fastdraw::Samples;
 
-pub(crate) fn requires_frame(m: &Model, frame: &Frame, folds: &Folds) -> bool {
-    !folds.is_empty()
-        && (m.trig_type != TrigType::Edge
-            || m.trig_on_la()
-            || frame.fixed_ti.is_some()
-            || folds.iter().any(|&((kind, _), _)| needs_samples(kind)))
-}
-
-/// The record trigger has a second comparator path when smoothing finds no DC edge.
-/// In that case ask the caller for a decoded frame so its fallback stays unchanged.
-pub(crate) fn fold_codes(f: &Frame, m: &Model, bytes: &[u8], layout: CodeLayout, folds: &mut Folds) -> Option<bool> {
+/// Fold from code extrema, using the placement trigger if supplied. `None` asks for a decoded frame.
+pub(crate) fn fold_codes(
+    f: &Frame,
+    m: &Model,
+    bytes: &[u8],
+    layout: CodeLayout,
+    folds: &mut Folds,
+    trigger: Option<f64>,
+) -> Option<bool> {
+    // The full-rate reference supplies statistics for live min/max pairs.
+    if folds.is_empty() || crate::compress::live(f) {
+        return Some(false);
+    }
+    if m.trig_type != TrigType::Edge
+        || m.trig_on_la()
+        || f.fixed_ti.is_some()
+        || folds.iter().any(|&((kind, _), _)| needs_samples(kind))
+    {
+        return None;
+    }
     let src = layout.channel(bytes, m.trig_src);
     let len = layout
         .word
@@ -31,7 +40,10 @@ pub(crate) fn fold_codes(f: &Frame, m: &Model, bytes: &[u8], layout: CodeLayout,
     if src.n < 2 {
         return None;
     }
-    let ti = crate::board::record::smoothed_edge(f, m, &src, len, (crate::sparse::POINTS, window, t_first), false)?;
+    // The decoded trigger has a second comparator path if smoothing finds no DC edge.
+    let ti = trigger.or_else(|| {
+        crate::board::record::smoothed_edge(f, m, &src, len, (crate::sparse::POINTS, window, t_first), false)
+    })?;
     let (i0, i1) = fold_window(f.dt, window, t_first, ti, len);
     if i1.saturating_sub(i0) <= crate::sparse::POINTS {
         return Some(false);
@@ -78,8 +90,7 @@ mod tests {
         let codes = layout.channel(&bytes, 0);
         let mut frame = Frame { dt: 0.8e-9, pre: len / 2, ..Default::default() };
         let (mut got, mut expected) = (folds_for(&m), folds_for(&m));
-        assert!(!requires_frame(&m, &frame, &got));
-        assert_eq!(fold_codes(&frame, &m, &bytes, layout, &mut got), Some(true));
+        assert_eq!(fold_codes(&frame, &m, &bytes, layout, &mut got, None), Some(true));
         frame.ch[0].extend((0..len).map(|i| codes.at(i)));
         assert!(fold_frame(&frame, &m, &mut expected));
         assert_eq!(got, expected);

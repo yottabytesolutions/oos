@@ -26,32 +26,18 @@ pub(super) fn fold_codes(
     folds: &mut crate::framestats::Folds,
     decode: impl FnOnce(&mut Frame),
 ) -> bool {
-    if let Some(measured) = {
-        #[cfg(test)]
-        let measured = fixture_bench::sample_fold(folds, |folds| try_fold_codes(scratch, m, bytes, raw, folds));
-        #[cfg(not(test))]
-        let measured = try_fold_codes(scratch, m, bytes, raw, folds);
-        measured
-    } {
+    let fold =
+        |folds: &mut crate::framestats::Folds| crate::framestats::fold_codes(scratch, m, bytes, raw, folds, None);
+    #[cfg(test)]
+    let measured = fixture_bench::sample_fold(folds, fold);
+    #[cfg(not(test))]
+    let measured = fold(folds);
+    if let Some(measured) = measured {
         return measured;
     }
     Cause::MeasurementDecode.mark();
     decode(scratch);
     fold_decoded(scratch, m, folds)
-}
-
-fn try_fold_codes(
-    frame: &Frame,
-    m: &Model,
-    bytes: &[u8],
-    raw: CodeLayout,
-    folds: &mut crate::framestats::Folds,
-) -> Option<bool> {
-    if crate::framestats::requires_frame(m, frame, folds) {
-        None
-    } else {
-        crate::framestats::fold_codes(frame, m, bytes, raw, folds)
-    }
 }
 
 pub(super) fn fold_decoded(frame: &Frame, m: &Model, folds: &mut crate::framestats::Folds) -> bool {

@@ -193,15 +193,20 @@ impl Script {
     }
 
     fn read(&mut self, cost: Duration, waiting: Duration) -> u32 {
-        use crate::board::scripted::{self, Batch as _};
-        let id = Identity::default();
-        let grant = self.pipe.grant(id, 256, WORK_BUDGET).records();
-        let (batch, count, _) = scripted::draw_route_batch(&self.model, &Default::default(), grant as usize);
-        let (fb, decode, codes) = (batch.frame_bytes(), batch.decode(), batch.codes());
+        let grant = self.pipe.grant(Identity::default(), 256, WORK_BUDGET).records();
         let clock = StageClock::from(self.now)
             .with_admission()
             .dequeue_for_test(self.now + waiting)
             .pool_for_test(cost * grant);
+        self.place(grant, clock);
+        grant
+    }
+
+    fn place(&mut self, records: u32, clock: StageClock) {
+        use crate::board::scripted::{self, Batch as _};
+        let id = Identity::default();
+        let (batch, count, _) = scripted::draw_route_batch(&self.model, &Default::default(), records as usize);
+        let (fb, decode, codes) = (batch.frame_bytes(), batch.decode(), batch.codes());
         let counters = self.pipe.counters;
         Counters::add(&counters.acquired, count as u64);
         assert!(self
@@ -223,10 +228,9 @@ impl Script {
             drawpipe::Stats { edges: &mut [0; 4], off: &mut (0.0, 0.0) },
             Some(&mut self.window),
         );
-        assert_eq!(accepted.frames, u64::from(grant));
+        assert_eq!(accepted.frames, u64::from(records));
         self.records += accepted.frames;
         self.now += drawpipe::budget::PICTURE_PERIOD;
-        grant
     }
 
     fn assert_conservation(&self) {
@@ -237,6 +241,19 @@ impl Script {
         assert_eq!(counters.read().2, 0);
         assert!(counters.pipeline_text(WORK_BUDGET, 0).contains("intake.unexpected_full=0"));
     }
+}
+
+#[test]
+fn a_full_rate_reference_deposits_without_training_the_batch_grant() {
+    let mut script = Script::new();
+    let peak_cost = Duration::from_micros(750);
+    script.read(peak_cost, Duration::ZERO);
+    for _ in 0..4 {
+        let clock = StageClock::from(script.now).with_reference_admission().pool_for_test(Duration::from_millis(8));
+        script.place(1, clock);
+    }
+    assert_eq!(script.read(peak_cost, Duration::ZERO), 16);
+    script.assert_conservation();
 }
 
 #[test]

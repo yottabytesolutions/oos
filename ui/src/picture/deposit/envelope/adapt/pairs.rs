@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Live and deep-memory pair envelopes. Both words belong to the column of the pair centre.
 
-use super::super::{ColumnEdges, Correction, Envelopes, Extrema};
+use super::super::{ColumnEdges, Correction, Extrema};
 use crate::drawpipe::stage::fixture_stage;
 use crate::fastdraw::{self, code_rows::RowTable, Codes, Map, Samples, Spans};
 use std::ops::Range;
@@ -113,40 +113,50 @@ fn pair_spans<T: Copy + PartialOrd>(
     }
 }
 
-pub(in crate::picture::deposit::envelope) fn join_codes<const N: usize>(
-    words: &[[u16; N]],
-    correction: &Correction<N>,
-    edges: &ColumnEdges,
-    (dots, x_per_sample): (bool, f64),
-    out: &mut Envelopes<N>,
-) {
-    if dots {
-        return;
-    }
-    let len = words.len();
-    let bridge_gaps = x_per_sample > 0.5;
-    let mut gaps = GapBridge(None);
-    let ranges = edges.ranges();
-    for ((column, &previous), &[first, end]) in
-        out.columns.iter_mut().zip(&ranges.previous_pair).zip(ranges.first.array_windows())
-    {
-        if first == end {
-            if bridge_gaps {
-                *column = gaps
-                    .span(first, len, |left, right| {
-                        let left = code_pair(words, correction, left);
-                        let right = code_pair(words, correction, right);
-                        let mut bridge = left;
-                        for lane in 0..N {
-                            (bridge.low[lane], bridge.high[lane]) =
-                                connecting_span((left.low[lane], left.high[lane]), (right.low[lane], right.high[lane]));
-                        }
-                        bridge
-                    })
-                    .unwrap_or(Extrema::EMPTY);
-            }
-            continue;
+/// Join the predecessor as each column leaves the reducer, before storing its extrema.
+pub(in crate::picture::deposit::envelope) struct CodeJoin<'a, const N: usize> {
+    words: &'a [[u16; N]],
+    correction: &'a Correction<N>,
+    previous: &'a [usize],
+    bridge_gaps: bool,
+    gaps: GapBridge<Extrema<N>>,
+}
+
+impl<'a, const N: usize> CodeJoin<'a, N> {
+    pub(in crate::picture::deposit::envelope) fn new(
+        words: &'a [[u16; N]],
+        correction: &'a Correction<N>,
+        edges: &'a ColumnEdges,
+        x_per_sample: f64,
+    ) -> Self {
+        Self {
+            words,
+            correction,
+            previous: &edges.ranges().previous_pair,
+            bridge_gaps: x_per_sample > 0.5,
+            gaps: GapBridge(None),
         }
+    }
+
+    #[inline]
+    pub(in crate::picture::deposit::envelope) fn finish(
+        &mut self,
+        index: usize,
+        [first, end]: [usize; 2],
+        mut column: Extrema<N>,
+    ) -> Extrema<N> {
+        let (words, correction) = (self.words, self.correction);
+        let len = words.len();
+        if first == end {
+            if !self.bridge_gaps {
+                return column;
+            }
+            return self
+                .gaps
+                .span(first, len, |left, right| bridge(words, correction, left, right))
+                .unwrap_or(Extrema::EMPTY);
+        }
+        let previous = self.previous[index];
         if previous < len {
             let pair = code_pair(words, correction, previous);
             for lane in 0..N {
@@ -154,7 +164,19 @@ pub(in crate::picture::deposit::envelope) fn join_codes<const N: usize>(
                 column.high[lane] = column.high[lane].max(pair.low[lane]);
             }
         }
+        column
     }
+}
+
+fn bridge<const N: usize>(words: &[[u16; N]], correction: &Correction<N>, left: usize, right: usize) -> Extrema<N> {
+    let left = code_pair(words, correction, left);
+    let right = code_pair(words, correction, right);
+    let mut result = left;
+    for lane in 0..N {
+        (result.low[lane], result.high[lane]) =
+            connecting_span((left.low[lane], left.high[lane]), (right.low[lane], right.high[lane]));
+    }
+    result
 }
 
 #[inline]

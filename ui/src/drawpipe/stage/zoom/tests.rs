@@ -55,6 +55,37 @@ fn prepared() -> Prepared {
 }
 
 #[test]
+fn zoom_peak_pairs_with_statistics_do_not_decode() {
+    use crate::drawpipe::tests::Bytes;
+
+    let mut m = model(1);
+    m.acq = AcqMode::Peak;
+    m.meas = vec![(Meas::Vpp, WaveId::Ch(0))];
+    let view = view(m, Some(1e-6));
+    let frame_bytes = 2 * 8784;
+    let codes: CodesInto = Arc::new(|_, _, frame| {
+        frame.envelope = true;
+        frame.fixed_ti = Some(4388.0);
+        frame.pre = 4388;
+        frame.acq = (78_125_000.0, 8784);
+        frame.dt = 1.0 / frame.acq.0;
+        let layout =
+            CodeLayout::uncorrected(1, [Some(0), None, None, None], [(1.0, 0.0); NCH], |code, _| f32::from(code));
+        Some(layout.with_reduced_capture(true))
+    });
+    let decode: DecodeInto = Arc::new(|_, _| panic!("zoom placement must not decode live Peak pairs"));
+    let pipe = Pipe::start(0, 0, Box::leak(Box::default()));
+    let batch =
+        pipe.feed_batch(Box::new(Bytes(vec![0; frame_bytes])), frame_bytes, 0..1, (0, None), decode, Some(codes));
+    let mut p = prepared();
+    p.folds = crate::framestats::folds_for(&view.m);
+    super::super::place(&batch, &view, &mut p, &mut Frame::default());
+    assert!(p.plan.is_some() && p.zoom_plan().is_some());
+    assert!(!p.measured);
+    assert_eq!(p.folds[0].1.n, 0);
+}
+
+#[test]
 fn zoom_seed_starts_with_enough_records_for_the_placement_workers() {
     use crate::drawpipe::admission::{model_pool, Grant};
 

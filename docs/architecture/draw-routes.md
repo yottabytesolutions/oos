@@ -1,5 +1,12 @@
 # Draw routes and volts conversions
 
+In reduced-Peak capture, a draw-only batch uses the stored-word time axis and the hardware trigger position.
+It shares the integer `pairs` reducer with play-compressed batches. Its measurement folds return without decoding
+the pairs, so readers compute statistics from the full-rate reference. The reference, due every 200 ms,
+publishes a decoded reader waveform and can contribute to `volts` when painted as dense lines. References hold
+the same in-flight slot as Peak batches. Their cost is recorded in worker timings and excluded from the batch
+admission estimate in `source.v1`.
+
 This is a source audit of the pipeline after batch became its only form, and of its module split. The record forms below
 are the forms the unit code can route. Frequency and reachability in a particular hardware setup require capture
 evidence. A single record can use codes for its picture and volts for trigger refinement, diagnostics, statistics

@@ -64,6 +64,9 @@ impl ColumnEdges {
         let grid = &mut self.grids[index];
         let record = (len, map.ti.to_bits());
         if grid.record != Some(record) {
+            if pairs && grid.record.is_some_and(|(_, phase)| phase != record.1) {
+                grid.prepare_pair_phases(width, map);
+            }
             grid.update(width, len, map, pairs);
             grid.record = Some(record);
             #[cfg(test)]
@@ -98,9 +101,14 @@ impl Grid {
         if pairs {
             self.ranges.previous_pair.clear();
             self.ranges.previous_pair.reserve(width + 1);
-            if [self.inverse[0], self.inverse[width]].into_iter().all(|x| x.abs() < MAX_COORDINATE) {
-                self.forward.extend((0..=width).map(|column| Forward::new(column, map)));
-            }
+            self.forward.reserve(width + 1);
+        }
+    }
+
+    fn prepare_pair_phases(&mut self, width: usize, map: &Map) {
+        // Fixed trigger positions reuse the exact first range. Only changing phases need thresholds.
+        if self.forward.is_empty() && self.inverse[0].abs().max(self.inverse[width].abs()) < MAX_COORDINATE {
+            self.forward.extend((0..=width).map(|column| Forward::new(column, map)));
         }
     }
 
@@ -125,8 +133,8 @@ impl Grid {
                 self.ranges.previous_pair.push(previous_pair(inverse_pair(map.ti + inverse)));
             }
         } else {
-            for column in columns {
-                let (start, end) = legacy_pair_edge(column, len, map);
+            for (column, &inverse) in columns.clone().zip(&self.inverse[columns]) {
+                let (start, end) = exact_pair_edge(column, len, map, inverse);
                 self.ranges.first.push(start);
                 self.ranges.previous_pair.push(end);
             }
@@ -242,9 +250,8 @@ fn previous_pair(inverse: i64) -> usize {
     usize::try_from(inverse.saturating_sub(1)).ok().and_then(|index| index.checked_mul(2)).unwrap_or(usize::MAX)
 }
 
-fn legacy_pair_edge(column: usize, len: usize, map: &Map) -> (usize, usize) {
-    let edge = map.ti + (column as f64 - map.x0) / map.x_per_sample;
-    let inverse = inverse_pair(edge);
+fn exact_pair_edge(column: usize, len: usize, map: &Map, inverse: f64) -> (usize, usize) {
+    let inverse = inverse_pair(map.ti + inverse);
     let pairs = len.div_ceil(2);
     let mut pair = (inverse.max(0) as usize).min(pairs);
     while pair > 0 && centre(pair - 1, map) >= column as f64 {

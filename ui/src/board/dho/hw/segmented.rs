@@ -92,6 +92,9 @@ impl<'a, B: Bus, R: std::io::Read> SegmentIo<'a, B, R> {
         }
         let (cmd, running, want) = {
             let g = lock(self.out);
+            if publication::boundary(Some((id.gen(), id.epoch())), g.acquisition.identity()) {
+                return Ok(());
+            }
             (g.seg.run, g.seg.running && !g.hold, g.seg.want)
         };
         if running && run.as_ref().is_none_or(|r| r.run != cmd) {

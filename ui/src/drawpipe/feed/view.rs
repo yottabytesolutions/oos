@@ -4,6 +4,13 @@
 
 use super::*;
 
+#[derive(Default)]
+pub(crate) struct PreparedView {
+    state: ViewState,
+    changed: bool,
+    retired: Option<Arc<View>>,
+}
+
 pub(crate) fn same_pair(a: Option<oos_core::change::Identity>, b: Option<oos_core::change::Identity>) -> bool {
     match (a, b) {
         (Some(a), Some(b)) => (a.gen(), a.epoch()) == (b.gen(), b.epoch()),
@@ -56,15 +63,78 @@ pub(in crate::drawpipe) fn set_view(
     m: Option<&Model>,
     (w, h): (usize, usize),
     interp: Interp,
-    identity: Option<oos_core::change::Identity>,
-    zoom: Option<route::ZoomView>,
-) {
+    publication: Option<(Identity, Option<route::ZoomView>)>,
+) -> bool {
     let mut v = oos_hal::sync::lock(&pipe.view);
-    let Some(m) = m else {
+    let identity = publication.map(|(id, _)| id);
+    if let Some(m) = m {
+        if update_view(&mut v, m, (w, h), interp, identity, publication.and_then(|(_, zoom)| zoom)) {
+            crate::pacing::VIEWS.fetch_add(1, Ordering::Relaxed);
+        }
+    } else {
         (v.view, v.key) = (None, None);
+    }
+    if let Some(id) = identity {
+        return stage_identity(pipe, &mut v, id, m.is_some());
+    }
+    if m.is_none() {
         pipe.retire_tap_plan();
-        return;
-    };
+    }
+    false
+}
+
+pub(in crate::drawpipe) fn prepare_view(
+    pipe: &Pipe,
+    m: &Model,
+    size: (usize, usize),
+    interp: Interp,
+    identity: Identity,
+    zoom: Option<route::ZoomView>,
+) -> PreparedView {
+    let mut current = oos_hal::sync::lock(&pipe.view);
+    let spare = current.spare.take();
+    let mut state = current.clone();
+    drop(current);
+    state.spare = spare;
+    let changed = update_view(&mut state, m, size, interp, Some(identity), zoom);
+    PreparedView { state, changed, retired: None }
+}
+
+pub(in crate::drawpipe) fn stage_view(pipe: &Pipe, prepared: &mut PreparedView, active: bool, identity: Identity) {
+    let mut view = oos_hal::sync::lock(&pipe.view);
+    // Leave the displaced view with the caller so its model can be dropped after Shared is released.
+    if active {
+        std::mem::swap(&mut *view, &mut prepared.state);
+        if prepared.changed {
+            std::mem::swap(&mut view.spare, &mut prepared.state.view);
+            crate::pacing::VIEWS.fetch_add(1, Ordering::Relaxed);
+        }
+    } else {
+        std::mem::swap(&mut view.view, &mut prepared.retired);
+        view.key = None;
+    }
+    stage_identity(pipe, &mut view, identity, active);
+}
+
+pub(in crate::drawpipe) fn stage_identity(pipe: &Pipe, v: &mut ViewState, id: Identity, active: bool) -> bool {
+    let changed = !same_pair(v.identity, Some(id));
+    if changed {
+        pipe.counters.metrics.set_identity(id);
+        pipe.admission.set_identity(id);
+    }
+    pipe.slot.stage_tap_view(id, active);
+    v.identity = Some(id);
+    changed
+}
+
+fn update_view(
+    v: &mut ViewState,
+    m: &Model,
+    (w, h): (usize, usize),
+    interp: Interp,
+    identity: Option<Identity>,
+    zoom: Option<route::ZoomView>,
+) -> bool {
     let layout = zoom
         .map_or_else(|| oos_core::change::Layout::new((w, h), (0, 0), (0, 0), None, 0, 0), |zoom| zoom.layout((w, h)));
     let key = oos_core::change::WorkerViewKey::of(m, layout, &crate::model::config());
@@ -77,31 +147,21 @@ pub(in crate::drawpipe) fn set_view(
         v.mapping_key = Some(mapping_key);
     }
     if worker_changed || statistics {
-        crate::pacing::VIEWS.fetch_add(1, Ordering::Relaxed);
         v.gen += u64::from(worker_changed);
         let mut spare = v.spare.take();
         // Readers may still hold the retired projection. Reuse its storage only when the publisher owns it alone.
-        let view = if let Some(view) = spare.as_mut().and_then(Arc::get_mut) {
+        v.view = if let Some(view) = spare.as_mut().and_then(Arc::get_mut) {
             oos_core::change::refresh(&mut view.m, m);
             (view.gen, view.interp, view.w, view.h, view.zoom) = (v.gen, interp, w, h, zoom);
             spare
         } else {
             Some(Arc::new(View { gen: v.gen, m: m.clone(), interp, w, h, zoom }))
         };
-        v.spare = std::mem::replace(&mut v.view, view);
         v.key = Some(key);
     }
     #[cfg(test)]
     {
         v.stamp = m.hw_stamp;
     }
-    if let Some(id) = identity {
-        if !same_pair(v.identity, Some(id)) {
-            pipe.counters.metrics.set_identity(id);
-            pipe.admission.set_identity(id);
-            pipe.source.notify();
-            pipe.slot.set_tap_identity(id);
-        }
-        v.identity = Some(id);
-    }
+    worker_changed || statistics
 }

@@ -11,8 +11,8 @@ mod placement;
 mod rejected;
 mod view;
 pub(super) use placement::{input as placement_input, words as placement_words};
-pub(crate) use view::same_pair;
-pub(super) use view::{batch_view, set_view};
+pub(super) use view::{batch_view, prepare_view, set_view, stage_identity, stage_view};
+pub(crate) use view::{same_pair, PreparedView};
 
 pub(super) struct Header {
     pair: (u64, u64),
@@ -84,8 +84,8 @@ impl Pipe {
     pub(crate) fn retire_tap_plan(&self) {
         self.slot.retire_tap_plan();
     }
-    pub(crate) fn hold_taps(&self, hold: bool) {
-        self.slot.hold_taps(hold);
+    pub(crate) fn stage_tap_hold(&self, hold: bool) {
+        self.slot.stage_tap_hold(hold);
     }
     #[cfg(any(target_os = "linux", test))]
     pub(crate) fn has_tap_plan(&self, id: Identity, format: [u64; 6]) -> bool {

@@ -6,6 +6,36 @@ use crate::fastdraw::{Codes, Samples};
 use crate::model::*;
 
 #[test]
+fn superseded_worker_output_cannot_enter_the_handoff() {
+    use super::{Deposit, Handoff, Tap, TapProjection};
+    use oos_core::change::{Identity, Request, Shadow, UiAcq};
+    use std::sync::Arc;
+
+    let model = Model::default();
+    let config = crate::model::config();
+    let mut shadow = Shadow::new(&model, UiAcq::default(), &config).unwrap();
+    let old = Identity::default();
+    let new = shadow.observe(&model, UiAcq::default(), &[Request::Run], &config).unwrap().identity();
+    let handoff = Arc::new(Handoff::default());
+    handoff.stage_tap_view(old, true);
+    let deposit = || Deposit::new(1, (1, 1), Some(old), [true; 4]);
+    let tap = || Tap { frame: Arc::default(), identity: Some(old), projection: TapProjection::Unpainted, folds: None };
+    let charge = handoff.reserve_tap(0, 1, Some(old)).unwrap();
+    assert!(handoff.put(deposit()).is_ok());
+    std::thread::scope(|scope| {
+        let sender = scope.spawn(|| handoff.send(deposit()).is_err());
+        handoff.wait_for_sender();
+        handoff.stage_tap_view(new, true);
+        handoff.wake_tap_commands();
+        assert!(sender.join().unwrap(), "a stale deposit loses eligibility while waiting for space");
+    });
+    assert!(handoff.take().is_some(), "the deposit staged before the cutover is still available to the composer");
+    assert!(handoff.put(deposit()).is_err());
+    assert!(handoff.send_tap(tap(), 1, Some(&charge)).is_none());
+    assert!(handoff.send_tap(tap(), 1, None).is_none());
+}
+
+#[test]
 fn pacing_observes_the_publication_after_an_occupied_slot_is_released() {
     use super::{Deposit, Handoff};
     use std::sync::atomic::{AtomicBool, Ordering};
@@ -30,7 +60,7 @@ fn pacing_observes_the_publication_after_an_occupied_slot_is_released() {
                 read + delay + Duration::from_micros(service)
             };
             let elapsed = handoff
-                .send_timed_with(next, false, now, |origin, published| {
+                .send_timed_with(next, now, |origin, published| {
                     assert_eq!(origin, Some(read));
                     assert_eq!(published - read, period + Duration::from_micros(1));
                 })

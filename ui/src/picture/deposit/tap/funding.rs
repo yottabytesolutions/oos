@@ -170,6 +170,11 @@ impl Handoff {
         self.space.notify_all();
     }
 
+    #[cfg(test)]
+    pub(crate) fn tap_command_generation(&self) -> u64 {
+        lock(&self.state).commands
+    }
+
     pub(crate) fn require_tap_funding(&self) {
         lock(&self.state).taps.admission.staged = true;
     }
@@ -216,14 +221,13 @@ impl Handoff {
         }
     }
 
-    pub(crate) fn hold_taps(&self, hold: bool) {
+    pub(crate) fn stage_tap_hold(&self, hold: bool) {
         let mut state = lock(&self.state);
         let admission = &mut state.taps.admission;
         admission.held = hold;
         if hold {
             admission.stop_generation += 1;
             admission.plan = None;
-            self.space.notify_all();
         }
     }
 

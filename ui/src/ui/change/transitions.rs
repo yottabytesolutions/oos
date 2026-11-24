@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Run consumers act once on the accepted change, before acquisition publication.
+//! Stage run consumers before publication and poll segment replies afterwards.
 
 use super::*;
 
 /// A plain STOP drains a serial capture or waits for the final read needed by the current view.
-fn wants_final_record(ui: &Ui) -> bool {
+pub(super) fn wants_final_record(ui: &Ui, serial: bool) -> bool {
     let m = &ui.m;
     let Some(record) = ui.last[0].as_ref() else { return false };
     if !ui.src.is_hw()
@@ -19,7 +19,7 @@ fn wants_final_record(ui: &Ui) -> bool {
         return false;
     }
     let frame = record.raw.as_ref().map(|raw| raw.frame.as_ref());
-    ui.src.hw_serial()
+    serial
         || frame.is_some_and(|f| {
             crate::compress::live(f) || (crate::deepmeas::want(m).is_some() && crate::deepmeas::deep_pairs(f))
         })
@@ -27,19 +27,11 @@ fn wants_final_record(ui: &Ui) -> bool {
             && (m.la_on() || frame.is_some_and(|f| f.acq.1 > crate::compress::MAX_DEPTH as usize))
 }
 
-pub(super) fn apply(ui: &mut Ui) -> bool {
-    let Some(prepared) = ui.host.runtime().change.prepared.as_ref() else {
-        // Keep servicing the last accepted run and any outstanding final read on rejection.
-        // New run effects, average/history resets and final-read requests need acceptance.
-        let final_done = ui.src.hw_hold(!ui.was_running && (ui.last[0].is_some() || ui.cleared), ui.final_req);
-        if ui.seg_hw_on() || ui.seg_view.is_some() || ui.seg_pos.is_some() {
-            ui.seg_poll(ui.was_running && ui.seg_hw_on());
-        }
-        if !ui.was_running {
-            ui.cancel_demo_acquisition();
-        }
-        return final_done;
-    };
+pub(super) fn stage(ui: &mut Ui) {
+    let Some(prepared) = ui.host.runtime_mut().change.prepared.as_mut() else { return };
+    if std::mem::replace(&mut prepared.transitioned, true) {
+        return;
+    }
     let (running, run_edge, single) = (!prepared.stopped, prepared.run_edge, prepared.single);
     let id = prepared.changes.identity();
     let pair_changed = ui
@@ -49,29 +41,21 @@ pub(super) fn apply(ui: &mut Ui) -> bool {
         .last
         .as_ref()
         .is_none_or(|c| (c.identity().gen(), c.identity().epoch()) != (id.gen(), id.epoch()));
-    let segment_boundary = running && ui.seg_hw_on() && (single || pair_changed);
-    if segment_boundary || run_edge && ui.seg_hw_on() {
+    if running && ui.seg_hw_on() && (run_edge || single || pair_changed) {
         restart_segments(ui);
     } else if running && single && ui.m.segments > 0 {
         super::consumers::apply_classes(ui, C::HISTORY);
     }
-    let hold = !running && (ui.last[0].is_some() || ui.cleared);
-    let mut final_done = ui.src.hw_hold(hold, ui.final_req);
-    // Freeze the source before checking whether a serial capture can still arrive.
-    if hold && ui.was_running && wants_final_record(ui) {
-        ui.final_req += 1;
-        ui.stop_final = Some(ui.now + STOP_FINAL_WAIT);
-        final_done = ui.src.hw_hold(hold, ui.final_req);
-    }
-    ui.was_running = running;
+}
+
+pub(super) fn poll(ui: &mut Ui) {
     if ui.seg_hw_on() || ui.seg_view.is_some() || ui.seg_pos.is_some() {
-        ui.seg_poll(running && ui.seg_hw_on());
+        ui.seg_poll();
     }
     // stopped: a full-depth demo capture still under way is dropped
-    if !running {
+    if !ui.was_running {
         ui.cancel_demo_acquisition();
     }
-    final_done
 }
 
 fn restart_segments(ui: &mut Ui) {

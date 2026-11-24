@@ -230,13 +230,17 @@ struct Slot {
 }
 
 impl Slot {
+    fn accepts(&self, deposit: &Deposit) -> bool {
+        !deposit.predates(self.reset_before) && self.taps.accepts_deposit(deposit.identity)
+    }
+
     fn occupied(&self) -> bool {
         self.claimed || self.pending.is_some()
     }
 
     #[expect(clippy::result_large_err, reason = "Return the rejected deposit without allocating a box")]
     fn put(&mut self, mut deposit: Deposit) -> Result<(), Deposit> {
-        if self.closed || self.occupied() || deposit.predates(self.reset_before) {
+        if self.closed || self.occupied() || !self.accepts(&deposit) {
             return Err(deposit);
         }
         deposit.extent.clocks().published();
@@ -347,28 +351,24 @@ impl Handoff {
 
     #[expect(clippy::result_large_err, reason = "Return the rejected deposit without allocating a box")]
     pub(crate) fn send(&self, deposit: Deposit) -> Result<(), Deposit> {
-        self.send_timed(deposit, false).map(|_| ())
+        self.send_timed(deposit).map(|_| ())
     }
 
     /// Returns the time spent placing the deposit into the slot once space is available.
     #[expect(clippy::result_large_err, reason = "Return the rejected deposit without allocating a box")]
-    pub(crate) fn send_timed(&self, deposit: Deposit, admitted: bool) -> Result<Duration, Deposit> {
-        self.send_timed_with(deposit, admitted, Instant::now, crate::pacing::ready)
+    pub(crate) fn send_timed(&self, deposit: Deposit) -> Result<Duration, Deposit> {
+        self.send_timed_with(deposit, Instant::now, crate::pacing::ready)
     }
 
     #[expect(clippy::result_large_err, reason = "Return the rejected deposit without allocating a box")]
     fn send_timed_with(
         &self,
         deposit: Deposit,
-        admitted: bool,
         now: impl Fn() -> Instant,
         ready: impl FnOnce(Option<Instant>, Instant),
     ) -> Result<Duration, Deposit> {
-        let current = |state: &Slot| {
-            !deposit.predates(state.reset_before) && (!admitted || state.taps.accepts_deposit(deposit.identity))
-        };
         let mut state = oos_hal::sync::lock(&self.state);
-        while state.occupied() && !state.closed && current(&state) {
+        while state.occupied() && !state.closed && state.accepts(&deposit) {
             #[cfg(test)]
             {
                 state.waiting = true;
@@ -380,10 +380,6 @@ impl Handoff {
         {
             state.waiting = false;
         }
-        if state.closed || !current(&state) {
-            return Err(deposit);
-        }
-
         let publishing = now();
         let read = deposit.ready_origin();
         let result = state.put(deposit).map(|()| now());

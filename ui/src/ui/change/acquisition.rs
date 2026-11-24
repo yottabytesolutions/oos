@@ -3,8 +3,44 @@
 //! The change point owns acquisition publication; legacy reset consumers remain at their old seams.
 
 use super::*;
-use crate::perfguard::deep::ui_lock as lock;
+use crate::{
+    board::{self, identity::Publication},
+    drawpipe::{Pipe, PreparedView},
+    perfguard::deep::ui_lock as lock,
+};
 use oos_core::change::{Identity, Requester};
+
+struct HardwareRequest {
+    publication: Publication,
+    want: board::Want,
+    slow: board::Slow,
+    deep_raw: Option<crate::deepmeas::Want>,
+    mask: Option<board::MaskWant>,
+    zone: Option<board::ZoneWant>,
+    needs_raw: bool,
+    avg_clear: u64,
+    cores: bool,
+    afg: [Option<board::Gen>; NGEN],
+}
+
+impl HardwareRequest {
+    fn of(ui: &Ui, model: &Model, needs: UiAcq, id: Identity) -> Self {
+        let sw = ui.switches();
+        let gen_count = crate::model::gen_count();
+        Self {
+            publication: Publication::new(id, needs.route()),
+            want: want(model, sw, needs.mixed_bus()),
+            slow: board().slow_mode(model),
+            deep_raw: crate::deepmeas::want(model),
+            mask: ui.mask_hw_want(),
+            zone: ui.zone_hw_want(),
+            needs_raw: needs.raw(),
+            avg_clear: ui.m.hw_avg_clear,
+            cores: model.cores,
+            afg: std::array::from_fn(|i| (i < gen_count).then(|| board().gen(&model.gen_ch(i)))),
+        }
+    }
+}
 
 pub(crate) fn identity(ui: &Ui) -> Identity {
     let observer = &ui.host.runtime().change;
@@ -16,65 +52,136 @@ pub(crate) fn identity(ui: &Ui) -> Identity {
         .unwrap_or_default()
 }
 
-pub(in crate::ui) fn publish(ui: &mut Ui) {
-    let Some(prepared) = ui.host.runtime().change.prepared.as_ref() else { return };
-    let id = prepared.changes.identity();
-    let Some(shadow) = &ui.host.runtime().change.shadow else { return };
-    let (model, needs) = (shadow.accepted(), shadow.needs());
+pub(super) fn publish(ui: &mut Ui) -> bool {
+    let shared = match &ui.src {
+        Source::Hw { shared, .. } => Some(shared),
+        _ => None,
+    };
+    let Some(prepared) = ui.host.runtime().change.prepared.as_ref() else {
+        return shared.is_some_and(|shared| final_done(&lock(shared), ui.final_req));
+    };
+    let running = !prepared.stopped;
     if let Some(clocks) = &ui.host.runtime().clocks {
-        clocks.update(ui.src.is_hw() && model.run == RunState::Run);
+        clocks.update(shared.is_some() && running);
     }
-    let sw = ui.switches();
-    let pipe = if ui.src.is_hw() && model.run == RunState::Run {
-        Some(crate::drawpipe::start_pipe(sw))
+    let pipe = if shared.is_some() && running {
+        Some(crate::drawpipe::start_pipe(ui.switches()))
     } else {
         crate::drawpipe::pipe()
     };
-    if let Some(pipe) = pipe {
-        if ui.src.is_hw()
-            && (model.run == RunState::Run || ui.stop_final.is_some())
-            && needs.route()
-            && prepared.workers
-        {
-            let zoom = model.zoom.then(|| step_draw::zoom_view(ui));
-            pipe.publish_picture_view(model, (ui.ph.w, ui.ph.h), sw.interp, id, zoom);
-        } else {
-            pipe.set_view(None, 0, 0, sw.interp);
-            pipe.set_identity(id);
+    let Some(shared) = shared else {
+        if let Some(pipe) = pipe {
+            pipe.set_view(None, 0, 0, ui.switches().interp);
+            pipe.set_identity(prepared.changes.identity());
         }
-    } else if ui.src.is_hw() {
+        return false;
+    };
+    let (done, final_req) = publish_hardware(ui, shared, pipe, prepared);
+    if let Some(req) = final_req {
+        ui.final_req = req;
+        ui.stop_final = Some(ui.now + STOP_FINAL_WAIT);
+    }
+    done
+}
+
+fn publish_hardware(
+    ui: &Ui,
+    shared: &board::HwShared,
+    pipe: Option<&Pipe>,
+    prepared: &Prepared,
+) -> (bool, Option<u64>) {
+    let running = !prepared.stopped;
+    let hold = !running && (ui.last[0].is_some() || ui.cleared);
+    let can_drain = hold && ui.was_running && transitions::wants_final_record(ui, true);
+    let needs_drain = can_drain && transitions::wants_final_record(ui, false);
+    let id = prepared.changes.identity();
+    let shadow = ui.host.runtime().change.shadow.as_ref().expect("the accepted change has a normalized model");
+    let (model, needs) = (shadow.accepted(), shadow.needs());
+    let hardware = HardwareRequest::of(ui, model, needs, id);
+    let draw = needs.route() && prepared.workers;
+    let mut view = pipe
+        .filter(|_| draw && (running || ui.stop_final.is_some() || can_drain))
+        .map(|pipe| {
+            let zoom = model.zoom.then(|| step_draw::zoom_view(ui));
+            pipe.prepare_picture_view(model, (ui.ph.w, ui.ph.h), ui.switches().interp, id, zoom)
+        })
+        .unwrap_or_default();
+    let mut g = lock(shared);
+    let drain = can_drain && (g.record_flow.serial || needs_drain);
+    let req = ui.final_req + u64::from(drain);
+    let commit = || {
+        let active = draw && (running || ui.stop_final.is_some() || drain);
+        stage(ui, &mut g, pipe, (&mut view, active), hardware, running);
+        Source::stage_hold(&mut g, hold, req);
+        #[cfg(test)]
+        {
+            g.record_flow.acquisition_commit = Some((g.acquisition.identity(), g.record_flow.command_generations()));
+        }
+        g.record_flow.wake();
+        final_done(&g, req)
+    };
+    #[cfg(not(test))]
+    let done = commit();
+    #[cfg(test)]
+    let done = {
+        let (allocations, done) = crate::system::test_allocator::count_own(commit);
+        g.record_flow.acquisition_commit_allocations = allocations;
+        done
+    };
+    (done, drain.then_some(req))
+}
+
+fn final_done(g: &crate::board::Shared, req: u64) -> bool {
+    g.final_ack >= req && g.queue.is_empty()
+}
+
+fn stage(
+    ui: &Ui,
+    g: &mut board::Shared,
+    pipe: Option<&Pipe>,
+    (view, active): (&mut PreparedView, bool),
+    hardware: HardwareRequest,
+    running: bool,
+) {
+    let id = hardware.publication.identity();
+    if let Some(pipe) = pipe {
+        pipe.stage_picture_view(view, active, id);
+    } else {
         crate::drawpipe::counters().metrics.set_identity(id);
     }
-    let Source::Hw { shared, .. } = &ui.src else { return };
-    let mut g = lock(shared);
     if g.acquisition.identity().gen() != id.gen() {
         crate::pacing::changed();
     }
-    g.want = Some(want(model, sw, needs.mixed_bus()));
-    g.slow = board().slow_mode(model);
-    g.deep_raw = crate::deepmeas::want(model);
-    g.mask_want = ui.mask_hw_want();
-    g.zone_want = ui.zone_hw_want();
-    g.needs_raw = needs.raw();
-    g.avg_clear = ui.m.hw_avg_clear;
-    g.cores = model.cores;
-    if model.run == RunState::Run {
-        // running: no STOP view any more, the thread acquires again
+    g.want = Some(hardware.want);
+    g.slow = hardware.slow;
+    g.deep_raw = hardware.deep_raw;
+    g.mask_want = hardware.mask;
+    g.zone_want = hardware.zone;
+    g.needs_raw = hardware.needs_raw;
+    g.avg_clear = hardware.avg_clear;
+    g.cores = hardware.cores;
+    segment_quota(ui, g, id);
+    let hardware_segments = ui.seg_hw_on();
+    if hardware_segments || g.seg.running || ui.seg_view.is_some() || ui.seg_pos.is_some() {
+        Source::stage_segments(g, ui.seg_run, running && hardware_segments);
+    }
+    g.record_flow.cost.set_identity(id);
+    g.acquisition = hardware.publication;
+    if running {
         (g.stop_view, g.replay) = (None, None);
     }
-    segment_quota(ui, &mut g, id);
-    g.record_flow.cost.set_identity(id);
-    g.acquisition = crate::board::identity::Publication::new(id, needs.route());
-    for i in 0..crate::model::gen_count() {
-        g.afg[i] = Some(board().gen(&model.gen_ch(i)));
+    for (slot, gen) in g.afg.iter_mut().zip(hardware.afg) {
+        if gen.is_some() {
+            *slot = gen;
+        }
     }
-    g.record_flow.wake();
     // This is a metrics mirror, never an identity source for a frame or batch.
     crate::pacing::WANTED.store(id.gen(), std::sync::atomic::Ordering::Relaxed);
     let before = g.queue.len();
     g.queue.retain(|f| current(f, id));
-    crate::drawpipe::Counters::add(&crate::drawpipe::counters().losses.ui_publish, (before - g.queue.len()) as u64);
-    crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, (before - g.queue.len()) as u64);
+    let removed = (before - g.queue.len()) as u64;
+    crate::drawpipe::Counters::add(&crate::drawpipe::counters().losses.ui_publish, removed);
+    crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, removed);
 }
 
 fn segment_quota(ui: &Ui, g: &mut crate::board::Shared, id: Identity) {
@@ -152,13 +259,8 @@ pub(in crate::ui) fn script_prepare_route(ui: &mut Ui, records: bool) -> Identit
         p.workers = !records;
     }
     let started = now(ui);
-    if super::consumers::apply(ui) {
-        let elapsed = since(ui, started);
-        ui.host.runtime_mut().change.timing.consumers(elapsed);
-    }
-    let started = now(ui);
-    publish(ui);
-    let elapsed = since(ui, started);
+    let (_, consumer_time) = settle::commit(ui);
+    let elapsed = since(ui, started).saturating_sub(consumer_time);
     ui.host.runtime_mut().change.timing.queue_change(elapsed);
     identity(ui)
 }

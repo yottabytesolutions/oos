@@ -5,8 +5,16 @@ use crate::board::{PictureEligibility, QueuedFrame};
 use crate::drawpipe::{self, TapRead};
 
 impl Source {
-    pub(crate) fn hw_serial(&self) -> bool {
-        matches!(self, Source::Hw { shared, .. } if crate::perfguard::deep::ui_lock(shared).record_flow.serial)
+    /// Stage the hold and final-record request under Shared. The caller publishes the wake.
+    pub(crate) fn stage_hold(g: &mut crate::board::Shared, hold: bool, req: u64) -> bool {
+        if g.hold != hold {
+            if let Some(pipe) = drawpipe::pipe() {
+                pipe.stage_tap_hold(hold);
+            }
+        }
+        let changed = g.hold != hold || g.final_req != req;
+        (g.hold, g.final_req) = (hold, req);
+        changed
     }
 
     /// Ask the acquisition thread for one force-trigger pulse. Other sources ignore it.
@@ -128,14 +136,7 @@ impl Source {
 
 pub(super) fn hold(shared: &crate::board::HwShared, hold: bool, req: u64) -> bool {
     let mut g = crate::perfguard::deep::ui_lock(shared);
-    if g.hold != hold {
-        if let Some(pipe) = drawpipe::pipe() {
-            pipe.hold_taps(hold);
-        }
-    }
-    let changed = g.hold != hold || g.final_req != req;
-    (g.hold, g.final_req) = (hold, req);
-    if changed {
+    if Source::stage_hold(&mut g, hold, req) {
         g.record_flow.wake();
     }
     g.final_ack >= req && g.queue.is_empty()

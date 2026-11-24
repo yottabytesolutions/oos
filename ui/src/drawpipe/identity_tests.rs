@@ -72,10 +72,10 @@ fn old_folds_cannot_refill_current_statistics() {
         let counters = Box::leak(Box::<Counters>::default());
         let pipe = Pipe::start(1, 0, counters);
         pipe.set_view(Some(&model), 8, 8, Interp::Exact);
-        pipe.set_identity(current);
         let gen = pipe.view.lock().unwrap().gen;
         let mut phosphor = Phosphor::new(8, 8);
         assert!(pipe.slot.put(accumulator(gen, Identity::default())).is_ok());
+        pipe.set_identity(current);
         let stale = pipe.accept(&mut phosphor, &mut false, &mut [0; 4], &mut (0.0, 0.0));
         assert!(stale.folds.is_empty(), "late folds must not refill reset statistics");
         assert_eq!(counters.losses.pipe.load(Ordering::Relaxed), u64::from(request == Request::Clear));

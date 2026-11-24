@@ -84,6 +84,8 @@ pub(super) enum Event {
     Stop,
     Run,
     SourceWake,
+    SettingsPublished,
+    SettingsApplied,
     RingClear(oos_core::change::Identity),
     Calibration(service::CalRequest),
     Generator(Option<Gen>),
@@ -178,11 +180,23 @@ pub(super) struct SimStream {
     edge_at: Option<usize>,
     run: Run,
     stop: Rc<StopSignals>,
+    on_dma: Option<DmaHook>,
+}
+
+type DmaHook = Box<dyn FnOnce(&mut Trace)>;
+
+impl SimStream {
+    pub(super) fn on_dma(&mut self, hook: impl FnOnce(&mut Trace) + 'static) {
+        self.on_dma = Some(Box::new(hook));
+    }
 }
 
 impl Read for SimStream {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
         let count = self.stream.read(bytes)?;
+        if let Some(hook) = self.on_dma.take() {
+            hook(&mut self.trace.borrow_mut());
+        }
         self.trace.borrow_mut().events.push(Event::Dma(count));
         let mark_first_sample =
             matches!(self.run, Run::Live(_) | Run::CompressedTap) || self.stop.done.get() == DoneRead::Cleared;
@@ -381,7 +395,12 @@ impl Port for Sim {
     }
 
     fn apply_settings(io: &mut Io<Self>, steps: &[seq::Step]) -> Result<(), String> {
-        io.execute(steps).map(|_| ())
+        io.execute(steps)?;
+        let mut trace = io.clock.trace.borrow_mut();
+        if trace.events.contains(&Event::SettingsPublished) {
+            trace.events.push(Event::SettingsApplied);
+        }
+        Ok(())
     }
 
     fn calibrate(io: &mut Io<Self>, _: &str, out: &HwShared, req: service::CalRequest) -> bool {
@@ -427,7 +446,7 @@ pub(super) fn fixture(
     });
     let io = Io {
         bar: SimBus { engine: bus, trace: trace.clone(), stop: signals.clone() },
-        c2h: SimStream { stream, trace: trace.clone(), edge_at, run, stop: signals.clone() },
+        c2h: SimStream { stream, trace: trace.clone(), edge_at, run, stop: signals.clone(), on_dma: None },
         clock: Virtual {
             origin: Instant::now(),
             engine,

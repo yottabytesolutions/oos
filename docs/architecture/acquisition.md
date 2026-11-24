@@ -171,8 +171,8 @@ One batch: arm, fill, read, post-read reads, publish. In order:
 
 1. STOP: hold prevents normal batch arming. A serial capture already armed can finish, and an eligible
    last batch can supply a final raw reread. A stopped-view request takes the replay path. Without that
-   view, the pass can still reach configuration before batch intake checks the hold. RUN releases the
-   hold before publishing the new epoch. See [STOP and RUN](frames.md#stop-and-run).
+   view, the pass can still reach configuration before batch intake checks the hold. RUN publishes
+   the new epoch before releasing the hold. See [STOP and RUN](frames.md#stop-and-run).
 2. SINGLE: one batch per epoch (`single_wants_more`).
 3. Hardware average: clear on `AvgClear`.
 4. Cap the plan by measured cost, hardware, read time and plane capacity. Reserve a DMA destination and any

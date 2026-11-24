@@ -198,10 +198,10 @@ fn config_only_pair_change_rejects_unshown_but_keeps_same_epoch_retained() {
     let id = shadow.observe(&m, UiAcq::default(), &[], &crate::model::config()).unwrap().identity();
     assert_ne!(id.gen(), f.id.gen());
     assert_eq!(id.epoch(), f.id.epoch());
+    f.put(32, 1, 1);
     let gen = oos_hal::sync::lock(&f.pipe.view).gen;
     f.pipe.publish_view(&m, 4, 4, crate::sparse::Interp::Exact, id);
     assert_eq!(oos_hal::sync::lock(&f.pipe.view).gen, gen);
-    f.put(32, 1, 1);
     let a = f.compose();
     assert_eq!(a.frames, 0);
     assert_eq!(a.window_frames, None);

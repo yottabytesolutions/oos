@@ -3,15 +3,39 @@
 use super::*;
 
 #[test]
+fn accepting_a_new_zoomed_view_does_not_allocate_with_shared_locked() {
+    use crate::{board::HwShared, ui::Ui, wave::Source};
+    use oos_hal::sync::lock;
+
+    let _scope = test_scope::Scope::new();
+    let shared = HwShared::default();
+    let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
+    // A full first step also warms the pacing mutex on hosts with lazy pthread locks.
+    ui.step(0.04);
+    let pipe = pipe().unwrap();
+    let before = lock(&pipe.view).gen;
+    ui.m.zoom = true;
+    ui.m.trig_level += 0.125;
+    crate::ui::change::settle(&mut ui);
+    let view = lock(&pipe.view);
+    assert_eq!(view.gen, before + 1);
+    assert!(view.view.as_ref().unwrap().zoom.is_some());
+    drop(view);
+    assert_eq!(lock(&shared).record_flow.acquisition_commit_allocations, 0);
+}
+
+#[test]
 fn mapping_publication_preserves_a_projection_held_by_a_reader() {
     use oos_hal::sync::lock;
 
     let pipe = Pipe::start(0, 0, fresh());
+    let identity = oos_core::change::Identity::default();
     let mut model = model(1e-6, false, false);
     let offset = model.ch[0].offset;
     let mut publish = |offset| {
         model.ch[0].offset = offset;
-        pipe.set_view(Some(&model), 970, 448, Interp::Exact);
+        let mut prepared = pipe.prepare_picture_view(&model, (970, 448), Interp::Exact, identity, None);
+        pipe.stage_picture_view(&mut prepared, true, identity);
         let state = lock(&pipe.view);
         let view = state.view.as_ref().unwrap();
         assert_eq!(view.m.ch[0].offset, offset);

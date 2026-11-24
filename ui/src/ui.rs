@@ -5998,10 +5998,9 @@ impl Ui {
         v
     }
 
-    /// Hardware segments: tells the thread about RUN/STOP, takes the times when the read-back is done, stops when every
-    /// segment is on the screen, shows a segment asked for.
-    fn seg_poll(&mut self, running: bool) {
-        let Some(v) = self.src.seg_sync(self.seg_run, running) else { return };
+    /// Read segment progress, stop when every segment is on screen, and show a requested segment.
+    fn seg_poll(&mut self) {
+        let Some((v, running)) = self.src.seg_status() else { return };
         self.seg_view = Some(v);
         if v.phase == crate::board::SegPhase::Idle {
             self.seg_times.clear();

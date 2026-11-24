@@ -8,14 +8,24 @@ use std::time::Duration;
 /// Reset consumers, run transitions and publication for the prepared change. Returns whether a STOP final read is
 /// done and the time the reset consumers took, which is not G2 change time.
 pub(super) fn accept(ui: &mut Ui) -> (bool, Duration) {
+    let result = commit(ui);
+    transitions::poll(ui);
+    result
+}
+
+/// Scripted producers need the committed identity before the step polls replies.
+pub(super) fn commit(ui: &mut Ui) -> (bool, Duration) {
     let consumer_start = now(ui);
     let reset = consumers::apply(ui);
     let consumer_time = if reset { since(ui, consumer_start) } else { Duration::ZERO };
-    let final_done = transitions::apply(ui);
+    transitions::stage(ui);
     if reset {
         ui.host.runtime_mut().change.timing.consumers(consumer_time);
     }
-    acquisition::publish(ui);
+    let final_done = acquisition::publish(ui);
+    if let Some(prepared) = &ui.host.runtime().change.prepared {
+        ui.was_running = !prepared.stopped;
+    }
     (final_done, consumer_time)
 }
 

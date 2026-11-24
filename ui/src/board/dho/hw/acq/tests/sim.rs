@@ -74,6 +74,7 @@ impl Frame {
 pub(super) enum Event {
     Write(u32, u32),
     Read(u32, u32),
+    ReadError(u32),
     Dma(usize),
     Wait(Duration),
     Park(Duration),
@@ -109,6 +110,7 @@ enum DoneRead {
     Normal,
     Cleared,
     AllOnes,
+    Error,
 }
 
 #[derive(Default)]
@@ -159,6 +161,14 @@ impl Bus for SimBus {
         }
         self.trace.borrow_mut().events.push(Event::Read(reg, value));
         value
+    }
+
+    fn try_rd(&mut self, reg: u32) -> io::Result<u32> {
+        if reg == 0x4080 && self.stop.pulse_at.get().is_some() && self.stop.done.get() == DoneRead::Error {
+            self.trace.borrow_mut().events.push(Event::ReadError(reg));
+            return Err(io::Error::other("simulated play-info failure"));
+        }
+        Ok(self.rd(reg))
     }
 }
 
@@ -361,6 +371,10 @@ impl Port for Sim {
 
             fn rd(&mut self, reg: u32) -> u32 {
                 self.0.rd(reg)
+            }
+
+            fn try_rd(&mut self, reg: u32) -> io::Result<u32> {
+                self.0.try_rd(reg)
             }
         }
         Borrowed(bus)

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, iter::Peekable};
 
 const SECTIONS: &[&str] = &["stage.v1", "work.v1", "route.v1", "source.v1", "present.v1", "fallback.v1"];
+const DISARM_KEYS: [&str; 5] = ["total", "unknown", "no_completed_record", "recorded", "dropped"];
 const RECORD_KEYS: [&str; 3] = ["records.read", "records.deposited", "records.shown"];
 pub(super) const SUMMARY_KEYS: &[&str] = &[
     "eligible",
@@ -49,6 +50,9 @@ impl State {
                         state.counters.insert(key.into(), i128::from(count));
                     }
                 }
+            } else if token == "disarm.v1" {
+                section = None;
+                state.add_disarm(&mut fields);
             } else if is_section(token) {
                 section = SECTIONS.contains(&token).then_some(token);
                 if let Some(name) = section {
@@ -59,6 +63,24 @@ impl State {
             }
         }
         state
+    }
+
+    fn add_disarm<'a>(&mut self, fields: &mut Peekable<impl Iterator<Item = &'a str>>) -> Option<()> {
+        let mut values = [("", 0); DISARM_KEYS.len()];
+        for (key, slot) in DISARM_KEYS.into_iter().zip(&mut values) {
+            let (name, value) = fields.peek().copied()?.split_once('=')?;
+            if name != key {
+                return None;
+            }
+            *slot = (value, value.parse::<u64>().ok()?);
+            fields.next();
+        }
+        let section = self.sections.entry("disarm.v1".into()).or_default();
+        for (key, (value, count)) in DISARM_KEYS.into_iter().zip(values) {
+            section.insert(key.into(), value.into());
+            self.counters.insert(format!("disarm.{key}"), i128::from(count));
+        }
+        Some(())
     }
 
     fn add_field(&mut self, section: Option<&str>, key: &str, value: &str) {
@@ -158,6 +180,16 @@ mod tests {
             ("fallback.v1", "decoded_lines", "0"),
         ] {
             assert_eq!(state.sections[section][key], value);
+        }
+    }
+
+    #[test]
+    fn parses_the_five_disarm_counters() {
+        let state = State::parse("disarm.v1 total=3 unknown=1 no_completed_record=1 recorded=1 dropped=2");
+        assert_eq!(state.sections["disarm.v1"].len(), 5);
+        for (key, count) in DISARM_KEYS.into_iter().zip([3, 1, 1, 1, 2]) {
+            assert_eq!(state.counters[&format!("disarm.{key}")], count);
+            assert_eq!(state.sections["disarm.v1"][key], count.to_string());
         }
     }
 

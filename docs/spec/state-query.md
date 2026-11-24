@@ -64,6 +64,25 @@ histogram quantiles; atomic fields are loaded independently with relaxed order,
 so the whole diagnostic answer is not an atomic multi-counter snapshot.
 
 
+## Disarm counters
+
+The current reply includes the following section. Each field is a saturating process-lifetime
+decimal counter.
+
+```text
+disarm.v1 total=N unknown=N no_completed_record=N recorded=N dropped=N
+```
+
+| Field | Meaning |
+|---|---|
+| `total` | Batch disarms observed, the saturating sum of the three outcomes. |
+| `unknown` | Disarms with missing or invalid status, a register read error, or unconfirmed STOPPED. |
+| `no_completed_record` | Confirmed disarms whose post-pulse play-info word has DONE clear. The pulse can clear DONE after a record completes. |
+| `recorded` | Confirmed disarms whose post-pulse play-info word has DONE set. |
+| `dropped` | Retained batches discarded because their newest slot was inside the programmed capture range. This includes failed captures that needed no disarm. |
+
+The range rule is independent of the reported outcome. Older matrix reports can omit the section entirely.
+
 ## UI summary and graphics timing
 
 | Requirement | Wire field / position | Type and unit | Meaning and source | Evidence |

@@ -172,7 +172,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
         }
         let clock = &io.clock;
         let (mut ahead, tap) = plan.prepare(&mut batch.dma, &mut batch.armed, clock, obsolete, |armed| {
-            armed.disarm(replay, out, || super::disarm(&mut io.state, &mut io.bar, &mut io.c2h, clock, out));
+            armed.disarm(replay, out, || super::disarm(&mut io.state, &mut io.bar, clock, out));
         })?;
         let prearm = batch.prearm_timing.take().filter(|_| ahead);
         let mut timing = batch_timing::SourceTiming::new(prearm, grant);

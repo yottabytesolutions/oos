@@ -126,6 +126,22 @@ fn compares_first_use_throughput_even_if_shown_and_read_are_higher() {
 }
 
 #[test]
+fn compares_a_stored_reference_without_disarm_counters() {
+    let reference = report(10.0, 100, 300, 0);
+    let mut result = report(10.0, 100, 300, 0);
+    let group = result.groups.get_mut("dense").unwrap();
+    let WindowSample::Valid(sample) = &mut group.windows[0].sample else { panic!("expected valid window") };
+    let state =
+        super::super::state::State::parse("disarm.v1 total=3 unknown=1 no_completed_record=1 recorded=1 dropped=2");
+    sample.delta.extend(state.counters);
+    sample.sections.extend(state.sections);
+    group.summarize().unwrap();
+    let stored = serde_json::to_string(&reference).unwrap();
+    let reference = serde_json::from_str(&stored).unwrap();
+    assert_eq!(compare(&reference, &result, 0.95).unwrap().exit(), ExitCode::SUCCESS);
+}
+
+#[test]
 fn rejects_one_sided_groups_and_incompatible_or_incomplete_reports() {
     for case in [
         "missing reference group",

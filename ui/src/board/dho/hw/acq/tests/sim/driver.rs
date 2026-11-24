@@ -33,6 +33,10 @@ impl Virtual {
         self.signals.delay.set(delay);
     }
 
+    pub(in super::super) fn error_reading_done_after_stop(&self) {
+        self.signals.done.set(DoneRead::Error);
+    }
+
     pub(in super::super) fn capture_armed(&self) -> bool {
         self.engine.borrow().capture_armed()
     }

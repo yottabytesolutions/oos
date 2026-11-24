@@ -18,7 +18,7 @@ mod wait;
 pub use super::samples::{
     code_map, decode_volts, decode_volts_into, deinterleave, lane_volts_into, volt_code, volts_f64 as volts, CodeMap,
 };
-pub use arm::{frames, record_frames};
+pub use arm::{frames, record_frames, CaptureDisarm, CaptureStop};
 pub use capture::CaptureReduction;
 #[cfg(target_os = "linux")]
 pub use execute::linux::{execute, execute_into_until, execute_until};

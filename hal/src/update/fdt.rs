@@ -342,8 +342,18 @@ pub fn with_loader_changes(new: &[u8], old: &[u8], running: &[u8]) -> Result<(Ve
             t.rsv.push(x);
         }
     }
+    zero_kaslr_seed(&mut t.root);
     t.boot_cpu = r.boot_cpu;
     Ok((t.to_bytes(), n + rsv_n))
+}
+
+fn zero_kaslr_seed(root: &mut Node) {
+    // kexec-tools refuses a nonzero KASLR seed and replaces a zero seed with fresh randomness.
+    if let Some(chosen) = root.kid_mut("chosen") {
+        for (_, seed) in chosen.props.iter_mut().filter(|(name, _)| name == "kaslr-seed") {
+            seed.fill(0);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -379,6 +389,22 @@ mod tests {
         let b = t.to_bytes();
         assert_eq!(Fdt::parse(&b).unwrap(), t);
         assert_eq!(&b[..4], &MAGIC.to_be_bytes());
+    }
+
+    #[test]
+    fn loader_and_candidate_kaslr_seeds_are_zeroed_for_kexec_tools() {
+        let seed = 0x1234_5678_9abc_def0u64.to_be_bytes();
+        let dtb = |seed: Option<&[u8]>| {
+            let props: Vec<_> = seed.into_iter().map(|value| ("kaslr-seed", value)).collect();
+            tree(node("", &[], vec![node("chosen", &props, vec![])]), vec![])
+        };
+        for (candidate, running, expected) in
+            [(None, Some(&seed[..]), Some(&[0; 8][..])), (Some(&seed[..]), None, Some(&[0; 8][..])), (None, None, None)]
+        {
+            let (merged, _) = with_loader_changes(&dtb(candidate), &dtb(None), &dtb(running)).unwrap();
+            let parsed = Fdt::parse(&merged).unwrap();
+            assert_eq!(parsed.root.kid("chosen").unwrap().prop("kaslr-seed"), expected);
+        }
     }
 
     #[test]

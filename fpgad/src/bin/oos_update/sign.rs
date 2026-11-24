@@ -94,10 +94,7 @@ pub(crate) fn pack(a: &Args) {
         if !a.flag("--untrusted-ok") {
             die("signing key is not trusted by this build; use --untrusted-ok to sign anyway");
         }
-        eprintln!(
-            "oos-update: WARNING: key {} is not in oos/keys/update.pub: units will refuse this package",
-            hex(&pkg::key_id(&pk))
-        );
+        eprintln!("oos-update: WARNING: the packer build does not trust signing key {}", hex(&pkg::key_id(&pk)));
     }
     let img = read_file(a.val("--image").unwrap_or_else(|| die("pack --image IMG --build ID --out FILE")));
     let build = a.val("--build").unwrap_or_else(|| die("pack needs --build ID (the image's /etc/oos-build)"));
@@ -110,15 +107,35 @@ pub(crate) fn pack(a: &Args) {
     if info.len != img.len() {
         die(&format!("image is {} bytes, its sections end at {}", img.len(), info.len));
     }
-    let models = update::models::image(&img).unwrap_or_else(|e| die(&format!("image models: {}", e)));
+    let initramfs = unpack_initramfs(&img).unwrap_or_else(|e| die(&format!("image initramfs: {e}")));
+    let models = update::models::initramfs_models(&initramfs).unwrap_or_else(|e| die(&format!("image models: {e}")));
     if let Some(selected) = a.val("--models") {
         if selected != models {
             die(&format!("--models '{}', image models '{}': refused", selected, models));
         }
     }
-    let capabilities = [("models", models.as_str()), kexec::LINE, kexec::STAGED_LINE];
+    let signing_key = hex(&pk);
+    let mut capabilities = vec![("models", models.as_str()), kexec::LINE];
+    if image_announces_key(&initramfs, &pk).unwrap_or_else(|e| die(&format!("image staged keys: {e}"))) {
+        capabilities.extend([kexec::STAGED_LINE, (kexec::STAGED_KEY, &signing_key)]);
+    }
+    drop(initramfs);
     let p = pkg::build_with(&seed, build, &kernel, &img, &capabilities).unwrap_or_else(|e| die(&e));
     pkg::verify(&p, &[pk]).unwrap_or_else(|e| die(&format!("self-check: {}", e)));
     std::fs::write(out, &p).unwrap_or_else(|e| die(&format!("{}: {}", out, e)));
     out!("{}: build {}, {} bytes, key {}", out, build, p.len(), hex(&pkg::key_id(&pk)));
+}
+
+fn unpack_initramfs(img: &[u8]) -> Result<Vec<u8>, String> {
+    let (_, ramdisk, _) = kexec::parts(img)?;
+    if ramdisk.is_empty() {
+        return Ok(Vec::new());
+    }
+    update::inflate::gunzip(ramdisk, 512 << 20)
+}
+
+fn image_announces_key(initramfs: &[u8], key: &[u8; 32]) -> Result<bool, String> {
+    let Some(bytes) = update::inflate::cpio_file(initramfs, kexec::STAGED_KEYS_FILE) else { return Ok(false) };
+    let text = std::str::from_utf8(bytes).map_err(|_| "key list is not UTF-8")?;
+    Ok(pkg::parse_keys(text).contains(key))
 }

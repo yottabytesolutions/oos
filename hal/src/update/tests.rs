@@ -283,6 +283,7 @@ fn state_text_round_trip() {
         kexec_payload: Some(45000000),
         staged: None,
         slot_incomplete: false,
+        recovery: RecoveryTracking { loader_id: Some([3; 20]), ..Default::default() },
         event: "installed 20261105-170000".into(),
         sd_failed: false,
         sd_trial: None,
@@ -866,7 +867,7 @@ fn tree(dt: u8) -> Vec<u8> {
 }
 
 fn stage(f: &Fake, p: &[u8], booted: Option<&[u8]>, running: Option<&str>) -> Result<(Report, Option<Staged>), String> {
-    kexec_stage(&mut f.card(), &f.state(), p, &[pk()], &RUN, BootTrees::new(booted, running, None))
+    kexec_stage(&mut f.card(), &f.state(), p, &[pk()], &RUN, BootTrees { booted, running_build: running, live: None })
 }
 
 #[test]
@@ -959,12 +960,15 @@ fn a_kexec_start_that_did_not_finish_is_reported_once() {
     assert_eq!(f.st().kexec, None);
     assert!(f.st().event.starts_with("kexec load failed ("));
     assert!(f.st().event.ends_with(" bytes kexec payload)"));
-    // an install in the kexec start cut by a power loss keeps the mark for the next start
+    // The receiver reached the recovery write, so the state now permits a direct retry.
     stage(&f, &kexec_package(2, 7), Some(&tree(7)), None).unwrap();
     let mut c = f.card();
     c.cut = Some(Region::Recovery);
     assert!(install(&mut c, &f.state(), &kexec_package(2, 7), &[pk()], &RUN).is_err());
-    assert_eq!(f.st().kexec.as_deref(), Some(KX_BUILD));
+    assert_eq!(f.st().kexec, None);
+    assert!(f.st().interrupted_recovery_write());
+    assert!(f.st().event.ends_with(" bytes kexec payload)"));
+    assert_eq!(kexec_missed(&f.state(), false).unwrap(), None);
 }
 
 /// An RSCE container with `rk-kernel.dtb` (the device tree section of a real image).
@@ -1004,12 +1008,25 @@ fn kexec_stage_tries_another_device_tree_with_the_loaders_changes() {
     let p = pkg::build_with(&SEED, KX_BUILD, "6.12.115+", &bootimg_second(2, new.clone()), &[kexec::LINE]).unwrap();
     let running = dtb(&[("model", b"DHO\0")], vec![chosen(b"a loader\0")]);
     // a build without kexec-tools (no running tree given): refused as before
-    let e =
-        kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, BootTrees::new(Some(&old), None, None)).unwrap_err();
+    let e = kexec_stage(
+        &mut f.card(),
+        &f.state(),
+        &p,
+        &[pk()],
+        &RUN,
+        BootTrees { booted: Some(&old), running_build: None, live: None },
+    )
+    .unwrap_err();
     assert!(e.contains("device tree"), "{}", e);
-    let (r, staged) =
-        kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, BootTrees::new(Some(&old), None, Some(&running)))
-            .unwrap();
+    let (r, staged) = kexec_stage(
+        &mut f.card(),
+        &f.state(),
+        &p,
+        &[pk()],
+        &RUN,
+        BootTrees { booted: Some(&old), running_build: None, live: Some(&running) },
+    )
+    .unwrap();
     let staged = staged.expect("a kexec start");
     assert!(r.lines.iter().any(|l| l.contains("another one")), "{:?}", r.lines);
     let t = fdt::Fdt::parse(staged.tree.as_deref().expect("the tree to start with")).unwrap();
@@ -1021,12 +1038,20 @@ fn kexec_stage_tries_another_device_tree_with_the_loaders_changes() {
     let f = Fake::new("kexec-newdt-refused", None);
     f.poke(RECOVERY_LBA, &bootimg_second(1, old.clone()));
     let odd = dtb(&[("model", b"DHO\0"), ("phandle", &[0, 0, 0, 9])], vec![chosen(b"a\0")]);
-    let e = kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, BootTrees::new(Some(&old), None, Some(&odd)))
-        .unwrap_err();
+    let e = kexec_stage(
+        &mut f.card(),
+        &f.state(),
+        &p,
+        &[pk()],
+        &RUN,
+        BootTrees { booted: Some(&old), running_build: None, live: Some(&odd) },
+    )
+    .unwrap_err();
     assert!(e.contains("device tree"), "{}", e);
     assert_eq!(f.st().kexec, None);
 }
 
+mod switching;
 mod unit;
 
 // Break it catches: a shared install report asking for a power cycle even inside kexec,

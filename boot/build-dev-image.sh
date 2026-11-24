@@ -101,7 +101,7 @@ if dep_stale "$o/dropbearmulti" "$root/rootfs/build-dropbear.sh" dropbear; then 
 if dep_stale "$o/sftp-server" "$root/rootfs/build-sftp-server.sh" openssh; then "$root/rootfs/build-sftp-server.sh"; fi
 python3 "$root/tools/output.py" verify "$hw" "$ui/oos-ui" "$fpgad/oos-fpgad" "$fpgad/oos-update" "$CARGO_TARGET_DIR/gpu/gpu"
 build_id="$(date -u +%Y%m%d-%H%M%S) kernel $(cat "$k/kernel.release")"
-docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initramfs:/src:ro" -v "$board:/board:ro" -v "$root/rootfs/out:/wlan:ro" -v "$CARGO_TARGET_DIR/gpu/gpu:/gpu:ro" -v "$CARGO_TARGET_DIR/hw:/hw:ro" -v "$ui:/ui:ro" -v "$fpgad:/fpgad:ro" -v "$k:/k:ro" -v "$out:/out" -e BUILD_ID="$build_id" "$image" sh -euc '
+docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS_NO_AUTOACQ="${OOS_NO_AUTOACQ:-}" -v "$root/rootfs/initramfs:/src:ro" -v "$root/keys/update.pub:/staged-keys:ro" -v "$board:/board:ro" -v "$root/rootfs/out:/wlan:ro" -v "$CARGO_TARGET_DIR/gpu/gpu:/gpu:ro" -v "$CARGO_TARGET_DIR/hw:/hw:ro" -v "$ui:/ui:ro" -v "$fpgad:/fpgad:ro" -v "$k:/k:ro" -v "$out:/out" -e BUILD_ID="$build_id" "$image" sh -euc '
 	r=/tmp/root; rm -rf $r; mkdir -p $r
 	. /board/etc/oos-board
 	cp -a /src/. $r/
@@ -113,6 +113,7 @@ docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$owner" -e OOS
 	cp /ui/oos-ui $r/bin/oos-ui
 	cp /fpgad/oos-fpgad $r/bin/oos-fpgad
 	cp /fpgad/oos-update $r/bin/oos-update
+	cp /staged-keys $r/etc/oos-staged-keys
 	cp /wlan/wpa_supplicant /wlan/wpa_cli /wlan/e2fsck /wlan/kexec $r/bin/
 
 	mkdir -p $r/etc/licenses; cp /wlan/wpa_supplicant.COPYING $r/etc/licenses/wpa_supplicant; cp /wlan/e2fsck.COPYING $r/etc/licenses/e2fsck; cp /wlan/kexec.COPYING $r/etc/licenses/kexec-tools

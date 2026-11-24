@@ -7,12 +7,32 @@ use std::path::Path;
 
 /// Signed package capability for a kexec start that reads its image from the rollback slot.
 pub const STAGED_LINE: (&str, &str) = ("trial", "staged");
+/// Signed header field naming the full public key trusted by the staged receiver.
+pub const STAGED_KEY: &str = "staged-key";
+/// Image build metadata used by the packer to announce staged signing keys.
+pub const STAGED_KEYS_FILE: &str = "etc/oos-staged-keys";
 /// Signed package header carried by a staged kexec start.
 pub const HEADER_FILE: &str = "/oos-kexec.hdr";
 
 /// Does the signed manifest announce support for reading its image from the slot?
 pub fn announced_staged(manifest: &pkg::Manifest) -> bool {
     manifest.extra.iter().any(|(key, value)| key == STAGED_LINE.0 && value == STAGED_LINE.1)
+}
+
+/// Choose the slot handoff only when the signed header names the exact key that verified it.
+pub fn use_staged(manifest: &pkg::Manifest, key: &[u8; 32]) -> Result<bool, String> {
+    if !announced_staged(manifest) {
+        return Ok(false);
+    }
+    let mut declared = manifest.extra.iter().filter(|(name, _)| name == STAGED_KEY);
+    if declared.next().is_some_and(|(_, value)| *value == hash::hex(key)) && declared.next().is_none() {
+        return Ok(true);
+    }
+    if manifest.extra.iter().any(|(name, value)| name == super::LINE.0 && value == super::LINE.1) {
+        return Ok(false);
+    }
+    Err("package does not announce its signing key as trusted by the staged receiver and offers no legacy handoff"
+        .into())
 }
 
 /// Which payload a kexec start should install.

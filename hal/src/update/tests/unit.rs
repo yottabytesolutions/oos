@@ -28,7 +28,7 @@ fn a_package_for_another_unit_is_refused_before_kexec_staging() {
         &unit_package("other-unit"),
         &[pk()],
         &UNIT_RUN,
-        BootTrees::new(Some(&tree(7)), None, None),
+        BootTrees { booted: Some(&tree(7)), running_build: None, live: None },
     );
     assert!(result.is_err(), "a foreign unit package was staged");
     assert_eq!(f.st().kexec, None);
@@ -64,7 +64,7 @@ fn unit_identity_is_independent_of_a_changed_device_tree() {
         &p,
         &[pk()],
         &UNIT_RUN,
-        BootTrees::new(Some(&old), None, Some(&running)),
+        BootTrees { booted: Some(&old), running_build: None, live: Some(&running) },
     )
     .unwrap();
     assert!(staged.unwrap().tree.is_some());
@@ -167,7 +167,7 @@ fn kexec_override_is_logged_before_staging_and_leaves_recovery_intact() {
         &unit_package("other-unit"),
         &[pk()],
         &opt,
-        BootTrees::new(Some(&tree(7)), None, None),
+        BootTrees { booted: Some(&tree(7)), running_build: None, live: None },
     )
     .unwrap();
     assert!(staged.is_some());
@@ -182,9 +182,15 @@ fn explicit_unit_controls_install_and_stage_without_host_identity() {
         let f = Fake::new(&format!("unit-explicit-{}", unit), Some(1));
         let opt = InstallOpt { running_model: unit, ..RUN };
         let p = unit_package(unit);
-        let (_, staged) =
-            kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &opt, BootTrees::new(Some(&tree(7)), None, None))
-                .unwrap();
+        let (_, staged) = kexec_stage(
+            &mut f.card(),
+            &f.state(),
+            &p,
+            &[pk()],
+            &opt,
+            BootTrees { booted: Some(&tree(7)), running_build: None, live: None },
+        )
+        .unwrap();
         assert!(staged.is_some());
         let r = install(&mut f.card(), &f.state(), &p, &[pk()], &opt).unwrap();
         assert!(r.written);
@@ -200,8 +206,15 @@ fn explicit_named_unit_refuses_none_and_old_packages_before_any_writes() {
         let before = (f.region(Region::Recovery), f.region(Region::Slot), f.magic(), f.st());
         let err = install(&mut f.card(), &f.state(), &p, &[pk()], &opt).unwrap_err();
         assert!(err.contains("package models 'none', running device model 'fake-unit'"));
-        assert!(kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &opt, BootTrees::new(Some(&tree(7)), None, None))
-            .is_err());
+        assert!(kexec_stage(
+            &mut f.card(),
+            &f.state(),
+            &p,
+            &[pk()],
+            &opt,
+            BootTrees { booted: Some(&tree(7)), running_build: None, live: None }
+        )
+        .is_err());
         assert_eq!(before, (f.region(Region::Recovery), f.region(Region::Slot), f.magic(), f.st()));
     }
 }

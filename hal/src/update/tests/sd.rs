@@ -49,6 +49,24 @@ fn set_mode(f: &Fake, mode: &str) {
 }
 
 #[test]
+fn unchanged_tree_merge_failure_explains_why_to_install_directly() {
+    let f = active("same-tree-phandle");
+    let booted = rsce(&base_tree());
+    let odd = dtb(&[("model", b"test\0"), ("phandle", &[0, 0, 0, 9])], vec![chosen(b"console=tty0\0")]);
+    let candidate = bootimg_second(2, booted.clone());
+    let package = pkg::build_with(&SEED, KX_BUILD, "test", &candidate, &[kexec::LINE]).unwrap();
+    let trees = BootTrees { booted: Some(&booted), running_build: Some(KX_BUILD), live: Some(&odd) };
+    let before = f.st();
+    let error = kexec_stage(&mut f.card(), &f.state(), &package, &[pk()], &RUN, trees).unwrap_err();
+    for expected in ["unchanged device tree", "phandle", "kexec_file_load", "low-memory reservations", "--new-dt"] {
+        assert!(error.contains(expected), "{error}");
+    }
+    assert_eq!(f.st(), before);
+    assert_eq!(f.region(Region::Recovery), bootimg_second(1, booted));
+    assert_eq!(&f.magic(), b"KRNL");
+}
+
+#[test]
 fn absent_mode_is_hs_and_invalid_modes_are_refused() {
     assert_eq!(Mode::default(), Mode::Hs);
     assert_eq!(Mode::parse("sd.mode = invalid\nsd.mode = hs\n").unwrap(), Mode::Hs);
@@ -159,7 +177,7 @@ fn install_and_kexec_use_the_same_selected_tree_after_signature_checks() {
         &package,
         &[pk()],
         &RUN,
-        BootTrees::new(Some(&second), Some(KX_BUILD), Some(&base_tree())),
+        BootTrees { booted: Some(&second), running_build: Some(KX_BUILD), live: Some(&base_tree()) },
     )
     .unwrap();
     let staged = staged.unwrap();
@@ -233,7 +251,14 @@ fn a_staged_sdr104_start_keeps_the_signed_slot_bytes_and_uses_the_selected_tree(
     let candidate = bootimg_second(2, rsce(&base_tree()));
     set_mode(&f, "sdr104");
     let build = "20261109-090000";
-    let package = pkg::build_with(&SEED, build, "test", &candidate, &[kexec::LINE, kexec::STAGED_LINE]).unwrap();
+    let package = pkg::build_with(
+        &SEED,
+        build,
+        "test",
+        &candidate,
+        &[kexec::LINE, kexec::STAGED_LINE, (kexec::STAGED_KEY, &hex(&pk()))],
+    )
+    .unwrap();
     let (_, _, booted) = kexec::parts(&hs).unwrap();
     let (_, start) = kexec_stage(
         &mut f.card(),
@@ -241,7 +266,7 @@ fn a_staged_sdr104_start_keeps_the_signed_slot_bytes_and_uses_the_selected_tree(
         &package,
         &[pk()],
         &RUN,
-        BootTrees::new(Some(booted), Some(KX_BUILD), Some(&base_tree())),
+        BootTrees { booted: Some(booted), running_build: Some(KX_BUILD), live: Some(&base_tree()) },
     )
     .unwrap();
     let start = start.unwrap();

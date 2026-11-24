@@ -1,6 +1,7 @@
 # Switch between upstream OOS and this fork
 
-Draft outline for the unit round.
+Draft outline for the unit round. The two forks share the card layout and the package format. Their signing
+trust is separate.
 
 ## Upstream to this fork
 
@@ -11,16 +12,23 @@ Draft outline for the unit round.
 3. Upload the bridge through upstream's web update page. **To verify on the unit.**
 4. Check the kexec start, cold trial and confirmation. Check settings, calibration and the rollback
    slot. **To verify on the unit.**
+5. Run `oos-update status`. When the state on the card recorded another recovery image and no trial or staged
+   candidate was open, it reports `untracked` with the mismatch it saw. The next signed install then needs no
+   `--downgrade` for that old stamp. A build this fork tracked itself keeps the normal downgrade guard.
+   Later installs accept only this fork's release key. **To verify on the unit.**
 
 ## This fork to upstream
 
-1. [Start stock](install.md#return-to-stock). **To verify on the unit.**
-2. Put upstream's GEL and an empty `oos-reinstall.txt` on the USB stick. Run **Storage > Upgrade**
+1. Finish any open update, then run `oos-update leave`. It clears the installed build stamp and the rollback
+   tracking, nothing else. The next start still follows the boot selection. **To verify on the unit.**
+2. [Start stock](install.md#return-to-stock). **To verify on the unit.**
+3. Put upstream's GEL and an empty `oos-reinstall.txt` on the USB stick. Run **Storage > Upgrade**
    from stock. **To verify on the unit.**
-3. Boot upstream, check settings and calibration, and dry-run its first signed update with
+4. Boot upstream, check settings and calibration, and dry-run its first signed update with
    `oos-update install FILE.oosupd`. **To verify on the unit.**
 
 ## Return to stock
 
-1. Select **System > Boot mode > One-shot** in the running OOS build. **To verify on the unit.**
+1. Select **System > Boot mode > One-shot** in the running OOS build, or run `oos-update mode oneshot`.
+   **To verify on the unit.**
 2. Power-cycle and confirm stock starts. **To verify on the unit.**

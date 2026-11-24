@@ -17,8 +17,8 @@ pub fn install(
     install_with(card, state_path, package, keys, opt, false)
 }
 
-/// Install directly from the running build once its trial is confirmed.
-pub fn install_confirmed(
+/// Install directly from the running build, including retries of an interrupted recovery write.
+pub fn install_direct(
     card: &mut Card,
     state_path: &Path,
     package: &[u8],
@@ -41,7 +41,10 @@ fn install_with(
     let _lock = if opt.execute { Some(lock(state_path)?) } else { None };
     let mut state = State::load(state_path).map_err(io("reading the update state"))?;
     if from_running_build {
-        check_can_start(&state)?;
+        check_pending_start(&state)?;
+        if !state.interrupted_recovery_write() {
+            check_trial(&state)?;
+        }
     }
     let mode = sd::configured(state_path, &state)?;
     let build = &header.manifest.build;
@@ -80,8 +83,15 @@ pub(super) fn apply_plan(
 
 pub(super) fn check_can_start(state: &State) -> Result<(), String> {
     check_trial(state)?;
+    check_pending_start(state)
+}
+
+fn check_pending_start(state: &State) -> Result<(), String> {
     if state.kexec.is_some() {
         return Err("an update is already starting by kexec".into());
+    }
+    if state.staged.is_some() {
+        return Err("a candidate is already staged for kexec".into());
     }
     Ok(())
 }
@@ -118,7 +128,8 @@ pub(super) fn prepare(
 ) -> Result<Option<Plan>, String> {
     check_downgrade(build, state, opt)?;
     let image = sd::image(image, mode)?;
-    let recovery = current_recovery(card, build, hash::sha256(&image), opt.force, report)?;
+    let retry = state.interrupted_recovery_write();
+    let recovery = current_recovery(card, build, hash::sha256(&image), opt.force || retry, report)?;
     if report.unchanged {
         return Ok(None);
     }
@@ -221,21 +232,22 @@ pub(super) fn write_trial(
     r: &mut Report,
 ) -> Result<(), String> {
     let old = st.current.clone();
+    let id = super::card::image_header(img)?.id;
     // stock for the next power-on while recovery is not a valid image (`Card::disarm_oos`); armed again below
     card.disarm_oos()?;
-    // recorded before the write: a failed or cut write leaves a state that names the new image on trial (a rollback or a
-    // new install repairs it)
-    st.current = Some(Entry { build: build.into(), sha256: hash::sha256(img), len: img.len() as u64 });
+    // Before this save, a cut leaves the pending handoff for ordinary start to report. After it, stock is
+    // selected and a signed direct retry can repair recovery while keeping the verified rollback slot.
+    let payload = st.take_kexec_payload();
+    st.kexec = None;
+    st.track_recovery(Entry { build: build.into(), sha256: hash::sha256(img), len: img.len() as u64 }, id);
     st.trial = Some(0);
     st.staged = None;
-    st.event = format!("writing build {}", short(build));
+    st.recovery.writing = true;
+    st.event = format!("{}{payload}", state::writing_event(build));
     st.save(state_path).map_err(io("writing the update state"))?;
     card.write_image(Region::Recovery, img)?;
     r.written = true;
-    // this was the install a kexec start was for (or one that replaces it); a cut one keeps the mark, which the next
-    // ordinary start reports
-    st.kexec = None;
-    let payload = st.take_kexec_payload();
+    st.recovery.writing = false;
     st.event = format!(
         "installed {} over {}{payload}",
         short(build),

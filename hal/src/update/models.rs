@@ -107,7 +107,12 @@ pub fn image(img: &[u8]) -> Result<String, String> {
         return Ok(NONE.into());
     }
     let rd = super::inflate::gunzip(ramdisk, 512 << 20)?;
-    let Some(bytes) = super::inflate::cpio_file(&rd, "etc/oos-models") else { return Ok(NONE.into()) };
+    initramfs_models(&rd)
+}
+
+/// Read the supported model list from an unpacked newc initramfs.
+pub fn initramfs_models(initramfs: &[u8]) -> Result<String, String> {
+    let Some(bytes) = super::inflate::cpio_file(initramfs, "etc/oos-models") else { return Ok(NONE.into()) };
     let text = std::str::from_utf8(bytes).map_err(|_| "device model is not UTF-8")?;
     validate_models(text.trim()).map(str::to_string)
 }

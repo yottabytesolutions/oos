@@ -161,6 +161,7 @@ pub fn check_image(b: &[u8]) -> Result<ImageInfo, String> {
 #[cfg(test)]
 pub(super) enum WriteFault {
     PowerCut,
+    CutAfterReadBack,
     ReadBackMismatch,
 }
 
@@ -172,6 +173,8 @@ pub struct Card {
     pub cut: Option<Region>,
     #[cfg(test)]
     pub(super) write_fault: Option<(Region, WriteFault)>,
+    #[cfg(test)]
+    pub(super) read_bytes: usize,
 }
 
 impl Card {
@@ -191,16 +194,26 @@ impl Card {
             cut: None,
             #[cfg(test)]
             write_fault: None,
+            #[cfg(test)]
+            read_bytes: 0,
         })
     }
 
     pub fn read(&mut self, lba: u64, len: usize) -> std::io::Result<Vec<u8>> {
+        #[cfg(test)]
+        {
+            self.read_bytes += len;
+        }
         self.storage.read(lba * SECTOR, len)
     }
 
     pub(super) fn read_region_into(&mut self, region: Region, bytes: &mut [u8]) -> std::io::Result<()> {
         if bytes.len() > region.max() {
             return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "read exceeds the card region"));
+        }
+        #[cfg(test)]
+        {
+            self.read_bytes += bytes.len();
         }
         self.storage.read_into(region.lba() * SECTOR, bytes)
     }

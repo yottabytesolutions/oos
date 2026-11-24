@@ -24,7 +24,11 @@ fn model_command_reports_capabilities_without_an_image_unit() {
 // A real gzip/newc ramdisk so the signer must inspect the payload, independent of the host.
 fn image_unit(unit: Option<&str>) -> Vec<u8> {
     let fields: Vec<_> = unit.map(|u| ("etc/oos-models", 0o100644, u.as_bytes())).into_iter().collect();
-    let archive = kexec::newc(&fields);
+    image_initramfs(&fields)
+}
+
+pub(super) fn image_initramfs(fields: &[(&str, u32, &[u8])]) -> Vec<u8> {
+    let archive = kexec::newc(fields);
     let n = archive.len() as u16;
     let mut rd = vec![0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 3, 1];
     rd.extend_from_slice(&n.to_le_bytes());

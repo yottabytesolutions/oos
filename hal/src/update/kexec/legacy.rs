@@ -54,7 +54,7 @@ fn timestamp(label: &str) -> String {
     format!("{label}: monotonic_s={mono} uptime_s={}", uptime.split_whitespace().next().unwrap_or("unknown"))
 }
 
-/// Legacy-only jump marker, prepared while persistent storage is writable.
+/// kexec-tools jump marker, prepared while persistent storage is writable.
 #[derive(Debug)]
 pub struct Jump;
 

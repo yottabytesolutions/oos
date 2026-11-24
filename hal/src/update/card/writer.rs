@@ -91,6 +91,10 @@ impl Storage {
         if self.read(offset, data.len()).map_err(io)? != data {
             return Err(format!("READ-BACK MISMATCH in {area}"));
         }
+        #[cfg(test)]
+        if matches!(fault, Some(super::WriteFault::CutAfterReadBack)) {
+            return Err("power cut after read-back".into());
+        }
         Ok(())
     }
 

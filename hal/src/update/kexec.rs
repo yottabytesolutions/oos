@@ -11,15 +11,13 @@
 //! device tree the scope started with (`/oos-kexec.dt`). Only that start, once it reached rcS and found the card and
 //! /oos, installs it (`oos-update boot`). A hang there: power-cycle; `recovery` still holds the running build.
 //!
-//! The device tree: `kexec_file_load` gives the new kernel the tree of the running one. An image whose `second` (the
-//! RSCE container with the tree) differs from the tree the scope started with (`BOOTED_DT`) is started with
-//! `kexec_load` instead, through kexec-tools (`TOOL`, `kexec -c --dtb`), with its own tree and the changes the loader
-//! made to the running one (`fdt::with_loader_changes`): the tree a power-on would give it. A build without the tool
-//! (0.1.6 and older) refuses such an image. What it does not try: the start runs on warm hardware, so a kernel that
-//! only fails from a cold start passes.
+//! kexec-tools places the new kernel and initramfs above low-memory reservations. It takes the candidate's tree
+//! and the loader's changes from the live tree (`fdt::with_loader_changes`), including for an unchanged tree.
+//! Without kexec-tools, `kexec_file_load` can start an unchanged tree at the kernel's default addresses.
+//! A start runs on warm hardware, so a kernel that only fails from a cold start can still pass.
 //!
 //! Only an image that knows how to finish such a start can take it: its package says so with the signed line
-//! `trial kexec` or `trial staged`, which `oos-update pack` writes together. Older packages install the direct way.
+//! `trial kexec`, or `trial staged` with a signed declaration of the receiver's signing key.
 
 use super::card::check_image;
 
@@ -39,8 +37,8 @@ mod watchdog;
 #[cfg(target_os = "linux")]
 pub use legacy::prepare_jump;
 pub use receive::{
-    announced_staged, flags, install_staged, receive, record_staged_refusal, Receive, StagedError, HEADER_FILE,
-    STAGED_LINE,
+    announced_staged, flags, install_staged, receive, record_staged_refusal, use_staged, Receive, StagedError,
+    HEADER_FILE, STAGED_KEY, STAGED_KEYS_FILE, STAGED_LINE,
 };
 pub use stage::{kexec_missed, kexec_stage, BootTrees, Staged};
 #[cfg(test)]
@@ -68,7 +66,7 @@ pub const KEY_FILE: &str = "/oos-kexec.key";
 pub const DT_FILE: &str = "/oos-kexec.dt";
 /// The device tree section of the image the loader started (`oos-update boot` saves it; a kexec start carries it on).
 pub const BOOTED_DT: &str = "/tmp/oos-booted.dt";
-/// kexec-tools in the image: a kexec start with another device tree (`load_with_tree`).
+/// kexec-tools in the image, used for high-memory placement on either tree path.
 pub const TOOL: &str = "/bin/kexec";
 /// The lowest address for the segments of a kexec start with kexec-tools (`--mem-min`), unless the GIC's tables lie
 /// higher. The GICv3 keeps the LPI and ITS tables of the running kernel across kexec (it cannot be told new ones), and
@@ -162,9 +160,19 @@ pub fn initrd(ramdisk: &[u8], package: &[u8], key: &[u8; 32], dt: &[u8]) -> Vec<
     initrd_with(ramdisk, PACKAGE, package, key, dt)
 }
 
-/// The initramfs of a slot-based start, carrying the signed header through its terminating empty line.
-pub fn staged_initrd(ramdisk: &[u8], header: &[u8], key: &[u8; 32], dt: &[u8]) -> Vec<u8> {
-    initrd_with(ramdisk, HEADER_FILE, header, key, dt)
+/// Initramfs inputs for a slot-based start.
+#[derive(Debug)]
+pub struct StagedInitrd<'a> {
+    pub ramdisk: &'a [u8],
+    /// Signed package header through its terminating empty line.
+    pub header: &'a [u8],
+    pub key: &'a [u8; 32],
+    pub tree: &'a [u8],
+}
+
+/// Append the staged handoff archive to the candidate's ramdisk.
+pub fn staged_initrd(input: StagedInitrd<'_>) -> Vec<u8> {
+    initrd_with(input.ramdisk, HEADER_FILE, input.header, input.key, input.tree)
 }
 
 fn initrd_with(ramdisk: &[u8], name: &str, payload: &[u8], key: &[u8; 32], dt: &[u8]) -> Vec<u8> {

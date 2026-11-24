@@ -43,6 +43,12 @@ The user guide is in the [wiki](https://github.com/yottabytesolutions/oos/wiki):
 The wiki is generated from [wiki/](wiki/Home.md) in this repository. Technical documentation is in
 [docs/](docs/README.md), the changes per release in [CHANGELOG.md](CHANGELOG.md).
 
+## About this fork
+
+Read the [performance and reliability results](https://github.com/yottabytesolutions/oos/wiki/Performance-and-reliability)
+and the [guide to switching between OOS versions](https://github.com/yottabytesolutions/oos/wiki/Switching-between-OOS-versions).
+Get the packages and checksums from the [latest release](https://github.com/yottabytesolutions/oos/releases/latest).
+
 ## Contributing
 
 Reports, measurements and code are welcome. A test on a model that has not run OOS yet is the most useful thing right

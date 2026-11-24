@@ -52,9 +52,12 @@ pub fn measure(ctx: &crate::run::Context, root: &Path, krate: &str) -> Result<u6
         .into_iter()
         .chain(args.iter().map(String::as_str))
         .collect();
-    let cargo = |args: &[&str]| {
-        run::capture_env(ctx, &root.join(krate), "cargo", args, &[("CARGO_TARGET_DIR", dir.as_os_str())])
-    };
+    let path = (krate == "hal").then(crate::testrun::e2fsprogs_path).transpose()?;
+    let mut env = vec![("CARGO_TARGET_DIR", dir.as_os_str())];
+    if let Some(path) = path.as_deref() {
+        env.push(("PATH", path));
+    }
+    let cargo = |args: &[&str]| run::capture_env(ctx, &root.join(krate), "cargo", args, &env);
     let out = cargo(&args)?;
     finish(&out, || cargo(&["llvm-cov", "clean", "--locked", "--profraw-only"]))
 }

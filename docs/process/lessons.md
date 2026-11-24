@@ -44,6 +44,10 @@ pull request that fixes a mistake: what happened, then the rule.
 
 ## Tests and CI
 
+- Preen stopped at an ext2 orphan and startup lost access to otherwise recoverable settings. Classify the checker
+  exit bits, repair an offline copy and require a clean read-only check before writing the card.
+- A clean ext2 flag let preen skip a partially written repair. Escalate on the forced read-only verdict and
+  write the primary superblock after the other changes.
 - The source simulator played one word per sample for every channel mask. Derive the interleave ratio from the
   requested mask and use it when marking and splitting simulated DMA records.
 - The disarm simulator preserved DONE through the stop pulse, hiding a hardware assumption in ring replay. Exercise

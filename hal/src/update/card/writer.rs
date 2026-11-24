@@ -132,7 +132,9 @@ impl Card {
         #[cfg(not(test))]
         let cut = false;
         #[cfg(test)]
-        let fault = self.write_fault.take_if(|(region, _)| region.lba() * SECTOR == offset).map(|(_, fault)| fault);
+        let fault = self.write_fault_at.take_if(|(at, _)| *at == offset).map(|(_, fault)| fault).or_else(|| {
+            self.write_fault.take_if(|(region, _)| region.lba() * SECTOR == offset).map(|(_, fault)| fault)
+        });
         self.storage.write(
             area,
             offset,

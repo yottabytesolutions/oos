@@ -36,9 +36,16 @@ if ! ok "$mac"; then
 fi
 # Only fill an absent key. Existing settings, including legacy selectors, are never rewritten.
 if [ "$(OOS_CONF_FILES="$conf" "$here/oos-conf" eth.mac __absent__)" = __absent__ ]; then
-	mkdir -p "$(dirname "$conf")"
-	[ -e "$conf" ] || printf '# OOS device identity and system overrides. Kept across updates.\n' > "$conf"
-	printf '\neth.mac = %s\n' "$mac" >> "$conf"
-	sync
+	dir=$(dirname "$conf")
+	mkdir -p "$dir"
+	umask 077
+	{
+		if [ -e "$conf" ]; then cat "$conf"
+		else printf '# OOS device identity and system overrides. Kept across updates.\n'; fi
+		printf '\neth.mac = %s\n' "$mac"
+	} > "$conf.new"
+	sync "$conf.new"
+	mv "$conf.new" "$conf"
+	sync "$dir"
 fi
 echo "$mac"

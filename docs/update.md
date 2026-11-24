@@ -287,7 +287,7 @@ into a test file. Model comparison and `--any-model` retain their normal meaning
 | 188416 | 64 MiB | `recovery`: running OOS image | yes |
 | 319488 | 32 MiB | `backup` start: stock boot copy (the loader's last fallback) | never |
 | 385024 | 64 MiB | `backup` + 32 MiB: **rollback slot**, a previous OOS image or a staged candidate | yes |
-| 516096 | 16 MiB | `backup` end: /oos data partition | never (state file through the file system) |
+| 516096 | 16 MiB | `backup` end: /oos data partition | offline format and repair (state file through the file system) |
 
 The slot is all zero on an original card (the whole `backup` is, see `boot.md`). Before the first write the tool
 checks that the slot is either empty or holds an Android boot image. An incomplete slot the updater already
@@ -298,6 +298,32 @@ The state is written before the `recovery` write, after a write test of the stat
 rollback entry is cleared before a slot write. `slot.incomplete yes` records that the slot belongs to the updater
 even if a cut damages its header, until a verified rollback image is saved. A rollback changes the state after
 its write. The updater reads the card to verify "already holds", so an interrupted rollback can be retried.
+
+### Data area after an unclean shutdown
+
+Before mounting `/oos`, startup copies its 16 MiB to a regular file. A completely zero area is formatted as ext2.
+For an existing ext filesystem, startup tries `e2fsck -p`, then judges the copy with `e2fsck -fn`. If verification
+fails, startup runs `e2fsck -fy` and verifies again. If the primary superblock lost its signature, startup looks for
+a backup at a block group location consistent with its geometry and runs `e2fsck -fy -b` using that backup. The
+checked writer writes, syncs and reads back only changed sectors after a clean verification. It writes the
+superblock and group descriptor copies after the other sectors, with the primary superblock last. A foreign
+file system or failed final verification leaves the original bytes in place.
+
+The panel reports a repair and the startup log gives the number of 512-byte sectors rewritten. Startup removes
+inode-numbered entries in `lost+found` only when their contents match a recognized state or settings format and
+an identical copy is already available under its live pathname. It keeps and counts the other entries. The checker
+cannot recover the original name of an unattached inode, so a distinct recovered setup or incomplete write stays
+available for inspection.
+
+On failure the panel says that saved settings and the calibration copy are unavailable and network identity is
+temporary for this start. When rcS confirmed stock selection, power-cycling starts stock Android. If selection
+could not be confirmed, the notice gives the `oos-oneshot` command and asks the operator to power-cycle once it
+succeeds. The panel asks the operator to save `/tmp/oos-data.log` and contact support before changing the card.
+
+The format is still ext2. A metadata journal would likely have kept the directory and counters consistent for the
+observed interrupted rename, assuming the card honored flushes. A migration would need a verified backup, an offline
+conversion or restore with enough space for the journal, checked write-back and power-cut tests of forward and
+rollback boots. The recovery path is host-tested and awaits unit validation.
 
 ## Package `.oosupd`
 

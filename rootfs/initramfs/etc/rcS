@@ -23,7 +23,7 @@ fi
 #     Before anything that may take long, and independent of oos-ui
 [ "$boot_safe" = 0 ] || (setsid sh -c '/bin/oos-watchdog >> /tmp/oos-watchdog.log 2>&1' < /dev/null > /dev/null 2>&1 &)
 # 0b) OOS's own data partition at /oos (own calibration, setups, power-on picture; log in /tmp/oos-data.log)
-/bin/oos-mount-data > /tmp/oos-data.log 2>&1
+/bin/oos-mount-data "$boot_safe" > /tmp/oos-data.log 2>&1
 # 0c) stock partition, read only: kexec installation reads the device model from /rigol/data/vendor.bin.
 /bin/oos-mount-rigol >> /tmp/oos-data.log 2>&1
 # Count or roll back a trial before the rest of startup. See docs/update.md and /tmp/oos-update.log.
@@ -37,13 +37,17 @@ fi
 #     one goes back to the stock clock by itself, so a clock that hangs the scope cannot keep it hanging
 if grep -q '^ *adc\.clock_hz' /oos/limits.conf 2>/dev/null; then
 	if [ -e /oos/clock-try ]; then
-		mv /oos/limits.conf /oos/limits.conf.failed
-		rm -f /oos/clock-try
-		echo "oos: the last start with adc.clock_hz did not finish, limits.conf set aside" > /dev/kmsg
+		if sync /oos/limits.conf && mv /oos/limits.conf /oos/limits.conf.failed && sync /oos; then
+			rm -f /oos/clock-try && sync /oos
+			echo "oos: the last start with adc.clock_hz did not finish, limits.conf set aside" > /dev/kmsg
+		else
+			echo "oos: could not set aside limits.conf after a failed start" > /dev/kmsg
+		fi
 	else
-		: > /oos/clock-try
+		{ : > /oos/clock-try.new && sync /oos/clock-try.new &&
+			mv /oos/clock-try.new /oos/clock-try && sync /oos; } ||
+			echo "oos: could not save the ADC clock trial marker" > /dev/kmsg
 	fi
-	sync
 fi
 # 1) the board starts what takes long while the rest of rcS runs (oos-board, one per board: rootfs/board/)
 /bin/oos-board early $ST > /tmp/oos-cold.log 2>&1
@@ -120,7 +124,7 @@ if /bin/oos-board has-hardware; then
 		st() { printf "%s\t%s\t%s\t%s\n" "$(cut -d" " -f1 /proc/uptime)" "$1" "$2" "$3" >> $ST; }
 		/bin/oos-mount-rigol >> /tmp/oos-cold.log 2>&1
 		if /bin/oos-board bring-up $ST >> /tmp/oos-cold.log 2>&1; then
-			rm -f /oos/clock-try; sync
+			[ ! -e /oos/clock-try ] || { rm -f /oos/clock-try && sync /oos; }
 			st end "" ""
 			echo "oos: acquisition hardware up" > /dev/kmsg
 		else

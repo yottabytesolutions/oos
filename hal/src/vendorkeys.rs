@@ -169,18 +169,15 @@ pub fn for_file(vendor: &[u8]) -> Option<Keys> {
 
 /// Best effort: without it the next start searches again.
 fn keep(line: &str) {
-    use std::io::Write;
-    let tmp = format!("{}.new", KEEP);
-    let mut o = std::fs::OpenOptions::new();
-    o.write(true).create(true).truncate(true);
+    use std::path::Path;
+    let path = Path::new(KEEP);
+    let tmp = format!("{KEEP}.new");
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
     #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut o, 0o600);
-    let done = o.open(&tmp).and_then(|mut f| {
-        f.write_all(line.as_bytes())?;
-        f.sync_all()
-    });
-    if done.is_ok() {
-        let _ = std::fs::rename(&tmp, KEEP);
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    if let Err(error) = crate::system::durable_replace(path, Path::new(&tmp), line.as_bytes(), &options) {
+        eprintln!("could not save vendor key cache: {error}");
     }
 }
 

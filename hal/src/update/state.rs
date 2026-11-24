@@ -173,23 +173,18 @@ impl State {
         }
     }
 
-    /// Atomic: temp file, fsync, rename.
+    /// Atomic: sync the temporary file before rename and the directory after it.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        if let Some(d) = path.parent() {
-            std::fs::create_dir_all(d)?;
-        }
+        let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        std::fs::create_dir_all(dir)?;
         let tmp = path.with_extension("new");
-        {
-            use std::io::Write;
-            let mut f = std::fs::File::create(&tmp)?;
-            f.write_all(self.text().as_bytes())?;
-            f.sync_all()?;
-        }
-        std::fs::rename(&tmp, path)?;
-        if let Some(d) = path.parent() {
-            if let Ok(f) = std::fs::File::open(d) {
-                let _ = f.sync_all();
-            }
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create(true).truncate(true);
+        crate::system::durable_replace(path, &tmp, self.text().as_bytes(), &options)?;
+        // The update lock may have just created the state directory.
+        if let Some(parent) = dir.parent() {
+            let parent = if parent.as_os_str().is_empty() { Path::new(".") } else { parent };
+            std::fs::File::open(parent)?.sync_all()?;
         }
         Ok(())
     }

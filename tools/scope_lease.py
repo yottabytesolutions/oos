@@ -172,6 +172,12 @@ now=${{uptime%%.*}}
 boot_id=$(cat /proc/sys/kernel/random/boot_id)
 printf '%s\\n' "$now $boot_id"
 [ ! -L {LEASE} ] || fail 'quarantined lease: unexpected symlink'
+publish_info() {{
+    sync {LEASE}/info.new
+    mv {LEASE}/info.new {LEASE}/info
+    sync {LEASE}
+    cat {LEASE}/info
+}}
 {body}
 """
         observed_at = self.clock()
@@ -221,12 +227,12 @@ fi""")
         # Failed initialization leaves the directory quarantined.
         fields = info.encode().replace("build_id=\n", "").replace("started=0\nheartbeat=0\n", "").replace("boot_id=\n", "")
         body = f"""mkdir {LEASE} 2>/dev/null || fail 'lease exists, possibly expired and quarantined; run status'
+sync {LEASE.parent}
 build=$(cat /etc/oos-build) || fail 'cannot read build; lease quarantined'
 [ -n "$build" ] || fail 'empty build; lease quarantined'
 printf '%s' {shlex.quote(fields)} > {LEASE}/info.new
 printf 'build_id=%s\\nstarted=%s\\nheartbeat=%s\\nboot_id=%s\\n' "$build" "$wall" "$now" "$boot_id" >> {LEASE}/info.new
-mv {LEASE}/info.new {LEASE}/info
-cat {LEASE}/info"""
+publish_info"""
         return Info.decode(self._run(body))
 
     def _swap(self, raw: str, body: str, live: bool = False) -> str:
@@ -263,7 +269,7 @@ cat {LEASE}/info"""
                 f"printf '%s,\"boot_id\":\"%s\",\"at\":%s}}\\n' {shlex.quote(entry[:-1])} \"$boot_id\" \"$wall\" >> {LOG}\n"
                 f"printf '%s' {shlex.quote(fields)} > {LEASE}/info.new\n"
                 f"printf 'heartbeat=%s\\nboot_id=%s\\n' \"$now\" \"$boot_id\" >> {LEASE}/info.new\n"
-                f"mv {LEASE}/info.new {LEASE}/info\ncat {LEASE}/info")
+                "publish_info")
         else:
             raw = self._swap(raw, f"cat {LEASE}/info", live=True)
         return raw, Info.decode(raw)
@@ -277,7 +283,7 @@ cat {LEASE}/info"""
         return Info.decode(self._swap(raw,
             f"printf '%s' {shlex.quote(fields)} > {LEASE}/info.new\n"
             f"printf 'heartbeat=%s\\n' \"$now\" >> {LEASE}/info.new\n"
-            f"mv {LEASE}/info.new {LEASE}/info\ncat {LEASE}/info", live=True))
+            "publish_info", live=True))
 
     def release(self, holder: str, task: str, token: str | None = None) -> None:
         raw, _ = self._checked(holder, task, "observe", token)

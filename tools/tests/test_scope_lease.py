@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import subprocess
 import sys
@@ -43,8 +44,8 @@ class FakeSSH:
         self.calls += 1
         if self.before:
             self.before(script)
-        local = script.replace("/etc/oos-build", shlex.quote(str(self.build)))
-        local = local.replace("/oos", shlex.quote(str(self.data)))
+        paths = {"/etc/oos-build": self.build, "/oos": self.data}
+        local = re.sub(r"/etc/oos-build|/oos", lambda m: shlex.quote(str(paths[m.group()])), script)
         local = local.replace("date +%s", f"printf '%s' {int(self.wall_clock())}")
         local = local.replace("read -r uptime rest < /proc/uptime",
                               f"uptime={int(self.clock())}.25")
@@ -96,6 +97,18 @@ class LeaseFixture:
 
 
 class LeaseTests(LeaseFixture, unittest.TestCase):
+    def test_renew_does_not_publish_when_staged_file_sync_fails(self):
+        info = self.acquire()
+        before = self.fake.info.read_bytes()
+        sync = self.fake.root / "sync"
+        sync.write_text('#!/bin/sh\ncase "$1" in *.new) echo "staging sync failed" >&2; exit 1;; esac\n')
+        sync.chmod(0o700)
+        self.now += 1
+        with patch.dict(os.environ, {"PATH": f"{self.fake.root}{os.pathsep}{os.defpath}"}):
+            with self.assertRaisesRegex(sl.LeaseError, "staging sync failed"):
+                self.client.renew(info.holder, info.task, token=info.token)
+        self.assertEqual(self.fake.info.read_bytes(), before)
+
     def test_record_contains_build_and_hashed_machine(self):
         with patch.object(sl.socket, "gethostname", return_value="workstation-placeholder"):
             info = self.acquire()

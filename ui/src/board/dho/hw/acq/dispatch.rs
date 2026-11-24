@@ -4,13 +4,13 @@ use super::super::{
     batch,
     dma_source::ArmPlan,
     header::dump::{BatchInput, Pending},
-    single, stop, Settings,
+    stop, Settings,
 };
 use super::{
     batch::Reserved,
     publication,
     read::{Capture, Completed, ReadIo, Readout},
-    status, BatchState, LoopClock,
+    status, BatchState, LoopClock, SingleCompletion, SingleHandoff,
 };
 use crate::{
     board::{dho::switches::HeaderProbe, Frame, HwShared},
@@ -140,13 +140,17 @@ impl BatchState {
         if let Some((pipe, next)) = pipe.zip(next) {
             self.dma.switch(pipe, next);
         }
-        self.single_done = single::progress(b, self.single_done, request.pair(), false, frames.len() as u32).0;
+        let single_completed = b.single && !frames.is_empty();
         if readings.is_some() || !frames.is_empty() {
             publication::finish_batch(out, frames, b.mode, |g| {
                 if let Some(readings) = readings {
                     readings.publish(g, request.identity, io.state.mask_cols.as_deref(), Some((count, skip)));
                 }
             });
+        }
+        if single_completed {
+            self.single_done =
+                Some(SingleCompletion { pair: request.pair(), handoff: SingleHandoff::AwaitingUi(io.clock.now()) });
         }
     }
 
@@ -191,8 +195,11 @@ impl BatchState {
             io.state.mask_cols.as_deref(),
             Some((completed.count, skipped)),
         );
-        self.single_done = single::progress(b, self.single_done, request.pair(), false, u32::from(frame.is_some())).0;
+        let single_completed = b.single && frame.is_some();
         publication::publish_held(out, frame, final_req);
+        if single_completed {
+            self.single_done = Some(SingleCompletion { pair: request.pair(), handoff: SingleHandoff::TakenOver });
+        }
     }
 
     fn clear_completed_average(

@@ -45,7 +45,7 @@ impl Units {
         segments: Option<&SegRun>,
         out: &HwShared,
         (settings, mode): (&Settings, Slow),
-        (request, generator_on): (&Request, bool),
+        (request, generator_on, single_completed): (&Request, bool, bool),
         mut disarm: impl FnMut(&mut Io<P>),
     ) {
         if segments.is_some_and(SegRun::recording) {
@@ -55,7 +55,9 @@ impl Units {
         if mode != Slow::Off {
             return;
         }
-        if let Some(pending) = self.trim_pending.filter(|t| !request.run.hold && t.due(io.clock.now())) {
+        if let Some(pending) =
+            self.trim_pending.filter(|t| !request.run.hold && !single_completed && t.due(io.clock.now()))
+        {
             self.trim_pending = None;
             if !generator_on && pending.mode == io.state.mode.min(10) && io.cal_adc.is_some() {
                 disarm(io);

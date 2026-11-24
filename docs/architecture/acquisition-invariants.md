@@ -73,12 +73,21 @@ while held. DVM uses its channel mask, scale and gain, and levels reads the conf
 Side units run before a stopped-view read or its 20 ms unchanged-view poll. If a side unit disarms
 and the slot rule drops the retained batch, the pass skips the replay and takes the 5 ms held poll.
 Counter service waits for an applied configuration. Generator dispatch and XADC service remain available.
-Automatic ADC core trim waits for RUN or SINGLE because it writes offsets. RUN or SINGLE applies the
-latest request before arming if the effective settings still differ.
+Automatic ADC core trim can write offsets, so it stays deferred during STOP and after a SINGLE
+completes. A new RUN or SINGLE can service an already due trim if it reuses the configuration.
+If the effective settings differ, the source configures before arming and starts a new 2 s settle
+timer for an eligible trim.
+
+After publishing a complete ordinary SINGLE, the source allows up to 3 s for a slow UI step to consume
+the record and request hold. On expiry the source keeps the published record queued, reports the missed
+takeover once and waits unarmed on the held poll. The UI owns hold and its tap admission state. A later UI
+hold acknowledges the final request and keeps the already published record. A SINGLE waiting for its
+trigger remains pending until it completes or is canceled. The next accepted RUN or SINGLE clears the
+missed takeover or unconfirmed STOP from `:SYSTem:STATe?`.
 
 Each calibration invalidates the retained ring batch and pending replay, including during a completed
 SINGLE hold. When restoring configuration fails, the loop retries after 500 ms and can leave a newer
-hold request unacknowledged. The UI's final-record drain still expires after 3 s.
+hold request unacknowledged. The separate UI final-record drain expires 3 s after the UI requests it.
 
 Unapplied edits preserve a valid batch and its capture identity. An eligible stopped view selects a
 window in that batch and reads it using the captured channel layout, memory depth, sample rate and
@@ -123,5 +132,5 @@ The software hold acknowledgement can advance without a hardware STOPPED acknowl
 Clear during an in-flight serial STOP read discards the stale record and acknowledges the request at completion.
 Held roll and scan keep their initial STOP acknowledgement. Held segments poll every 5 ms without arming.
 The virtual-time tests cover the 10 ms disarm poll, serial STOP cancellation after 2 s without a trigger,
-and RUN and SINGLE retry after a missing trigger.
+RUN and SINGLE retry after a missing trigger, and the 2 ms completed-SINGLE poll until hold.
 [Wait traces](../../ui/src/board/dho/hw/acq/tests/bounds.rs)

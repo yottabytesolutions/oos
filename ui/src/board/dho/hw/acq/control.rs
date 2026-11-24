@@ -6,12 +6,12 @@ use super::super::{
     comparator::{hw_merge, mask_map, unit_key},
     decode_with, lifecycle,
     plan::raw_for_ui,
-    stop_plan,
+    single, stop_plan,
 };
 use super::pacing::PacingPolicy;
-use super::{status, AcqLoop, Io, Port, Request};
+use super::{status, AcqLoop, CaptureStatus, Io, Port, Request, SingleCompletion, SingleHandoff};
 use crate::{
-    board::{CounterWant, Slow},
+    board::{CounterWant, HwShared, Slow},
     perfguard::deep::acq_lock as lock,
 };
 use oos_hal::dho::{
@@ -22,6 +22,9 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 const VIEW_POLL: Duration = Duration::from_millis(20);
+const HELD_POLL: Duration = Duration::from_millis(5);
+// Allow up to three seconds after publication for a slow UI step to consume even a deep SINGLE record.
+const SINGLE_HANDOFF_LIMIT: Duration = Duration::from_secs(3);
 
 impl<T: PacingPolicy> AcqLoop<T> {
     pub(super) fn service<P: Port>(&mut self, io: &mut Io<P>, counter: Option<CounterWant>) -> Option<Request> {
@@ -70,8 +73,22 @@ impl<T: PacingPolicy> AcqLoop<T> {
             return None;
         };
         let held = request.run.hold;
+        let single =
+            self.batch.single_done.as_mut().filter(|done| {
+                single::progress(want, Some(done.pair), request.pair(), false, 0).1 == single::Poll::Wait
+            });
+        let single_completed = single.is_some();
+        if let Some(done) = single {
+            if held {
+                done.handoff = SingleHandoff::TakenOver;
+            } else if done.expire(&io.clock, &self.out, request) {
+                io.clock.wait(HELD_POLL);
+                return None;
+            }
+        }
         if held && !self.replay.paused {
-            self.enter_hold(io, request, *last_read);
+            // The completed SINGLE has already delivered its record.
+            self.enter_hold(io, request, *last_read && !single_completed);
         }
         self.stream_boundary(io, request);
         // STOP defers edits to an applied configuration and keeps the batch captured with it.
@@ -90,7 +107,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
             crate::pacing::APPLIED.store(request.identity.gen(), Ordering::Relaxed);
         }
         // Side service can disarm and drop the retained slot. Check for a view batch afterwards.
-        self.poll_units(io, request);
+        self.poll_units(io, request, single_completed);
         if self.poll_stop_view(io, request, *last_read) {
             return None;
         }
@@ -98,17 +115,22 @@ impl<T: PacingPolicy> AcqLoop<T> {
             self.poll_held(io, request);
             return None;
         }
+        if single_completed {
+            io.disarm(&mut self.batch.armed, &mut self.replay, &self.out);
+            io.clock.wait(Duration::from_millis(2));
+            return None;
+        }
         self.configured.current.clone()
     }
 
-    fn poll_units(&mut self, io: &mut Io<impl Port>, request: &Request) {
+    fn poll_units(&mut self, io: &mut Io<impl Port>, request: &Request, single_completed: bool) {
         let Some((settings, _)) = self.configured.current.as_ref() else { return };
         self.units.poll(
             io,
             self.segrun.as_ref(),
             &self.out,
             (settings, self.configured.mode),
-            (request, self.service.generator_on()),
+            (request, self.service.generator_on(), single_completed),
             |io| io.disarm(&mut self.batch.armed, &mut self.replay, &self.out),
         );
     }
@@ -156,7 +178,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
         if mode == Slow::Off {
             lock(&self.out).final_ack = request.run.final_req;
         }
-        io.clock.wait(Duration::from_millis(5));
+        io.clock.wait(HELD_POLL);
     }
 
     fn enter_hold(&mut self, io: &mut Io<impl Port>, request: &Request, last_read: bool) {
@@ -278,6 +300,34 @@ impl<T: PacingPolicy> AcqLoop<T> {
         self.batch.configured(want.mode, self.switches.board.avg_kind(), avg_clear);
         self.configured.mode = mode;
         self.configured.current = Some((want, params));
+        true
+    }
+}
+
+impl SingleCompletion {
+    fn expire(&mut self, clock: &impl Clock, out: &HwShared, request: &Request) -> bool {
+        match self.handoff {
+            SingleHandoff::AwaitingUi(at) if clock.now().saturating_duration_since(at) < SINGLE_HANDOFF_LIMIT => {
+                return false;
+            }
+            SingleHandoff::TakenOver => return false,
+            SingleHandoff::TimedOut => return true,
+            SingleHandoff::AwaitingUi(_) => {}
+        }
+        let mut g = lock(out);
+        if !g.hold
+            && !g.record_flow.shutdown
+            && !publication::boundary(Some(request.pair()), g.acquisition.identity())
+            && (g.want.as_ref(), g.slow, g.acquisition.route()) == (request.want.as_ref(), request.mode, request.route)
+        {
+            self.handoff = SingleHandoff::TimedOut;
+            let publication = g.acquisition;
+            let message = g.status.report(publication, CaptureStatus::SingleHandoffMissed, None);
+            g.record_flow.wake();
+            drop(g);
+            eprintln!("oos-ui hw: {message}");
+        }
+        // Re-read the request after the held poll so a racing UI publication can take over.
         true
     }
 }

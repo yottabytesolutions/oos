@@ -19,16 +19,17 @@ struct HardwareRequest {
     zone: Option<board::ZoneWant>,
     needs_raw: bool,
     avg_clear: u64,
+    started: bool,
     cores: bool,
     afg: [Option<board::Gen>; NGEN],
 }
 
 impl HardwareRequest {
-    fn of(ui: &Ui, model: &Model, needs: UiAcq, id: Identity) -> Self {
+    fn of(ui: &Ui, model: &Model, needs: UiAcq, prepared: &Prepared) -> Self {
         let sw = ui.switches();
         let gen_count = crate::model::gen_count();
         Self {
-            publication: Publication::new(id, needs.route()),
+            publication: Publication::new(prepared.changes.identity(), needs.route()),
             want: want(model, sw, needs.mixed_bus()),
             slow: board().slow_mode(model),
             deep_raw: crate::deepmeas::want(model),
@@ -36,6 +37,7 @@ impl HardwareRequest {
             zone: ui.zone_hw_want(),
             needs_raw: needs.raw(),
             avg_clear: ui.m.hw_avg_clear,
+            started: prepared.run_edge || prepared.single,
             cores: model.cores,
             afg: std::array::from_fn(|i| (i < gen_count).then(|| board().gen(&model.gen_ch(i)))),
         }
@@ -97,7 +99,7 @@ fn publish_hardware(
     let id = prepared.changes.identity();
     let shadow = ui.host.runtime().change.shadow.as_ref().expect("the accepted change has a normalized model");
     let (model, needs) = (shadow.accepted(), shadow.needs());
-    let hardware = HardwareRequest::of(ui, model, needs, id);
+    let hardware = HardwareRequest::of(ui, model, needs, prepared);
     let draw = needs.route() && prepared.workers;
     let mut view = pipe
         .filter(|_| draw && (running || ui.stop_final.is_some() || can_drain))
@@ -166,7 +168,7 @@ fn stage(
         Source::stage_segments(g, ui.seg_run, running && hardware_segments);
     }
     g.record_flow.cost.set_identity(id);
-    g.acquisition = hardware.publication;
+    g.acquisition.replace(hardware.publication, hardware.started);
     if running {
         (g.stop_view, g.replay) = (None, None);
     }

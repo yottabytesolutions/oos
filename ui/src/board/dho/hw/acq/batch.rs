@@ -4,7 +4,7 @@ use super::super::{
     batch, batch_plan, batch_timing,
     comparator::{is_stall, logs_acquire_error, mask_map, unit_key},
     dma_source::{self, ArmPlan},
-    lifecycle, single,
+    lifecycle,
     window::prearm_keeps_replay,
     Settings,
 };
@@ -56,9 +56,6 @@ impl<T: PacingPolicy> AcqLoop<T> {
             self.batch.armed.as_ref(),
             (request.pair(), request.route, deposit),
         );
-        if !self.single_ready(io, settings, &request) {
-            return;
-        }
         self.clear_average(io, request.avg_clear);
         let plan = ArmPlan::new(&b, request.identity, request.route, deposit, grant.serial());
         let out = &self.out;
@@ -125,15 +122,6 @@ impl<T: PacingPolicy> AcqLoop<T> {
                 self.batch.prearm_timing = None;
             }
         }
-    }
-
-    fn single_ready(&mut self, io: &mut Io<impl Port>, settings: &Settings, request: &Request) -> bool {
-        if single::progress(settings, self.batch.single_done, request.pair(), false, 0).1 == single::Poll::Wait {
-            io.disarm(&mut self.batch.armed, &mut self.replay, &self.out);
-            io.clock.wait(Duration::from_millis(2));
-            return false;
-        }
-        true
     }
 
     fn clear_average(&mut self, io: &mut Io<impl Port>, clear: u64) {

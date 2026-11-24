@@ -466,7 +466,7 @@ pub struct Shared {
     pub dropped: u64,
     /// the offsets of the ADC cores taken off the frames (`Model::cores`, `dho::cores`)
     pub cores: bool,
-    pub status: String,
+    status: identity::SourceStatus,
     /// self-calibration: request (channels, AFE zero too), progress (done, total, text), result, cancel flag
     /// (channels, AFE zero, ADC cores)
     pub cal_req: Option<(Vec<usize>, bool, bool)>,

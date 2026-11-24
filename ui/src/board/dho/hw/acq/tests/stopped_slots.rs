@@ -60,7 +60,10 @@ fn first_wait(ahead: bool, previous: u32, report: StopReport) -> Vec<Event> {
     check_disarm(&trace.borrow().events[start..], report);
     assert!(!io.clock.capture_armed());
     if matches!(report, StopReport::ReadError) {
-        assert_eq!(lock(&source.out).status, "disarm: read 0x4080: simulated play-info failure");
+        assert_eq!(
+            lock(&source.out).status.latest(),
+            "stop not confirmed by the hardware: read 0x4080: simulated play-info failure"
+        );
     }
     check_disarm_counters(report);
     check_reread(&mut source, &mut io, &trace, false);
@@ -108,6 +111,28 @@ fn force_cancels_a_consumed_successor_before_a_later_stop() {
 #[test]
 fn disarming_a_smaller_unread_successor_preserves_the_last_slot() {
     twice(smaller_successor);
+}
+
+#[test]
+fn successor_stop_polls_with_shared_unlocked() {
+    twice(|| {
+        let (_scope, mut source, (mut io, trace)) = captured(true, 4);
+        assert!(source.batch.armed.is_some());
+        io.clock.stop();
+        io.clock.suppress_stopped_status();
+        let out = source.out.clone();
+        let polled = Rc::new(std::cell::Cell::new(false));
+        let probe = polled.clone();
+        io.clock.drive(move |_, _| {
+            assert!(out.try_lock().is_ok(), "the successor must stop outside the Shared lock");
+            probe.set(true);
+        });
+        let request = Request::read(&lock(&source.out));
+        assert!(source.reconfigure(&mut io, &request, &mut false).is_none());
+        assert!(polled.get());
+        assert!(lock(&source.out).status.latest().starts_with("stop not confirmed by the hardware"));
+        trace.take().events
+    });
 }
 
 #[test]
@@ -192,11 +217,15 @@ fn single_wait_disarms_before_waiting_for_hold() {
     let (_scope, mut source, (mut io, trace)) = captured(true, 4);
     io.clock.trigger_poll();
     let start = trace.borrow().events.len();
-    let request = Request::read(&lock(&source.out));
-    let (settings, params) = source.configured.current.clone().unwrap();
-    source.batch.single_done = Some(request.pair());
-    let single = Settings { single: true, ..settings };
-    source.batch(&mut io, (&single, &params), request, true);
+    let request = {
+        let mut g = lock(&source.out);
+        g.want.as_mut().unwrap().single = true;
+        Request::read(&g)
+    };
+    source.configured.current.as_mut().unwrap().0.single = true;
+    source.batch.single_done =
+        Some(SingleCompletion { pair: request.pair(), handoff: SingleHandoff::AwaitingUi(io.clock.now()) });
+    assert!(source.reconfigure(&mut io, &request, &mut true).is_none());
     let events = &trace.borrow().events[start..];
     assert!(events.iter().any(is_disarm));
     assert_eq!(events.last(), Some(&Event::Wait(Duration::from_millis(2))));

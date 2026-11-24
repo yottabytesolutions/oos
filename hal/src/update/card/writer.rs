@@ -47,9 +47,13 @@ impl Storage {
 
     pub(super) fn read(&mut self, offset: u64, len: usize) -> std::io::Result<Vec<u8>> {
         let mut bytes = vec![0; len];
-        self.file.seek(SeekFrom::Start(offset))?;
-        std::io::Read::read_exact(&mut self.file, &mut bytes)?;
+        self.read_into(offset, &mut bytes)?;
         Ok(bytes)
+    }
+
+    pub(super) fn read_into(&mut self, offset: u64, bytes: &mut [u8]) -> std::io::Result<()> {
+        self.file.seek(SeekFrom::Start(offset))?;
+        std::io::Read::read_exact(&mut self.file, bytes)
     }
 
     fn write(&mut self, area: &str, offset: u64, data: &[u8], cut: bool) -> Result<(), String> {

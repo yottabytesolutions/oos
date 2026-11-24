@@ -188,6 +188,13 @@ impl Card {
         self.storage.read(lba * SECTOR, len)
     }
 
+    pub(super) fn read_region_into(&mut self, region: Region, bytes: &mut [u8]) -> std::io::Result<()> {
+        if bytes.len() > region.max() {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "read exceeds the card region"));
+        }
+        self.storage.read_into(region.lba() * SECTOR, bytes)
+    }
+
     /// The stock partition table (as `oos-oneshot` and `card-install.py` check it).
     pub fn check_layout(&mut self) -> Result<(), String> {
         let raw = self.read(PARM_LBA, 1024).map_err(|e| format!("cannot read the PARM block: {}", e))?;

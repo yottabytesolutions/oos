@@ -94,6 +94,25 @@ What it does not cover:
   recovery unreadable at start-up) takes the tree from `recovery` only while the state names the running build
   there; otherwise power-cycle once or use `--new-dt`.
 
+### Staged receive (bridge release)
+
+The bridge receives `oos.kexec=install,staged`. The small initramfs archive carries the signed package header
+through its terminating empty line as `/oos-kexec.hdr` and the booted tree as `/oos-kexec.dt`. The unmodified
+signed image is read from the rollback slot, using the signed length bounded by the slot size.
+
+Before install, the receiver verifies the header with its built-in release key, requires the signed
+`trial staged` line and an exact match to its `/etc/oos-build`, and checks the slot bytes against the
+signed SHA-256. The ordinary install then applies the same board, model and loader checks and writes the
+previous image to the slot before writing the candidate to `recovery` on trial.
+
+A refused handoff leaves the card's image regions and boot selection as they were when the receiver ran.
+The panel notice and `oos-update status` last event give the reason. The receiver requests no restart.
+The previous image remains in `recovery`. Boot magic `KRNL` selects stock.
+
+`pack` includes both signed capabilities. The bridge and older senders still carry the full package in the
+initramfs using `oos.kexec=install`. Bridge verification is host-only. The legacy jump's watchdog margin
+still needs measurement on the unit before release.
+
 ### Another device tree
 
 `kexec_file_load` gives the new kernel the running tree, so it cannot try an image with another one. From 0.1.7 the

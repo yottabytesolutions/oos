@@ -17,7 +17,7 @@ use super::{
     Settings,
 };
 use crate::{
-    board::{HwShared, Slow, Spawn},
+    board::{counters::Outcome, HwShared, Slow, Spawn},
     sysconf::Switches,
 };
 use oos_core::change::Identity;
@@ -95,6 +95,7 @@ impl Replay {
     pub(super) fn invalidate(&mut self, out: &HwShared, count: u32) {
         // Every arm starts at slot zero and can write its full programmed range.
         if self.last_batch.as_ref().is_some_and(|batch| batch.index < count) {
+            crate::drawpipe::counters().acquisition.disarms().drop_replay();
             self.discard(out);
         }
     }
@@ -244,7 +245,7 @@ impl<P: Port> Io<P> {
     }
 
     fn disarm(&mut self, armed: &mut Successor, replay: &mut Replay, out: &HwShared) {
-        armed.disarm(replay, out, || disarm(&mut self.state, &mut self.bar, &mut self.c2h, &self.clock, out));
+        armed.disarm(replay, out, || disarm(&mut self.state, &mut self.bar, &self.clock, out));
     }
 
     fn abort_segments(&mut self, run: &mut Option<SegRun>, out: &HwShared) {
@@ -263,8 +264,15 @@ fn execute(
     Ok(dma.into_vec())
 }
 
-fn disarm(state: &mut seq::State, bar: &mut impl Bus, c2h: &mut impl Read, clock: &impl Clock, out: &HwShared) {
-    if let Err(error) = lifecycle::disarm(|| execute(&state.disarm_steps(), bar, c2h, clock)) {
+fn disarm(state: &mut seq::State, bar: &mut impl Bus, clock: &impl Clock, out: &HwShared) {
+    let report = lifecycle::disarm(|| state.disarm_capture(bar, clock));
+    let outcome = match report.outcome() {
+        seq::CaptureStop::Unknown => Outcome::Unknown,
+        seq::CaptureStop::NoCompletedRecord => Outcome::NoCompletedRecord,
+        seq::CaptureStop::Recorded => Outcome::Recorded,
+    };
+    crate::drawpipe::counters().acquisition.disarms().observe(outcome);
+    if let Some(error) = report.error() {
         status(out, format!("disarm: {error}"));
     }
 }

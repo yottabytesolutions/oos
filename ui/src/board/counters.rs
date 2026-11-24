@@ -2,11 +2,16 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+mod disarm;
+#[cfg(any(target_os = "linux", test))]
+pub(super) use disarm::Outcome;
+
 /// Process-lifetime worker operation attempts, including failures. Never reset by acquisition changes.
 #[derive(Debug, Default)]
 pub struct AcquisitionCounters {
     events: [AtomicU64; 8],
     diagnostics: crate::perfguard::deep::Diagnostics,
+    disarm: disarm::Counters,
 }
 
 #[derive(Clone, Copy)]
@@ -22,6 +27,15 @@ pub(super) enum Event {
 }
 
 impl AcquisitionCounters {
+    #[cfg(any(target_os = "linux", test))]
+    pub(super) fn disarms(&self) -> &disarm::Counters {
+        &self.disarm
+    }
+
+    pub(crate) fn write_disarms(&self, text: &mut String) {
+        self.disarm.write(text);
+    }
+
     pub(crate) fn diagnostics(&self) -> &crate::perfguard::deep::Diagnostics {
         &self.diagnostics
     }

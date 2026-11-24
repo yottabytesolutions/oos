@@ -155,10 +155,7 @@ fn run(
         }
         Err(error) => {
             if needs_disarm(error) {
-                crate::board::dho::lifecycle::disarm(|| {
-                    seq::execute_bus(&state.disarm_steps(), &mut ring, &mut Codes(&played), &mut dma, |_| {})
-                })
-                .unwrap();
+                crate::board::dho::lifecycle::disarm(|| state.disarm_capture(&mut ring, script));
             }
             previous.take_if(|batch| batch.index < seq::frames(&settings, &params));
             serial && previous.is_some()

@@ -131,7 +131,7 @@ impl BatchState {
         })
         .inspect_err(|message| {
             if stop::needs_disarm(message) {
-                super::disarm(io.state, &mut io.bar, io.c2h, clock, out);
+                super::disarm(io.state, &mut io.bar, clock, out);
             }
         })?;
         let read_at = io.clock.now();

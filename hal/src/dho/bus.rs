@@ -11,6 +11,10 @@ pub const FPGA_VERSION: u32 = 0xe207_2115;
 pub trait Bus {
     fn wr(&mut self, off: u32, v: u32);
     fn rd(&mut self, off: u32) -> u32;
+    /// Reads a status register on buses that can report a recoverable read error.
+    fn try_rd(&mut self, off: u32) -> std::io::Result<u32> {
+        Ok(self.rd(off))
+    }
     /// Settles after the last write of a sequence, before polling or reading.
     fn settle(&mut self) {}
     /// Applies a write sequence in order.
@@ -165,6 +169,10 @@ impl<B: Bus, F: FnMut(std::time::Duration)> Bus for Paced<'_, B, F> {
 
     fn rd(&mut self, off: u32) -> u32 {
         self.bus.rd(off)
+    }
+
+    fn try_rd(&mut self, off: u32) -> std::io::Result<u32> {
+        self.bus.try_rd(off)
     }
 
     fn settle(&mut self) {

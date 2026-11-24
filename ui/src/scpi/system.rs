@@ -90,10 +90,9 @@ fn settings(scpi: &mut Scpi, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str
             ui.gpu_pinned_cpu().map_or_else(|| "none".into(), |cpu| cpu.to_string()),
         );
         text.push_str(&board().capture_state(&ui.src));
-        text.push_str(
-            &crate::drawpipe::counters()
-                .pipeline_text(ui.switches().source.work_budget(), crate::pacing::step_missed()),
-        );
+        let counters = crate::drawpipe::counters();
+        text.push_str(&counters.pipeline_text(ui.switches().source.work_budget(), crate::pacing::step_missed()));
+        counters.acquisition.write_disarms(&mut text);
         return Some(text_reply(&text));
     }
     // System > Graphics: CPU or GPU (whether the GPU really draws: the `gpu` part of :SYSTem:STATe?)

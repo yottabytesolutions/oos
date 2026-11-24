@@ -26,6 +26,11 @@ pub fn wait_steps(p: &hz::Params) -> Vec<Step> {
 }
 
 pub(super) const STOP_POLL: Duration = Duration::from_millis(10);
+pub(super) const RECORD_POSITION: u32 = 0x4010;
+
+pub(super) fn record_count(position: u32) -> u32 {
+    position.wrapping_add(1)
+}
 
 /// Fill budget and the end of arm writes when the caller armed ahead.
 #[derive(Clone, Copy, Debug)]
@@ -63,7 +68,7 @@ pub(super) fn fill_count(
     let step = Duration::from_micros(200);
     let mut next_stop = started + STOP_POLL;
     loop {
-        let count = bar.rd(0x4010).wrapping_add(1).clamp(1, nf);
+        let count = record_count(bar.rd(RECORD_POSITION)).clamp(1, nf);
         let now = clock.now();
         let left = wait.fill().saturating_sub(now.saturating_duration_since(started));
         if count == nf || left.is_zero() {
@@ -101,16 +106,38 @@ pub(super) fn poll_after(
     clock: &impl Clock,
     delay: Duration,
 ) -> Result<(), String> {
+    poll_with(step, |reg| Ok(bar.rd(reg)), log, stop, clock, delay)
+}
+
+pub(super) fn poll_checked(step: &Step, bar: &mut impl crate::dho::bus::Bus, clock: &impl Clock) -> Result<(), String> {
+    poll_with(
+        step,
+        |reg| bar.try_rd(reg).map_err(|error| format!("read {reg:#06x}: {error}")),
+        &mut |_| {},
+        &|| false,
+        clock,
+        Duration::ZERO,
+    )
+}
+
+fn poll_with(
+    step: &Step,
+    mut read: impl FnMut(u32) -> Result<u32, String>,
+    log: &mut impl FnMut(String),
+    stop: &impl Fn() -> bool,
+    clock: &impl Clock,
+    delay: Duration,
+) -> Result<(), String> {
     let Step::Poll { reg, bit, ms, what } = step else { return Ok(()) };
     let t = clock.now();
-    let mut last = bar.rd(*reg);
+    let mut last = read(*reg)?;
     let delay = delay.min(STOP_POLL);
     if last & bit == 0 && !delay.is_zero() {
         if stop() {
             return Err(NEW_SETTINGS.into());
         }
         clock.wait(delay);
-        last = bar.rd(*reg);
+        last = read(*reg)?;
         if last & bit == 0 && stop() {
             return Err(NEW_SETTINGS.into());
         }
@@ -118,7 +145,7 @@ pub(super) fn poll_after(
     let mut k = 0u32;
     while last & bit == 0 && clock.now().saturating_duration_since(t).as_millis() < *ms as u128 {
         clock.wait(std::time::Duration::from_micros(500));
-        last = bar.rd(*reg);
+        last = read(*reg)?;
         k += 1;
         if k.is_multiple_of(20) && last & bit == 0 && stop() {
             log(format!(
@@ -141,7 +168,7 @@ pub(super) fn poll_after(
     ));
     if !ok && *reg == 0x4080 {
         // 0x4030 bit 20 = mask/zone read-back started, [3:0] = FSM state (5 = waiting for the column window)
-        let st = bar.rd(0x4030);
+        let st = read(0x4030)?;
         return Err(format!(
             "no acquisition (0x4080 bit30 not set; 0x4030 = {:#010x}, readback {}, state {})",
             st,

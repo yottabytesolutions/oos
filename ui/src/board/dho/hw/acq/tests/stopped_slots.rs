@@ -23,6 +23,7 @@ enum StopReport {
     Late,
     Unconfirmed,
     DoneUnavailable,
+    ReadError,
 }
 
 #[test]
@@ -33,6 +34,7 @@ fn drops_in_range_slots_regardless_of_disarm_status() {
         StopReport::Late,
         StopReport::Unconfirmed,
         StopReport::DoneUnavailable,
+        StopReport::ReadError,
     ] {
         twice(|| first_wait(true, 4, report));
     }
@@ -52,10 +54,15 @@ fn first_wait(ahead: bool, previous: u32, report: StopReport) -> Vec<Event> {
         StopReport::Late => io.clock.delay_stopped_status(Duration::from_micros(150)),
         StopReport::Unconfirmed => io.clock.suppress_stopped_status(),
         StopReport::DoneUnavailable => io.clock.fail_done_after_stop(),
+        StopReport::ReadError => io.clock.error_reading_done_after_stop(),
     }
     capture(&mut source, &mut io);
-    check_disarm(&trace.borrow().events[start..]);
+    check_disarm(&trace.borrow().events[start..], report);
     assert!(!io.clock.capture_armed());
+    if matches!(report, StopReport::ReadError) {
+        assert_eq!(lock(&source.out).status, "disarm: read 0x4080: simulated play-info failure");
+    }
+    check_disarm_counters(report);
     check_reread(&mut source, &mut io, &trace, false);
     trace.take().events
 }
@@ -90,7 +97,7 @@ fn force_cancels_a_consumed_successor_before_a_later_stop() {
         {
             let events = &trace.borrow().events[start..];
             assert!(!events.iter().any(is_arm));
-            check_disarm(events);
+            check_disarm(events, StopReport::Burst);
         }
         io.clock.stop();
         check_reread(&mut source, &mut io, &trace, false);
@@ -108,6 +115,10 @@ fn an_in_range_slot_is_discarded_if_the_failed_capture_was_not_disarmed() {
     let (_scope, mut source, _) = captured(false, 4);
     source.replay.invalidate(&source.out, 4);
     assert_discarded(&source);
+    let mut text = String::new();
+    drawpipe::counters().acquisition.write_disarms(&mut text);
+    assert!(text.contains(" total=0 "), "{text}");
+    assert!(text.ends_with(" dropped=1"), "{text}");
 }
 
 fn smaller_successor() -> Vec<Event> {
@@ -131,6 +142,10 @@ fn smaller_successor() -> Vec<Event> {
     check_reread(&mut source, &mut io, &trace, true);
     assert!(!source.batch.armed.is_some());
     assert!(!io.clock.capture_armed());
+    let mut text = String::new();
+    drawpipe::counters().acquisition.write_disarms(&mut text);
+    assert!(text.contains(" total=1 "), "{text}");
+    assert!(text.ends_with(" dropped=0"), "{text}");
     trace.take().events
 }
 
@@ -334,7 +349,7 @@ fn refused_read(mode: Mode) -> Vec<Event> {
             })
             .unwrap());
         assert!(events[start..].contains(&Event::Read(0x4010, 1)));
-        check_disarm(&events[start..]);
+        check_disarm(&events[start..], StopReport::Burst);
     }
     check_reread(&mut source, &mut io, &trace, false);
     trace.take().events
@@ -355,11 +370,47 @@ fn triggers_during_disarm(trace: &Rc<RefCell<sim::Trace>>, count: u32) -> impl F
     }
 }
 
-fn check_disarm(events: &[Event]) {
+fn check_disarm(events: &[Event], report: StopReport) {
+    use oos_hal::dho::scu::{status::STOPPED, PLAYINFO_DONE};
+
     let pulse = events.iter().rposition(is_disarm).unwrap();
     assert!(matches!(events[pulse - 5], Event::Read(0x4034, _) | Event::Wait(_)));
     assert!(events[pulse - 4..pulse].iter().all(|event| matches!(event, Event::Write(0x4004, _))));
-    assert!(events[pulse..].iter().any(|event| matches!(event, Event::Write(0x4080, _))));
+    let clear = events[pulse..].iter().position(|event| matches!(event, Event::Write(0x4080, _))).unwrap();
+    let evidence = &events[pulse + 1..pulse + clear];
+    let fsm = match report {
+        StopReport::Unconfirmed => 0,
+        StopReport::ClearsDone => 0x20c0,
+        _ => STOPPED,
+    };
+    let done = match report {
+        StopReport::Burst => Event::Read(0x4080, PLAYINFO_DONE),
+        StopReport::DoneUnavailable => Event::Read(0x4080, u32::MAX),
+        StopReport::ReadError => Event::ReadError(0x4080),
+        _ => Event::Read(0x4080, 0),
+    };
+    assert!(matches!(evidence, [.., fsm_read, play_read]
+        if *fsm_read == Event::Read(0x4034, fsm) && *play_read == done));
+    let expected_us = match report {
+        StopReport::Late => 150,
+        StopReport::Unconfirmed => 500,
+        _ => 0,
+    };
+    assert_eq!(super::bounds::waiting_time(evidence), Duration::from_micros(expected_us));
+}
+
+fn check_disarm_counters(report: StopReport) {
+    let mut text = String::new();
+    drawpipe::counters().acquisition.write_disarms(&mut text);
+    let (unknown, no_completed_record, recorded) = match report {
+        StopReport::Empty | StopReport::ClearsDone | StopReport::Late => (0, 1, 0),
+        StopReport::Burst => (0, 0, 1),
+        StopReport::Unconfirmed | StopReport::DoneUnavailable | StopReport::ReadError => (1, 0, 0),
+    };
+    assert_eq!(
+        text,
+        format!(" disarm.v1 total=1 unknown={unknown} no_completed_record={no_completed_record} recorded={recorded} dropped=1")
+    );
 }
 
 fn check_reread(source: &mut AcqLoop<FixedPacing>, io: &mut Io<sim::Sim>, trace: &RefCell<sim::Trace>, survives: bool) {

@@ -132,8 +132,19 @@ pub fn set_stop(w: &mut Vec<Write>, f: bool, sh: &mut Shadows) {
 /// Stop sequence without its status poll (poll 0x4034 bit13 first): stop 0, stop 1, play info clear, SPU reset,
 /// TX reset, stop 0; 17 writes.
 pub fn stop_sequence(w: &mut Vec<Write>, sh: &mut Shadows) {
+    stop_recording(w, sh);
+    finish_stop(w, sh);
+}
+
+/// Number of stop writes through the end of the recording stop pulse.
+pub(super) const STOP_PULSE_WRITES: usize = 6;
+
+fn stop_recording(w: &mut Vec<Write>, sh: &mut Shadows) {
     set_stop(w, false, sh);
     set_stop(w, true, sh);
+}
+
+fn finish_stop(w: &mut Vec<Write>, sh: &mut Shadows) {
     sh.s4080 &= 0x7fff_ffff;
     w.push((0x4080, sh.s4080));
     sh.s4080 |= 0x8000_0000;

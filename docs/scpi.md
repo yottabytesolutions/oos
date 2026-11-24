@@ -314,6 +314,11 @@ Logic commands are `:LA:STATe[?]`, `:LA:DIGital<n>:DISPlay[?]`, `:LA:POD<n>:THRe
 
 `:SYSTem:STATe?` returns app diagnostic state. `:SYSTem:GET? <key>` and `:SYSTem:SET <key> = <value>` access the explicit setup schema, including Math configuration that has no dedicated stock-compatible command subtree here. Key names and internal indices are implementation-specific: see [setup serialization](../ui/src/store.rs), rather than assuming a Rigol syntax. `:SYSTem:LOG ON|OFF` controls the measurement logger.
 
+The `disarm.v1` section reports batch disarms and dropped retained ring batches as
+`total`, `unknown`, `no_completed_record`, `recorded` and `dropped`. The three outcomes reflect
+the hardware status reported at disarm. A retained slot inside the programmed capture range
+is dropped for every outcome. See the [disarm counter schema](spec/state-query.md#disarm-counters).
+
 `:SYSTem:STATe?` includes a boot SD card snapshot read once when the UI starts.
 
 | Field | Values |

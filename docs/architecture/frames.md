@@ -289,11 +289,11 @@ a picture after subtracting post-placement losses. The accounting target is:
 `read = deposited + sum(lost.*) + sum(rejected.*)`.
 
 During live hardware RUN outside record mode, the trigger status shows the increase in the shown
-count per second. It samples at intervals of at least one second. The duty display uses the source's
-median fill fraction when a current sample is available and shows `--%` otherwise. An exclamation
+count per second. It samples at intervals of at least one second. The percentage shows the share of
+wall time covered by the shown records, using stored points per channel divided by sample rate for
+each record's span. The share is capped at 100% and shows `--%` when unavailable. An exclamation
 mark indicates new source losses or queue overflow. Its source-loss total excludes settings,
-superseded work and the deliberate first-slot discard. A trigger-based capture ratio still needs
-hardware evidence.
+superseded work and the deliberate first-slot discard.
 
 ### Counters
 

@@ -223,14 +223,24 @@ impl Counters {
             counter.fetch_add(records, Ordering::Release);
         }
     }
+    #[cfg(test)]
     pub(crate) fn pipeline_text(&self, budget: std::time::Duration, step_missed: u64) -> String {
+        self.pipeline_text_with_share(budget, step_missed, None)
+    }
+
+    pub(crate) fn pipeline_text_with_share(
+        &self,
+        budget: std::time::Duration,
+        step_missed: u64,
+        capture_share: Option<f64>,
+    ) -> String {
         let full = self.losses.unexpected_full.load(Ordering::Relaxed);
         let busy = self.losses.unexpected_busy.load(Ordering::Relaxed);
         let short = self.routes.fallbacks.short_windows();
         let rejected = self.acquisition.play_window_rejections();
         let mut text = format!(
             " intake.unexpected_full={full} admission.unexpected_busy={busy} window.short={short} window.rejected={rejected}{} step.missed={step_missed}",
-            self.metrics.text(&self.routes, budget),
+            self.metrics.text(&self.routes, budget, capture_share),
         );
         self.routes.fallbacks.write(&mut text);
         text

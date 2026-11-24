@@ -421,21 +421,6 @@ impl Source {
         }
     }
 
-    /// Sample rate and points per channel of the latest hardware frame.
-    pub fn hw_rate_depth(&self) -> Option<(f64, usize)> {
-        if let Source::Hw { shared, .. } = self {
-            let g = crate::perfguard::deep::ui_lock(shared);
-            if g.frame.seq > 0 && g.frame.acq.1 > 0 {
-                return Some(g.frame.acq);
-            }
-            if g.frame.seq > 0 && g.frame.dt > 0.0 {
-                let points = g.frame.ch.iter().map(Vec::len).max().unwrap_or(0);
-                return (points > 0).then(|| (g.frame.dt.recip(), points));
-            }
-        }
-        None
-    }
-
     /// Sample rate and depth from the captured frame or the acquisition plan.
     pub fn rate_depth(&self, m: &Model, sw: &crate::sysconf::Switches) -> (f64, u64) {
         self.hw_rate_depth().map(|(r, n)| (r, n as u64)).unwrap_or_else(|| self.planned_rate_depth(m, sw))

@@ -92,9 +92,11 @@ trigger and resample. Use fixtures captured as raw samples at either sparse or d
 The report pools cold per-record timings across fixtures and rounds and gives the range of each stage's
 round medians. It counts non-null samples once per record per round, and counts a round when it has at least
 one timing for the stage. Stages with zero measured samples in both reports appear as `unmeasured`.
+Stages emitted by one build appear with their medians under `Reference-only stages` or `Candidate-only stages`.
+The regression verdict uses the shared stages. Every group requires a positive `place` median in both reports.
 The fixture benchmark reads replay timings, independently of the SCPI acquisition and loss counters.
 
-Each measured stage needs at least five measured rounds and ten samples in each report.
+Each shared, measured stage needs at least five measured rounds and ten samples in each report.
 A median change must exceed both the tolerance (default 2%) of the reference stage median and
 the sum of the two round-median ranges to count as `REGRESSION` (increase) or `faster` (decrease),
 and a component change must also exceed the tolerance times the reference `place` median.
@@ -134,9 +136,9 @@ through a run could move all rounds together without increasing its range.
 
 The comparison exits 1 for a regression when sampling is sufficient. If a stage reports `insufficient data`,
 the comparison exits 2 and shows the required rounds at the observed sampling rate. Rerun older reports
-that lack sampling counts or group hashes. Other exit 2 errors include missing groups or stages, one-sided
-measurements and mismatches in CPU, MIDR or fixture SHA-256. Use the same repeatable group selection to make
-a subset reference.
+that lack sampling counts or group hashes. Other exit 2 errors include missing groups, missing or invalid
+`place` medians, shared stages measured by only one build and mismatches in CPU, MIDR or fixture SHA-256.
+Use the same repeatable group selection to make a subset reference.
 
 ## Live acquisition matrix
 

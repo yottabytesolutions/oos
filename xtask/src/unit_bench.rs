@@ -43,9 +43,10 @@ fn compare_files(options: &command::Compare) -> Result<ExitCode, String> {
 }
 
 fn compare(reference: &report::Report, result: &report::Report, tolerance: f64) -> Result<ExitCode, String> {
-    let rows = report::compare(reference, result, tolerance)?;
-    let placement = report::Placement::summarize(&rows, tolerance);
-    print!("{}", report::table(&rows));
+    let comparison = report::compare(reference, result, tolerance)?;
+    let rows = comparison.rows();
+    let placement = report::Placement::summarize(rows, tolerance);
+    print!("{}", comparison.table());
     println!("{}", placement.summary());
     Ok(if rows.iter().any(report::Row::insufficient) {
         ExitCode::from(2)

@@ -47,10 +47,10 @@ fn reports_sampling_shortfalls_on_either_side() {
     for (rounds, samples, needed) in [(3, 30, 5), (5, 5, 10), (5, 8, 7), (9, 9, 10)] {
         let short = single("stage", Some(Timing::new(15.0, 15.0, 15.0, rounds, samples)));
         for (reference, result, label) in [(&measured, &short, "result"), (&short, &measured, "reference")] {
-            let rows = compare(reference, result, 0.02).unwrap();
-            assert_eq!(rows[0].verdict, Verdict::Same);
-            assert!(rows[1].insufficient());
-            assert!(table(&rows).contains(&format!(
+            let comparison = compare(reference, result, 0.02).unwrap();
+            assert_eq!(comparison.rows[0].verdict, Verdict::Same);
+            assert!(comparison.rows[1].insufficient());
+            assert!(comparison.table().contains(&format!(
                 "insufficient data ({label} has {rounds} rounds and {samples} samples, needs at least {needed} rounds"
             )));
         }
@@ -85,10 +85,10 @@ fn deep_runs(reports: &BTreeMap<String, Report>) -> (&Report, [&Report; 3]) {
 fn archived_deep_summaries_need_fresh_counts() {
     let reports = recorded();
     let (reference, [first, _, _]) = deep_runs(&reports);
-    let rows = compare(reference, first, 0.02).unwrap();
-    assert!(rows.iter().all(Row::insufficient));
-    assert!(table(&rows).contains("reference counts unavailable, rerun with at least 5 rounds and 10 samples"));
-    assert!(table(&rows).contains("result counts unavailable, rerun with at least 5 rounds and 10 samples"));
+    let comparison = compare(reference, first, 0.02).unwrap();
+    assert!(comparison.rows.iter().all(Row::insufficient));
+    assert!(comparison.table().contains("reference counts unavailable, rerun with at least 5 rounds and 10 samples"));
+    assert!(comparison.table().contains("result counts unavailable, rerun with at least 5 rounds and 10 samples"));
 }
 
 #[test]
@@ -111,14 +111,19 @@ fn archived_deep_tile_changes_are_below_the_placement_floor() {
 fn recorded_same_binary_reports_have_no_change_beyond_the_spread() {
     let reports: BTreeMap<String, Report> = serde_json::from_str(include_str!("fixtures/same-binary.json")).unwrap();
     for (reference, result) in [("reference", "result"), ("result", "reference")] {
-        let rows = compare(&reports[reference], &reports[result], 0.02).unwrap();
+        let comparison = compare(&reports[reference], &reports[result], 0.02).unwrap();
+        let rows = comparison.rows();
         assert_eq!(
             rows.iter().filter(|row| row.stage == "place" && row.verdict == Verdict::Same).count(),
             4,
             "{}",
-            table(&rows)
+            comparison.table()
         );
-        assert!(rows.iter().all(|row| matches!(row.verdict, Verdict::Same | Verdict::Unmeasured)), "{}", table(&rows));
+        assert!(
+            rows.iter().all(|row| matches!(row.verdict, Verdict::Same | Verdict::Unmeasured)),
+            "{}",
+            comparison.table()
+        );
     }
 }
 
@@ -139,9 +144,9 @@ fn placement_median_catches_a_common_shift_inside_every_group_spread() {
             timing.min_round_median *= 1.0 + change;
             timing.max_round_median *= 1.0 + change;
         }
-        let rows = compare(&reference, &result, 0.02).unwrap();
-        assert!(rows.iter().all(|row| row.verdict == Verdict::Same), "{}", table(&rows));
-        let placement = Placement::summarize(&rows, 0.02);
+        let comparison = compare(&reference, &result, 0.02).unwrap();
+        assert!(comparison.rows.iter().all(|row| row.verdict == Verdict::Same), "{}", comparison.table());
+        let placement = Placement::summarize(comparison.rows(), 0.02);
         assert_eq!((placement.slower, placement.faster), (slower, faster));
         assert!((placement.median - median).abs() < 1e-12);
         assert_eq!(super::super::compare(&reference, &result, 0.02).unwrap(), std::process::ExitCode::from(exit));
@@ -161,35 +166,69 @@ fn archived_cpu_placement_timings_trigger_the_gate_with_sufficient_sampling() {
     for (reference, result, expected) in
         [("a53-cpu2", "ref-cpu2", Verdict::Regression), ("ref-cpu2", "a53-cpu2", Verdict::Faster)]
     {
-        let rows = compare(&reports[reference], &reports[result], 0.02).unwrap();
-        assert_eq!(rows.len(), 4);
-        for row in &rows {
+        let comparison = compare(&reports[reference], &reports[result], 0.02).unwrap();
+        assert_eq!(comparison.rows.len(), 4);
+        for row in comparison.rows() {
             assert_eq!(row.stage, "place");
             let verdict = if row.group == "hires-200ns" { &expected } else { &Verdict::Same };
-            assert_eq!(&row.verdict, verdict, "{}", table(&rows));
+            assert_eq!(&row.verdict, verdict, "{}", comparison.table());
         }
     }
 }
 
 #[test]
-fn compares_nulls_and_rejects_missing_groups_and_stages_in_either_direction() {
+fn compares_nulls_and_rejects_missing_groups_and_asymmetric_measurements() {
     let reference = single("trigger", None);
     let result = single("trigger", Some(timing(10.0, 10.0, 10.0)));
-    assert_eq!(compare(&reference, &reference, 0.02).unwrap()[1].verdict, Verdict::Unmeasured);
+    assert_eq!(compare(&reference, &reference, 0.02).unwrap().rows[1].verdict, Verdict::Unmeasured);
 
-    let mut missing_stage = single("trigger", None);
-    missing_stage.groups.get_mut("group").unwrap().stages.remove("trigger");
     let missing_group = report(BTreeMap::new());
     for (left, right, expected) in [
         (&reference, &result, "group 'group', stage 'trigger': unmeasured in reference only"),
         (&result, &reference, "group 'group', stage 'trigger': unmeasured in result only"),
-        (&missing_stage, &result, "group 'group': missing stage 'trigger' in reference"),
-        (&result, &missing_stage, "group 'group': missing stage 'trigger' in result"),
         (&missing_group, &result, "missing group 'group' in reference"),
         (&result, &missing_group, "missing group 'group' in result"),
     ] {
         assert_eq!(compare(left, right, 0.02).unwrap_err(), expected);
     }
+}
+
+#[test]
+fn equal_stage_sets_only_show_the_comparison_table() {
+    let report = single("trigger", Some(timing(10.0, 10.0, 10.0)));
+    let comparison = compare(&report, &report, 0.02).unwrap();
+    assert_eq!(comparison.rows.len(), 2);
+    assert!(!comparison.table().contains("-only stages"));
+    assert_eq!(super::super::compare(&report, &report, 0.02), Ok(std::process::ExitCode::SUCCESS));
+}
+
+#[test]
+fn added_and_removed_stages_show_their_medians_without_affecting_the_exit_code() {
+    let with_average = single("average_accumulate", Some(Timing::new(12.5, 12.5, 12.5, 1, 1)));
+    let mut without_average = single("average_accumulate", None);
+    without_average.groups.get_mut("group").unwrap().stages.remove("average_accumulate");
+    for (reference, result, heading, other) in [
+        (&without_average, &with_average, "Candidate-only stages", "Reference-only stages"),
+        (&with_average, &without_average, "Reference-only stages", "Candidate-only stages"),
+    ] {
+        let comparison = compare(reference, result, 0.02).unwrap();
+        assert_eq!(comparison.rows.len(), 1);
+        assert_eq!(comparison.rows[0].stage, "place");
+        let table = comparison.table();
+        assert!(table.ends_with(&format!("\n{heading} (median ns/rec)\ngroup  average_accumulate  12.5\n")), "{table}");
+        assert!(!table.contains(other), "{table}");
+        assert_eq!(super::super::compare(reference, result, 0.02), Ok(std::process::ExitCode::SUCCESS));
+    }
+}
+
+#[test]
+fn required_placement_stage_must_be_present_on_both_sides() {
+    let mut missing_place = single("trigger", Some(timing(10.0, 10.0, 10.0)));
+    missing_place.groups.get_mut("group").unwrap().stages.remove("place");
+    assert_eq!(
+        compare(&missing_place, &missing_place, 0.02).unwrap_err(),
+        "group 'group' requires a positive 'place' median in reference"
+    );
 }
 
 #[test]
@@ -219,8 +258,9 @@ fn compare_recorded_examples() {
     });
     let reference = report(BTreeMap::from(groups));
     let result = serde_json::to_string(&reference).unwrap();
-    let rows = compare(&reference, &serde_json::from_str(&result).unwrap(), 0.02).unwrap();
-    assert_eq!(rows.len(), 32);
-    assert!(rows.iter().all(|row| !row.regression()));
+    let result_report = serde_json::from_str(&result).unwrap();
+    let comparison = compare(&reference, &result_report, 0.02).unwrap();
+    assert_eq!(comparison.rows.len(), 32);
+    assert!(comparison.rows.iter().all(|row| !row.regression()));
     println!("{result}");
 }

@@ -9,6 +9,7 @@ Requires an existing observe/test lease; only lease bookkeeping renews on device
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 import json
 import math
 import os
@@ -82,15 +83,23 @@ def ssh(host: str, script: str) -> str:
 
 class Scpi:
     """Exactly one socket, bounded replies, at least 150 ms between requests."""
-    def __init__(self, sock: socket.socket, lease: scope_lease.HeldLease) -> None:
+    def __init__(self, sock: socket.socket, lease: scope_lease.HeldLease, *,
+                 monotonic: Callable[[], float] = time.monotonic,
+                 sleep: Callable[[float], None] = time.sleep) -> None:
         self.sock, self.lease = sock, lease
+        self.monotonic, self._sleep = monotonic, sleep
         self.reader = sock.makefile('rb')
         self.last_sent = -math.inf
 
+    def wait_until(self, deadline: float) -> None:
+        remaining = deadline - self.monotonic()
+        if remaining > 0:
+            self._sleep(remaining)
+
     def state(self) -> State:
-        time.sleep(max(0.0, self.last_sent + 0.150 - time.monotonic()))
+        self.wait_until(self.last_sent + 0.150)
         self.lease.check()
-        started = time.monotonic()
+        started = self.monotonic()
         self.sock.sendall(b':SYSTem:STATe?\n')
         self.last_sent = started
         raw = self.reader.readline(1024 * 1024)
@@ -101,7 +110,7 @@ class Scpi:
         if (not text.startswith('fps ')
                 or any(len(diagnostics.get(f'draw.{name}', [])) != 1 for name in DRAW_NAMES)):
             raise ValueError('unexpected STATe reply; stop')
-        return {'started_s': started, 'finished_s': time.monotonic(),
+        return {'started_s': started, 'finished_s': self.monotonic(),
                 'raw': text, 'diagnostics': diagnostics}
 
     def close(self) -> None:
@@ -111,16 +120,16 @@ class Scpi:
 def snapshot(scpi: Scpi, host: str) -> Snapshot:
     state = scpi.state()
     scpi.lease.check()
-    started = time.monotonic()
+    started = scpi.monotonic()
     proc = parse_capture(ssh(host, CAPTURE))
     scpi.lease.check()
-    return {'state': state, 'proc_started_s': started, 'proc_finished_s': time.monotonic(),
+    return {'state': state, 'proc_started_s': started, 'proc_finished_s': scpi.monotonic(),
             'proc': proc}
 
 
 def measure(scpi: Scpi, host: str, name: str, seconds: float) -> Measurement:
     first = snapshot(scpi, host)
-    time.sleep(max(0.0, first['state']['started_s'] + seconds - time.monotonic()))
+    scpi.wait_until(first['state']['started_s'] + seconds)
     second = snapshot(scpi, host)
     return {'schema': 1, 'point': name, 'requested_seconds': seconds,
             'recorded_at': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime()),
@@ -198,7 +207,8 @@ def main() -> int:
             scpi = Scpi(sock, lease)
             try:
                 for name in args.points:
-                    time.sleep(args.settle)
+                    if args.settle > 0:
+                        time.sleep(args.settle)
                     row = measure(scpi, host, name, args.seconds)
                     with (args.out / f'{name}.json').open('x') as output:
                         output.write(json.dumps(row, indent=2) + '\n')

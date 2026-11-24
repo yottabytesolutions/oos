@@ -203,7 +203,39 @@ fn timing_verdict(stage: &str, reference: Timing, result: Timing, place: f64, to
     }
 }
 
-pub(super) fn compare<'a>(reference: &'a Report, result: &Report, tolerance: f64) -> Result<Vec<Row<'a>>, String> {
+type StageMedian<'a> = (&'a str, &'a str, Option<f64>);
+
+#[derive(Debug, Default)]
+pub(super) struct Comparison<'a> {
+    rows: Vec<Row<'a>>,
+    reference_only: Vec<StageMedian<'a>>,
+    candidate_only: Vec<StageMedian<'a>>,
+}
+
+impl<'a> Comparison<'a> {
+    pub(super) fn rows(&self) -> &[Row<'a>] {
+        &self.rows
+    }
+
+    pub(super) fn table(&self) -> String {
+        let mut text = table(&self.rows);
+        for (heading, stages) in
+            [("Reference-only stages", &self.reference_only), ("Candidate-only stages", &self.candidate_only)]
+        {
+            if stages.is_empty() {
+                continue;
+            }
+            writeln!(text, "\n{heading} (median ns/rec)").expect("writing to a String succeeds");
+            for (group, stage, median) in stages {
+                let median = median.map_or_else(|| "n/a".into(), |ns| format!("{ns:.1}"));
+                writeln!(text, "{group}  {stage}  {median}").expect("writing to a String succeeds");
+            }
+        }
+        text
+    }
+}
+
+pub(super) fn compare<'a>(reference: &'a Report, result: &'a Report, tolerance: f64) -> Result<Comparison<'a>, String> {
     if reference.cpu != result.cpu {
         return Err(format!("CPU differs: reference {}, result {}", reference.cpu, result.cpu));
     }
@@ -214,43 +246,55 @@ pub(super) fn compare<'a>(reference: &'a Report, result: &Report, tolerance: f64
     if reference.groups.is_empty() {
         return Err("reports have no groups".into());
     }
-    let mut rows = Vec::new();
+    let mut comparison = Comparison::default();
     for (group, baseline) in &reference.groups {
         let candidate = &result.groups[group];
         if baseline.fixture_sha256 != candidate.fixture_sha256 {
             return Err(format!("group '{group}': fixture SHA-256 differs between reference and result"));
         }
-        compare_group(&mut rows, group, &baseline.stages, &candidate.stages, tolerance)?;
+        compare_group(&mut comparison, group, &baseline.stages, &candidate.stages, tolerance)?;
     }
-    Ok(rows)
+    Ok(comparison)
 }
 
 fn compare_group<'a>(
-    rows: &mut Vec<Row<'a>>,
+    comparison: &mut Comparison<'a>,
     group: &'a str,
     stages: &'a Stages,
-    candidate: &Stages,
+    candidate: &'a Stages,
     tolerance: f64,
 ) -> Result<(), String> {
-    same_keys(stages, candidate, "stage", "reference", "result").map_err(|e| format!("group '{group}': {e}"))?;
     let place = placement(stages, group, "reference")?;
     placement(candidate, group, "result")?;
     for (stage, &reference) in stages {
-        let result = candidate[stage];
+        validate_timing(group, stage, reference)?;
+        let Some(&result) = candidate.get(stage) else {
+            comparison.reference_only.push((group, stage, reference.map(|timing| timing.median)));
+            continue;
+        };
         if reference.is_some() != result.is_some() {
             let missing = if reference.is_none() { "reference" } else { "result" };
             return Err(format!("group '{group}', stage '{stage}': unmeasured in {missing} only"));
         }
-        if [reference, result].into_iter().flatten().any(|timing| !timing.valid()) {
-            return Err(format!("group '{group}', stage '{stage}': invalid timing"));
-        }
-        rows.push(Row {
+        validate_timing(group, stage, result)?;
+        comparison.rows.push(Row {
             group,
             stage,
             reference,
             result,
             verdict: verdict(stage, reference, result, place, tolerance),
         });
+    }
+    for (stage, &result) in candidate.iter().filter(|(stage, _)| !stages.contains_key(*stage)) {
+        validate_timing(group, stage, result)?;
+        comparison.candidate_only.push((group, stage, result.map(|timing| timing.median)));
+    }
+    Ok(())
+}
+
+fn validate_timing(group: &str, stage: &str, timing: Option<Timing>) -> Result<(), String> {
+    if timing.is_some_and(|timing| !timing.valid()) {
+        return Err(format!("group '{group}', stage '{stage}': invalid timing"));
     }
     Ok(())
 }
@@ -265,7 +309,7 @@ fn placement(stages: &Stages, group: &str, label: &str) -> Result<f64, String> {
         .ok_or_else(|| format!("group '{group}' requires a positive 'place' median in {label}"))
 }
 
-pub(super) fn table(rows: &[Row<'_>]) -> String {
+fn table(rows: &[Row<'_>]) -> String {
     let group_width = rows.iter().map(|row| row.group.len()).max().unwrap_or_default().max(5);
     let stage_width = rows.iter().map(|row| row.stage.len()).max().unwrap_or_default().max(5);
     let mut text = format!(

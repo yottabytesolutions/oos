@@ -7,13 +7,10 @@ import json
 import tempfile
 import importlib.util
 from pathlib import Path
-import socket
 import subprocess
 import sys
-import threading
-import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 ROOT = Path(__file__).resolve().parents[2]
 SOURCE = ROOT / 'tools/oos-stress'
@@ -185,7 +182,6 @@ class Perfmap(unittest.TestCase):
         self.assertNotIn('unrelated', final['draw.view_render'][0])
 
     def test_real_state_fixture_is_accepted_by_transport(self):
-        from unittest.mock import Mock
         sock, lease = Mock(), Mock()
         sock.makefile.return_value = io.BytesIO(self.state.encode())
         scpi = PERF.Scpi(sock, lease)
@@ -196,33 +192,30 @@ class Perfmap(unittest.TestCase):
             scpi.close()
 
     def test_two_snapshots_one_socket_and_request_pacing(self):
-        client, server = socket.socketpair()
-        requests = []
-        class Lease:
-            def check(self):
-                pass
-        def serve():
-            with server, server.makefile('rb') as reader:
-                for _ in range(2):
-                    requests.append((reader.readline(), time.monotonic()))
-                    server.sendall(self.state.encode())
-        worker = threading.Thread(target=serve)
-        worker.start()
-        scpi = PERF.Scpi(client, Lease())
-        try:
-            with patch.object(PERF, 'ssh', side_effect=[self.before_text, self.after_text]) as ssh:
-                row = PERF.measure(scpi, 'example.invalid', 'A-1', 0.01)
-            self.assertEqual(ssh.call_count, 2)
-            self.assertGreaterEqual(row['state_interval_s'], 0.149)
-            self.assertEqual(row['before']['state']['raw'], self.state.strip())
-            self.assertEqual(row['delta']['gpu']['counters']['cpu_ticks'], 30)
-        finally:
-            scpi.close()
-            client.close()
-            worker.join(timeout=5)
-        self.assertFalse(worker.is_alive())
-        self.assertEqual([r[0] for r in requests], [b':SYSTem:STATe?\n'] * 2)
-        self.assertGreaterEqual(requests[1][1] - requests[0][1], 0.149)
+        def sleep(seconds):
+            nonlocal now
+            now += seconds
+
+        for seconds, interval in [(0.01, 0.150), (0.25, 0.25)]:
+            with self.subTest(seconds=seconds):
+                now = 0.0
+                requests = []
+                sock = Mock()
+                sock.makefile.return_value = io.BytesIO(self.state.encode() * 2)
+                sock.sendall.side_effect = lambda request: requests.append((request, now))
+                scpi = PERF.Scpi(sock, Mock(), monotonic=lambda: now, sleep=sleep)
+                try:
+                    with patch.object(PERF, 'ssh', side_effect=[self.before_text, self.after_text]) as ssh:
+                        row = PERF.measure(scpi, 'example.invalid', 'A-1', seconds)
+                finally:
+                    scpi.close()
+                self.assertEqual(ssh.call_count, 2)
+                self.assertAlmostEqual(row['state_interval_s'], interval)
+                self.assertAlmostEqual(row['proc_interval_s'], interval)
+                self.assertEqual(row['before']['state']['raw'], self.state.strip())
+                self.assertEqual(row['delta']['gpu']['counters']['cpu_ticks'], 30)
+                sock.makefile.assert_called_once_with('rb')
+                self.assertEqual(requests, [(b':SYSTem:STATe?\n', 0.0), (b':SYSTem:STATe?\n', interval)])
 
     def test_cli_writes_point_json_accumulates_report_and_preserves_existing_results(self):
         row = {'schema': 1, 'point': 'A-1', 'proc_interval_s': 2.0,
@@ -270,8 +263,6 @@ class Perfmap(unittest.TestCase):
         self.assertTrue(run.call_args.kwargs['check'])
 
     def test_closed_or_invalid_scpi_and_transport_failure_stop(self):
-        import io
-        from unittest.mock import Mock
         invalid = [b'', b'fps incomplete', b'-113,"Unknown header"\n', b'fps 0.0 frames 1\n',
                    self.state.replace('fps ', 'records ', 1).encode(),
                    self.state.replace('diag draw.fast ', 'diag missing.fast ').encode(),

@@ -48,6 +48,28 @@ class ReleaseKeyInputs(unittest.TestCase):
             release._external_key(ROOT / "keys/update.pub")
 
 
+class PackageHeader(unittest.TestCase):
+    def header(self, *trials):
+        lines = ["OOS-UPDATE 1", "build 20261124-000000 kernel 6.12.0", "models DHO804",
+                 *(f"trial {t}" for t in trials), "key 0123456789abcdef"]
+        return ("\n".join(lines) + "\n\n").encode("ascii") + b"body"
+
+    def key(self, *trials):
+        with tempfile.TemporaryDirectory() as tmp:
+            package = Path(tmp) / "p.oosupd"
+            package.write_bytes(self.header(*trials))
+            return release._header_key(package, "20261124-000000 kernel 6.12.0", "DHO804")
+
+    def test_kexec_trial_is_found_next_to_a_staged_trial(self):
+        self.assertEqual(self.key("kexec", "staged"), "0123456789abcdef")
+        self.assertEqual(self.key("kexec"), "0123456789abcdef")
+
+    def test_a_package_without_the_kexec_trial_is_refused(self):
+        for trials in ((), ("staged",)):
+            with self.assertRaisesRegex(ValueError, "trial kexec"):
+                self.key(*trials)
+
+
 class ReleaseCheckout(unittest.TestCase):
     def test_commit_must_match_checkout_head(self):
         with patch.object(release.subprocess, "run", return_value=subprocess.CompletedProcess(

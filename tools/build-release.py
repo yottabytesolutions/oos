@@ -88,10 +88,12 @@ def _header_key(package, build, models):
         header, separator, _ = source.read(4096).partition(b"\n\n")
     if not separator or not header.startswith(b"OOS-UPDATE 1\n"):
         raise ValueError("updater produced an invalid package header")
-    fields = dict(line.split(" ", 1) for line in header.decode("ascii").splitlines()[1:])
+    lines = [line.split(" ", 1) for line in header.decode("ascii").splitlines()[1:]]
+    fields = dict(lines)
     if fields.get("build") != build or fields.get("models") != models:
         raise ValueError("signed package metadata differs from the image")
-    if fields.get("trial") != "kexec":
+    # A package can announce more than one trial start: `trial kexec` and `trial staged`.
+    if ["trial", "kexec"] not in lines:
         raise ValueError("signed package is missing 'trial kexec'")
     key_id = fields.get("key", "")
     if not re.fullmatch(r"[0-9a-f]{16}", key_id):

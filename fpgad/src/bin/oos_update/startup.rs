@@ -58,8 +58,12 @@ pub(crate) fn status(a: &Args) {
         ),
         Err(e) => tell(&format!("boot magic   unreadable: {e}")),
     }
-    if let Err(e) = c.check_layout() {
-        tell(&format!("layout       {e}"));
+    match c.check_layout() {
+        Ok(()) => match c.data_has_journal() {
+            Ok(enabled) => out!("data journal {}", if enabled { "enabled" } else { "disabled" }),
+            Err(e) => tell(&format!("data journal unavailable ({e})")),
+        },
+        Err(e) => tell(&format!("layout       {e}")),
     }
     super::slot_status::show(&mut c, &st, a.flag("--quick"));
     if let Some(reason) = st.untracked_reason() {

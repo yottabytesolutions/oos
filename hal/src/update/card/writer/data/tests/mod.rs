@@ -4,6 +4,45 @@ use super::*;
 use std::io::Read;
 use std::os::unix::process::ExitStatusExt;
 
+mod format_cases;
+mod journal_cases;
+
+#[test]
+fn scratch_images_can_coexist_beyond_sixteen_slots() {
+    let images: Vec<_> = (0..32).map(|index| Image::copy_from(&[index]).unwrap()).collect();
+    for (index, image) in images.iter().enumerate() {
+        assert_eq!(image.read(1).unwrap(), [index as u8]);
+    }
+}
+
+#[test]
+fn geometry_and_journal_use_the_same_supported_block_sizes() {
+    let mut bytes = pending_journal_image();
+    let replay = journal::pending_replay(&bytes, Source::Primary).unwrap().unwrap();
+    let head = 3 * 8192;
+    assert_eq!(replay.head(), head);
+    bytes[head + 31] = 0;
+    let order = geometry::write_order(&bytes, WriteKind::Replay(replay)).unwrap();
+    assert!(order[head / SECTOR as usize] == Order::JournalHead);
+    assert!(order[geometry::PRIMARY.start / SECTOR as usize] == Order::Primary);
+}
+
+fn pending_journal_image() -> Vec<u8> {
+    let mut bytes = vec![0; 8 * 8192];
+    let superblock = &mut bytes[geometry::PRIMARY.clone()];
+    superblock[0x38..0x3a].copy_from_slice(&0xef53u16.to_le_bytes());
+    for (field, value) in [(4, 8u32), (0x18, 3), (0x20, 4), (0x58, 128), (0x5c, 4), (0xe0, 8)] {
+        superblock[field..field + 4].copy_from_slice(&value.to_le_bytes());
+    }
+    bytes[8192 + 8..8192 + 12].copy_from_slice(&2u32.to_le_bytes());
+    let pointer = 2 * 8192 + 7 * 128 + 40;
+    bytes[pointer..pointer + 4].copy_from_slice(&3u32.to_le_bytes());
+    let head = 3 * 8192;
+    bytes[head..head + 4].copy_from_slice(&[0xc0, 0x3b, 0x39, 0x98]);
+    bytes[head + 31] = 1;
+    bytes
+}
+
 #[test]
 fn fsck_exit_bits_preserve_corrections_and_reject_tool_failures() {
     let check = |number| check_result(ExitStatus::from_raw(number << 8));
@@ -26,6 +65,7 @@ fn read_only_verdict_controls_escalation_and_acceptance() {
     for preen in [Ok(Check::Clean), Ok(Check::Corrected), Err("preen failed".into())] {
         for verified in [Ok(Check::Clean), Ok(Check::Uncorrected { corrected: false }), Err("check failed".into())] {
             let repair = verified != Ok(Check::Clean);
+            let corrected = preen == Ok(Check::Corrected);
             let mut checks = [
                 ("-p", preen.clone()),
                 ("-fn", verified),
@@ -34,12 +74,12 @@ fn read_only_verdict_controls_escalation_and_acceptance() {
             ]
             .into_iter();
             assert_eq!(
-                check_until_clean(Source::Primary, |args| {
+                check_until_clean(Source::Primary, None, |args| {
                     let (expected, result) = checks.next().unwrap();
                     assert_eq!(args, [expected]);
                     result
                 }),
-                Ok(())
+                Ok(repair || corrected)
             );
             assert_eq!(checks.count(), if repair { 0 } else { 2 });
         }
@@ -51,7 +91,7 @@ fn read_only_verdict_controls_escalation_and_acceptance() {
         Check::Uncorrected { corrected: false },
     ]
     .into_iter();
-    assert!(check_until_clean(Source::Primary, |_| Ok(checks.next().unwrap())).is_err());
+    assert!(check_until_clean(Source::Primary, None, |_| Ok(checks.next().unwrap())).is_err());
     assert_eq!(checks.count(), 0);
 }
 
@@ -126,9 +166,9 @@ impl Fixture {
 
     fn format_ext2(&self, block_size: &str, blocks_per_group: &str) {
         fs::File::create(&self.image.0).unwrap().set_len(LEN as u64).unwrap();
-        assert!(image_tool("mke2fs", &["-F", "-t", "ext2", "-b", block_size, "-g", blocks_per_group], &self.image.0)
-            .unwrap()
-            .success());
+        let features = "none,filetype,sparse_super,large_file,ext_attr,resize_inode,dir_index";
+        let args = ["-F", "-t", "ext2", "-b", block_size, "-g", blocks_per_group, "-O", features];
+        assert!(image_tool("mke2fs", &args, &self.image.0).unwrap().success());
     }
 
     fn put_file(&self, path: &str, data: &[u8]) {
@@ -160,6 +200,11 @@ fn require_tools() {
             "cannot run {tool} -V: install e2fsprogs and put its sbin directory in PATH"
         );
     }
+    // tune2fs prints the version but returns a usage error for -V.
+    assert!(
+        Command::new("tune2fs").arg("-V").output().is_ok_and(|out| out.stdout.starts_with(b"tune2fs ")),
+        "cannot run tune2fs: install e2fsprogs and put its sbin directory in PATH"
+    );
 }
 
 fn assert_repaired(fixture: &mut Fixture) {
@@ -177,6 +222,7 @@ fn ext2_images_cover_clean_repairs_and_refusals() {
     let (result, before, after) = fixture.run();
     assert_eq!(result, Ok(None)); // First use does not report a repair.
     assert_ne!(before, after);
+    assert!(fixture.open_card().data_has_journal().unwrap());
     fs::write(&fixture.image.0, after).unwrap();
     assert_eq!(fixture.fsck("-fn"), 0);
 
@@ -195,6 +241,12 @@ fn ext2_images_cover_clean_repairs_and_refusals() {
     fixture.debugfs(&["-w"], "unlink /oos-ui.setup.new");
     fixture.debugfs(&["-w"], "set_super_value state 1");
     assert_eq!(fixture.fsck("-p"), 0); // Preen takes the clean flag at face value.
+    assert_repaired(&mut fixture);
+    assert_eq!(fixture.debugfs(&[], &format!("cat {}", fixture.recovered_name())), "keep this recovered setup\n");
+
+    fixture.debugfs(&["-w"], "set_super_value free_blocks_count 1");
+    fixture.debugfs(&["-w"], "set_super_value free_inodes_count 1");
+    fixture.debugfs(&["-w"], "set_super_value state 2");
     assert_repaired(&mut fixture);
     assert_eq!(fixture.debugfs(&[], &format!("cat {}", fixture.recovered_name())), "keep this recovered setup\n");
 
@@ -218,6 +270,10 @@ fn ext2_recovers_after_every_prefix_of_the_real_repair() {
     require_tools();
     let mut fixture = Fixture::new("interrupted");
     fixture.format_ext2("1024", "8192");
+    assert_repair_prefixes(&mut fixture, false);
+}
+
+fn damage_files(fixture: &Fixture, state: &str) -> &'static [u8] {
     fixture.debugfs(&["-w"], "mkdir /setups");
     fixture.put_file("/setups/keep", b"saved setup\n");
     fixture.put_file("/oos-ui.setup", b"current setup\n");
@@ -227,7 +283,12 @@ fn ext2_recovers_after_every_prefix_of_the_real_repair() {
     fixture.debugfs(&["-w"], "set_bg 0 free_blocks_count 1");
     fixture.debugfs(&["-w"], "set_super_value free_blocks_count 1");
     fixture.debugfs(&["-w"], "set_super_value free_inodes_count 1");
-    fixture.debugfs(&["-w"], "set_super_value state 2");
+    fixture.debugfs(&["-w"], &format!("set_super_value state {state}"));
+    recovered
+}
+
+fn assert_repair_prefixes(fixture: &mut Fixture, journalled: bool) {
+    let recovered = damage_files(fixture, "2");
     assert_ne!(fixture.fsck("-p") & UNCORRECTED, 0);
 
     let (result, damaged, repaired) = fixture.run();
@@ -239,7 +300,12 @@ fn ext2_recovers_after_every_prefix_of_the_real_repair() {
     assert_eq!(hashes[2], crate::update::hash::sha256(recovered));
     assert_eq!(fixture.fsck("-fn"), 0);
 
-    let runs = data_runs(&damaged, &repaired).unwrap();
+    // An ext2 startup writes the repair before starting the separately retryable conversion.
+    let repair = Image::copy_from(&damaged).unwrap();
+    check_image(&repair.0, Source::Primary, None).unwrap();
+    let checked = repair.read(LEN).unwrap();
+    assert_eq!(Superblock::read(&checked).unwrap().has_journal(), journalled);
+    let runs = data_runs(&damaged, &checked, WriteKind::Repair).unwrap();
     assert!(runs.len() >= 3);
     assert!(geometry::PRIMARY.contains(&runs.last().unwrap().start));
     for (index, run) in runs.iter().enumerate() {
@@ -255,7 +321,7 @@ fn ext2_recovers_after_every_prefix_of_the_real_repair() {
         assert_eq!(fixture.file_hashes(&paths), hashes, "prefix {}", index + 1);
         fixture.assert_bounds();
     }
-    eprintln!("checked all {} write-back prefixes", runs.len());
+    eprintln!("checked all {} repair write-back prefixes (journalled: {journalled})", runs.len());
 }
 
 #[test]
@@ -286,47 +352,42 @@ fn changed_data_precedes_all_superblock_and_descriptor_runs() {
     after[1080..1082].copy_from_slice(&[0x53, 0xef]);
     let before = vec![0xff; after.len()];
     assert_eq!(
-        data_runs(&before, &after).unwrap(),
-        [0..1024, 3072..5120, 7168..8192, 2048..3072, 5120..7168, 1024..2048]
+        data_runs(&before, &after, WriteKind::Repair).unwrap(),
+        [0..1024, 3072..5120, 7168..8192, 2048..3072, 5120..7168, 1536..2048, 1024..1536]
     );
 }
 
 #[test]
-fn repair_image_never_changes_other_areas_and_failures_do_not_write() {
+fn repair_image_never_changes_other_areas() {
     let mut fixture = Fixture::new("fake");
     let mut card = fixture.open_card();
-    assert!(card
-        .repair_data(|image, _| {
-            fs::write(image, [99]).unwrap();
-            Err("failed repair".into())
-        })
-        .is_err());
-    assert!(card.read(OOSDATA_LBA, 1082).unwrap().iter().all(|&b| b == 0));
-    card.repair_data(|image, source| {
-        assert_eq!(source, Source::Empty);
-        let mut f = OpenOptions::new().write(true).open(image).unwrap();
-        write_at(&mut f, 0, &[17]);
-        write_at(&mut f, 1028, &((LEN / 1024) as u32).to_le_bytes());
-        write_at(&mut f, 1056, &8192u32.to_le_bytes());
-        write_at(&mut f, 1080, &[0x53, 0xef]);
-        write_at(&mut f, LEN as u64 - 1, &[18]);
-        Ok(())
-    })
-    .unwrap();
+    let (before, image, source) = card.stage_data().unwrap();
+    assert_eq!(source, Source::Empty);
+    let mut f = OpenOptions::new().write(true).open(&image.0).unwrap();
+    write_at(&mut f, 0, &[17]);
+    write_at(&mut f, 1028, &((LEN / 1024) as u32).to_le_bytes());
+    write_at(&mut f, 1056, &8192u32.to_le_bytes());
+    write_at(&mut f, 1080, &[0x53, 0xef]);
+    write_at(&mut f, LEN as u64 - 1, &[18]);
+    let after = image.read(LEN).unwrap();
+    card.write_data_changes(&before, &after, WriteKind::Repair).unwrap();
     let data = card.read(OOSDATA_LBA, 1082).unwrap();
     assert_eq!(data[0], 17);
     assert_eq!(&data[1080..], &[0x53, 0xef]);
     assert_eq!(card.read(OOSDATA_LBA + crate::target::ACTIVE.layout.oosdata_sectors - 1, 512).unwrap()[511], 18);
-    card.repair_data(|_, source| {
-        assert_eq!(source, Source::Primary);
-        Ok(())
-    })
-    .unwrap();
-    assert!(card
-        .repair_data(|image, _| {
-            fs::write(image, [0]).unwrap();
-            Ok(())
-        })
-        .is_err());
+    assert_eq!(card.stage_data().unwrap().2, Source::Primary);
+    assert_eq!(card.write_data_changes(&after, &after, WriteKind::Repair), Ok(0));
     fixture.assert_bounds();
+}
+
+#[test]
+fn resized_scratch_and_missing_superblock_are_refused_before_writing() {
+    let fixture = Fixture::new("bad-scratch");
+    let mut card = fixture.open_card();
+    let (before, image, source) = card.stage_data().unwrap();
+    assert_eq!(source, Source::Empty);
+    fs::write(&image.0, [99]).unwrap();
+    assert!(image.read(LEN).unwrap_err().contains("changed OOS data size"));
+    assert!(write_changes(&before, &before, WriteKind::Repair, |_, _| panic!("wrote without a superblock")).is_err());
+    assert_eq!(card.read(OOSDATA_LBA, LEN).unwrap(), before);
 }

@@ -231,8 +231,9 @@ The default gate needs the scripts' declared shells (including `mksh` for Androi
 coverage tools and the pinned Rust host/ARM toolchain. Syntax checking does not run the scripts.
 HAL's boot card DTB tests also require `fdtget` on `PATH` for independent property readback.
 Install `device-tree-compiler` on Debian/Ubuntu or `dtc` with Homebrew on macOS.
-HAL's data repair tests require `mke2fs`, `e2fsck` and `debugfs` from `e2fsprogs`. The gate adds common `sbin`
-directories to PATH for these tests. Add the package's `sbin` to PATH when running the HAL tests directly.
+HAL's data repair and journal tests require `mke2fs`, `e2fsck`, `debugfs` and `tune2fs` from `e2fsprogs`.
+The gate adds common `sbin` directories to PATH for these tests. Add the package's `sbin` to PATH when running
+the HAL tests directly.
 Only the explicit `--image` tier needs Docker with arm64 execution, QEMU, kernel source and the
 locked GPU/simulation/image profiles. Prepare it with `tools/bootstrap.sh --image`.
 Missing prerequisites fail in the tier that requires them.

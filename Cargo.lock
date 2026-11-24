@@ -266,18 +266,18 @@ dependencies = [
 
 [[package]]
 name = "oos-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "oos-dsp",
 ]
 
 [[package]]
 name = "oos-dsp"
-version = "0.2.0"
+version = "0.2.1"
 
 [[package]]
 name = "oos-fpgad"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "libc",
  "oos-hal",
@@ -285,7 +285,7 @@ dependencies = [
 
 [[package]]
 name = "oos-hal"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "curve25519-dalek",
  "ed25519-dalek",
@@ -296,7 +296,7 @@ dependencies = [
 
 [[package]]
 name = "oos-ui"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "libc",
  "mdns-sd",
@@ -553,7 +553,7 @@ dependencies = [
 
 [[package]]
 name = "xtask"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "proc-macro2",
  "pulldown-cmark",

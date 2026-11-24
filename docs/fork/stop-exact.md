@@ -22,7 +22,7 @@ Single scan only).
 - The normal batch path disarms any tracked successor on entering hold. On a pass without a stopped view,
   acquisition can reach configuration before its batch hold check. Calibration, generator updates, the hardware
   counter, XADC and LA probe checks continue in STOP. RUN publishes the new epoch before releasing hold and
-  preserves the picture across the transition.
+  preserves the picture across the transition. See the [open STOP/RUN item](../backlog/stop-run.md).
 - A serial capture already armed at STOP can finish. Its first-record wait is capped at two seconds from the first
   poll that sees STOP, within the UI's three-second wait. A trigger timeout disarms via the acquisition counter,
   and the worker answers without the 200 ms retry delay. In overlapping Normal-trigger acquisition, a first-record
@@ -60,6 +60,7 @@ Single scan only).
 - A calibration or an invalidated successor ring slot leaves the UI to project the retained capture at the
   requested view. Areas outside that capture have no samples. A capture from before calibration is labeled in STOP.
   A view refresh contributes no new acquisition to statistics or trend. The logger still follows its interval.
+  The [STOP backlog](../backlog/stop-run.md#stopped-view-and-raw-capture) lists the remaining view and slot cases.
 
 ## Host tests
 

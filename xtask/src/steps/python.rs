@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! The same isolated Python runner as CI, without a UI build prerequisite.
+//! Isolated Python tests with the host updater for the release artifact suite.
 use super::{host, Outcome};
 use crate::run::Context;
 use std::path::Path;
@@ -8,5 +8,14 @@ use std::path::Path;
 mod tests;
 
 pub(crate) fn run(ctx: &Context, root: &Path) -> Outcome {
-    host::command(ctx, root, "python3", &["-I", "tools/python_tests.py"])
+    let mut lines = host::build_fpgad_bin(ctx, root, "oos-update")?;
+    let updater = host::target(ctx, root)?.join("debug/oos-update");
+    lines.extend(host::command_env(
+        ctx,
+        root,
+        "python3",
+        &["-I", "tools/python_tests.py"],
+        &[("OOS_RELEASE_TEST_UPDATER", updater.as_os_str())],
+    )?);
+    Ok(lines)
 }

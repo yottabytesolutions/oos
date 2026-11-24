@@ -1,20 +1,29 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Default Python and explicit image runners. Exit status decides success, never printed PASS.
+//! Shared host builds and command runners. Exit status decides success, never printed PASS.
 use super::Outcome;
 use crate::run::Context;
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 #[cfg(test)]
 pub(super) mod tests;
 
 pub(crate) fn command(ctx: &Context, root: &Path, program: &str, args: &[&str]) -> Outcome {
-    let out = crate::run::capture(ctx, root, program, args).map_err(|e| vec![e])?;
+    command_env(ctx, root, program, args, &[])
+}
+
+pub(super) fn command_env(ctx: &Context, root: &Path, program: &str, args: &[&str], env: &[(&str, &OsStr)]) -> Outcome {
+    let out = crate::run::capture_env(ctx, root, program, args, env).map_err(|e| vec![e])?;
     let lines = vec![format!("{}{}", out.stdout, out.stderr)];
     if out.ok {
         Ok(lines)
     } else {
         Err(lines)
     }
+}
+
+pub(crate) fn build_fpgad_bin(ctx: &Context, root: &Path, binary: &str) -> Outcome {
+    command(ctx, root, "python3", &["-I", "tools/output.py", "build", "-p", "oos-fpgad", "--bin", binary])
 }
 
 pub(crate) fn target(ctx: &Context, root: &Path) -> Result<PathBuf, Vec<String>> {

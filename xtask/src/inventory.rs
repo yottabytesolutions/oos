@@ -168,8 +168,8 @@ pub(crate) const CHECKS: &[Check] = &[
     entry!(
         "python-tests",
         "python-tests",
-        "python3 -I tools/python_tests.py (isolated discovery with count checks)",
-        "Git, Python; tools/tests, tools/privacy and ui/tools",
+        "build host oos-update; isolated Python discovery with count and skip checks",
+        "Git, Python, pinned toolchain; tools/tests, tools/privacy and ui/tools",
         Host,
         [],
         steps::python::run

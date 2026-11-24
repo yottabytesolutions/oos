@@ -14,18 +14,19 @@ impl Port for Sysfs {
             .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
             .collect()
     }
+    fn read_link(&self, path: &str) -> io::Result<PathBuf> {
+        std::fs::read_link(self.0.join(path))
+    }
     fn write(&mut self, path: &str, value: u64) -> io::Result<()> {
         std::fs::write(self.0.join(path), value.to_string())
     }
 }
 
 pub(super) fn controller(root: &Path, journal: &Path, config: Config) -> Controller {
-    let gpu = std::fs::read_dir(root.join("class/devfreq")).ok().and_then(|entries| {
-        entries.filter_map(Result::ok).find_map(|entry| {
-            let name = entry.file_name().to_str()?.to_string();
-            // RK3399's GPU node, not another devfreq device with the same frequencies.
-            name.ends_with(".gpu").then(|| format!("class/devfreq/{name}"))
-        })
+    let port = Sysfs(root.into());
+    // RK3399's GPU node is named after the device, independent of class entry order.
+    let gpu = port.entries("class/devfreq").ok().and_then(|entries| {
+        entries.into_iter().find(|name| name.ends_with(".gpu")).map(|name| format!("class/devfreq/{name}"))
     });
-    Controller::new(Box::new(Sysfs(root.into())), config, gpu.as_deref(), journal.into())
+    Controller::new(Box::new(port), config, gpu.as_deref(), journal.into())
 }

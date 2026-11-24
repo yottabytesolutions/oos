@@ -5993,7 +5993,7 @@ impl Ui {
     }
 
     pub fn lifecycle_text(&self) -> String {
-        self.host.runtime().text()
+        crate::system::clocks::with_status(self.host.runtime().text(), self.host.runtime().clocks.as_ref())
     }
 
     pub fn memory_stopped(&self) -> bool {

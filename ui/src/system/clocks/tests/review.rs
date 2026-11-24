@@ -91,13 +91,11 @@ fn restore_retries(tree: &Tree) {
 fn thermal_transitions_log_zone_and_reading_or_read_error() {
     let text = child(&Tree::new(), "thermal");
     assert!(text.contains("floors=dropped zone=gpu-thermal temp_mc=65000"), "{text}");
-    for (zone, temp) in [("cpu-thermal", 45000), ("gpu-thermal", 59999)] {
-        assert!(text.contains(&format!("floors=rearmed zone={zone} temp_mc={temp}")), "{text}");
-    }
+    assert!(text.contains("floors=rearmed zone=gpu-thermal temp_mc=59999"), "{text}");
     assert!(text.contains("floors=dropped zone=gpu-thermal error="), "{text}");
     assert!(text.contains("floors=dropped zone=cpu-thermal error="), "{text}");
     assert_eq!(text.matches("floors=dropped").count(), 3, "{text}");
-    assert_eq!(text.matches("floors=rearmed").count(), 4, "{text}");
+    assert_eq!(text.matches("floors=rearmed").count(), 2, "{text}");
 }
 
 fn thermal_transitions(tree: &Tree) {
@@ -105,13 +103,13 @@ fn thermal_transitions(tree: &Tree) {
     let c = Handle::fixture(tree.controller_with_clock(&clock));
     c.update(true);
     for (temp, raised) in [("65000", false), ("62000", false), ("59999", true), ("bad", false), ("45000", true)] {
-        tree.set("class/thermal/thermal_zone2", "temp", temp);
+        tree.set(GPU_ZONE, "temp", temp);
         clock.advance(Duration::from_secs(1));
         c.poll();
         c.poll();
-        assert_eq!(tree.minima().0, if raised { "1416000" } else { "408000" });
+        assert_eq!(tree.minima(), ("1416000".into(), if raised { "600000000" } else { "400000000" }.into()));
     }
-    std::fs::remove_file(tree.0.join("class/thermal/thermal_zone7/temp")).unwrap();
+    std::fs::remove_file(tree.0.join(CPU_ZONE).join("temp")).unwrap();
     clock.advance(Duration::from_secs(1));
     c.poll();
     assert_eq!(tree.minima().0, "408000");

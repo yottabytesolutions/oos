@@ -64,6 +64,23 @@ histogram quantiles; atomic fields are loaded independently with relaxed order,
 so the whole diagnostic answer is not an atomic multi-counter snapshot.
 
 
+## RUN clock floors
+
+The state line includes these fields for each of `clock.cpu` (A72 policy4)
+and `clock.gpu` (GPU devfreq).
+
+| Suffix | Meaning |
+|---|---|
+| `.requested_hz` | Current UI floor request in Hz, or `0` when there is no request. A request can be inhibited or disabled. |
+| `.applied` | `1` when the minimum read-back meets the controller's floor, otherwise `0`. A failed retarget or release can leave the floor applied. |
+| `.current_hz` | Current frequency in Hz, or `unknown` if unreadable. CPU cpufreq values are converted from kHz. |
+| `.reason` | `none`, `stopped`, `disabled`, `absent`, `no_cooling_binding`, `cooling_binding_error`, `thermal`, `sensor_error`, `apply_failed`, `restore_failed`, `recovery_failed`, `minimum_unknown` or `minimum_changed`. |
+
+Hardware RUN requests 1416000000 Hz for A72 and 600000000 Hz for the GPU.
+STOP and Demo request 400000000 Hz for the GPU.
+See [RUN clock floors](../architecture/system.md#run-clock-floors) for the
+release and re-arm policy.
+
 ## Disarm counters
 
 The current reply includes the following section. Each field is a saturating process-lifetime

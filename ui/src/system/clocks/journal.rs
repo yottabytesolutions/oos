@@ -34,14 +34,21 @@ impl Journal {
     }
 
     pub(super) fn save(&self, floors: &[Floor], index: usize, previous: u64) -> io::Result<()> {
-        let text: String = floors
-            .iter()
-            .enumerate()
-            .filter_map(|(i, floor)| {
-                let saved = if i == index { Some(previous) } else { floor.saved };
-                saved.map(|value| format!("{} {value}\n", floor.name))
-            })
-            .collect();
+        self.write(floors.iter().enumerate().filter_map(|(i, floor)| {
+            let saved = if i == index { Some(previous) } else { floor.saved };
+            saved.map(|value| (floor.name, value))
+        }))
+    }
+
+    pub(super) fn sync(&self, floors: &[Floor]) -> io::Result<()> {
+        self.write(floors.iter().filter_map(|floor| floor.saved.map(|value| (floor.name, value))))
+    }
+
+    fn write(&self, values: impl Iterator<Item = (&'static str, u64)>) -> io::Result<()> {
+        let text: String = values.map(|(name, value)| format!("{name} {value}\n")).collect();
+        if text.is_empty() {
+            return self.clear();
+        }
         let temp = self.0.with_extension("new");
         // Remove stale staging entries without following links, then claim a fresh file.
         match std::fs::remove_file(&temp) {

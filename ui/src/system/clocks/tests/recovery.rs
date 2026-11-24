@@ -68,41 +68,6 @@ fn failed_journal_write_never_raises_and_invalid_receipt_is_kept() {
 }
 
 #[test]
-fn thermal_drop_rearm_and_sensor_failure_work_during_continuous_run() {
-    let tree = Tree::new();
-    // Unrelated zones must not participate, regardless of their number.
-    tree.set("class/thermal/thermal_zone0", "type", "other");
-    tree.set("class/thermal/thermal_zone0", "temp", "99000");
-    let clock = ManualClock::new();
-    let c = Handle::fixture(tree.controller_with_clock(&clock));
-    c.update(true);
-    assert_eq!(tree.minima().0, "1416000");
-    for (temp, raised) in [("65000", false), ("62000", false), ("59999", true), ("bad", false)] {
-        tree.set("class/thermal/thermal_zone2", "temp", temp);
-        let previous = tree.minima();
-        clock.advance(Duration::from_secs(1) - Duration::from_nanos(1));
-        c.poll();
-        assert_eq!(tree.minima(), previous, "thermal sampling must wait for the guard cadence");
-        clock.advance(Duration::from_nanos(1));
-        c.poll();
-        let expected = if raised { ("1416000", "600000000") } else { ("408000", "400000000") };
-        assert_eq!(tree.minima(), (expected.0.into(), expected.1.into()));
-        assert_eq!(tree.0.join("saved").exists(), raised);
-    }
-}
-
-#[test]
-fn missing_passive_trip_or_zone_disables_floors() {
-    for file in ["thermal_zone2/type", "thermal_zone7/trip_point_0_type"] {
-        let tree = Tree::new();
-        std::fs::remove_file(tree.0.join("class/thermal").join(file)).unwrap();
-        let mut c = tree.controller("");
-        c.update(true);
-        assert_eq!(tree.minima(), ("408000".into(), "400000000".into()));
-    }
-}
-
-#[test]
 fn panic_while_controller_is_locked_does_not_deadlock() {
     let tree = Tree::new();
     let output = std::process::Command::new(std::env::current_exe().unwrap())

@@ -307,7 +307,6 @@ mod imp {
                 atlas_rows: 0,
                 times: Times::default(),
             };
-            clock_floor(true);
             let h = Hello { magic: MAGIC, version: VERSION, kind: K_HELLO, pad: 0, arena_size: ARENA as u64 };
             send_fd(&g.sock, bytes(&h), Some(mem.as_raw_fd())).map_err(|e| format!("hello: {}", e))?;
             drop(mem);
@@ -629,33 +628,9 @@ mod imp {
         }
     }
 
-    /// The Mali's devfreq: its load governor sees only the short work of each frame and stays at the lowest step
-    /// (200 MHz, an 8 ms frame); 400 MHz runs at the same voltage (rk3399-opp.dtsi) and takes 4 ms. While the
-    /// helper runs the lowest step is 400 MHz; after it, the table's lowest again.
-    fn clock_floor(on: bool) {
-        let Ok(d) = std::fs::read_dir("/sys/class/devfreq") else { return };
-        for e in d.flatten() {
-            let p = e.path();
-            if !e.file_name().to_string_lossy().ends_with(".gpu") {
-                continue;
-            }
-            let steps: Vec<u64> = std::fs::read_to_string(p.join("available_frequencies"))
-                .unwrap_or_default()
-                .split_whitespace()
-                .filter_map(|v| v.parse().ok())
-                .collect();
-            let low = steps.iter().copied().min().unwrap_or(0);
-            let want = if on { steps.iter().copied().filter(|&f| f >= 400_000_000).min().unwrap_or(low) } else { low };
-            if want > 0 {
-                let _ = std::fs::write(p.join("min_freq"), want.to_string());
-            }
-        }
-    }
-
     mod lifecycle;
     impl Drop for Gpu {
         fn drop(&mut self) {
-            clock_floor(false);
             self.shutdown();
             // SAFETY: this process owns this ARENA-byte mapping; helper mappings are separate.
             unsafe { libc::munmap(self.arena as *mut libc::c_void, ARENA) };

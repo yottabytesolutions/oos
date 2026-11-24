@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 use super::*;
+use floor::CPU;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
-const CPU: &str = "devices/system/cpu/cpufreq/policy4";
 const GPU: &str = "class/devfreq/ff9a0000.gpu";
+const CPU_ZONE: &str = "class/thermal/thermal_zone7";
+const GPU_ZONE: &str = "class/thermal/thermal_zone2";
 
 struct ManualClock(Arc<Mutex<Instant>>);
 impl ManualClock {
@@ -31,15 +33,18 @@ impl Tree {
         )));
         me.set(CPU, "scaling_available_frequencies", "408000 816000 1416000 1800000");
         me.set(CPU, "scaling_min_freq", "408000");
+        me.set(CPU, "scaling_cur_freq", "816000");
         me.set(GPU, "available_frequencies", "200000000 400000000 600000000");
         me.set(GPU, "min_freq", "400000000");
-        for (number, kind) in [(7, "cpu-thermal"), (2, "gpu-thermal")] {
-            let zone = format!("class/thermal/thermal_zone{number}");
-            me.set(&zone, "type", kind);
-            me.set(&zone, "temp", "45000");
-            me.set(&zone, "trip_point_0_type", "passive");
-            me.set(&zone, "trip_point_0_temp", "70000");
+        me.set(GPU, "cur_freq", "400000000");
+        for (zone, kind) in [(CPU_ZONE, "cpu-thermal"), (GPU_ZONE, "gpu-thermal")] {
+            me.set(zone, "type", kind);
+            me.set(zone, "temp", "45000");
+            me.set(zone, "trip_point_0_type", "passive");
+            me.set(zone, "trip_point_0_temp", "70000");
         }
+        me.bind(CPU_ZONE, 4, 9, "cpufreq-cpu4", 0);
+        me.bind(GPU_ZONE, 1, 5, "devfreq-ff9a0000.gpu", 0);
         me
     }
     fn set(&self, dir: &str, file: &str, value: &str) {
@@ -47,6 +52,19 @@ impl Tree {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join(file), value).unwrap();
     }
+    fn bind(&self, zone: &str, slot: u32, device: u32, kind: &str, trip: u32) {
+        let target = format!("cooling_device{device}");
+        self.set(&format!("class/thermal/{target}"), "type", kind);
+        std::os::unix::fs::symlink(format!("../{target}"), self.0.join(zone).join(format!("cdev{slot}"))).unwrap();
+        self.set(zone, &format!("cdev{slot}_trip_point"), &trip.to_string());
+    }
+
+    fn unbind(&self, zone: &str, slot: u32) {
+        for file in [format!("cdev{slot}"), format!("cdev{slot}_trip_point")] {
+            std::fs::remove_file(self.0.join(zone).join(file)).unwrap();
+        }
+    }
+
     fn minima(&self) -> (String, String) {
         (
             std::fs::read_to_string(self.0.join(CPU).join("scaling_min_freq")).unwrap(),
@@ -74,6 +92,7 @@ impl Drop for Tree {
 
 mod recovery;
 mod review;
+mod thermal;
 
 #[test]
 fn repeated_run_stop_restores_each_runs_previous_values_and_logs_once() {
@@ -139,11 +158,32 @@ fn missing_nodes_do_not_affect_other_devices_or_create_files() {
     c.update(true);
     assert_eq!(tree.minima(), ("408000".into(), "600000000".into()));
     assert_eq!(std::fs::read_to_string(tree.0.join("class/devfreq/other-device/min_freq")).unwrap(), "200000000");
-    c.update(false);
+    c.restore();
     std::fs::remove_dir_all(tree.0.join(GPU)).unwrap();
     let mut c = tree.controller("");
     c.update(true);
     assert!(!tree.0.join(GPU).exists());
+}
+
+#[test]
+fn scpi_reports_requested_current_and_read_back_floors() {
+    use crate::ui::{host::Host, Ui};
+    let _scope = crate::drawpipe::test_scope::Scope::new();
+    let tree = Tree::new();
+    let guard = Handle::fixture(tree.controller(""));
+    guard.update(true);
+    tree.set(CPU, "scaling_cur_freq", "1800000");
+    tree.set(GPU, "cur_freq", "600000000");
+    let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 }, Host::fixture_with_clocks(guard));
+    let mut scpi = crate::scpi::Scpi::disconnected();
+    let cv = crate::gfx::Canvas::new(1, 1);
+    let reply = String::from_utf8(scpi.exec_line(&mut ui, &cv, ":SYSTem:STATe?")).unwrap();
+    assert!(reply.contains(
+        "clock.cpu.requested_hz=1416000000 clock.cpu.applied=1 clock.cpu.current_hz=1800000000 clock.cpu.reason=none"
+    ));
+    assert!(reply.contains(
+        "clock.gpu.requested_hz=600000000 clock.gpu.applied=1 clock.gpu.current_hz=600000000 clock.gpu.reason=none"
+    ));
 }
 
 #[test]
@@ -163,18 +203,43 @@ fn accepted_ui_run_stop_and_teardown_drive_the_port() {
     use crate::model::RunState;
     use crate::ui::{host::Host, Ui};
     let tree = Tree::new();
+    tree.set(GPU, "min_freq", "200000000");
     let shared = crate::board::HwShared::default();
     let host = Host::fixture_with_clocks(Handle::fixture(tree.controller("")));
     let mut ui = Ui::new(crate::wave::Source::Hw { shared, seen: 0 }, host);
     ui.step(1.0 / 30.0);
     assert_eq!(tree.minima(), ("1416000".into(), "600000000".into()));
+    assert!(ui.lifecycle_text().contains("clock.gpu.requested_hz=600000000 clock.gpu.applied=1"));
     ui.m.run = RunState::Stop;
     ui.step(1.0 / 30.0);
     assert_eq!(tree.minima(), ("408000".into(), "400000000".into()));
+    let status = ui.lifecycle_text();
+    assert!(status.contains("clock.cpu.requested_hz=0 clock.cpu.applied=0"));
+    assert!(status.contains("clock.gpu.requested_hz=400000000 clock.gpu.applied=1"));
+    assert_eq!(std::fs::read_to_string(tree.0.join("saved")).unwrap(), "gpu 200000000\n");
     ui.m.run = RunState::Run;
     ui.step(1.0 / 30.0);
     ui.stop_workers(std::time::Instant::now());
-    assert_eq!(tree.minima(), ("408000".into(), "400000000".into()));
+    assert_eq!(tree.minima(), ("408000".into(), "200000000".into()));
+}
+
+#[test]
+fn demo_display_uses_idle_gpu_floor_and_releases_it_when_hot() {
+    use crate::ui::{host::Host, Ui};
+    let tree = Tree::new();
+    tree.set(GPU, "min_freq", "200000000");
+    let clock = ManualClock::new();
+    let host = Host::fixture_with_clocks(Handle::fixture(tree.controller_with_clock(&clock)));
+    let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 }, host);
+    for (temp, gpu) in [("45000", "400000000"), ("65000", "200000000"), ("59999", "400000000")] {
+        tree.set(GPU_ZONE, "temp", temp);
+        ui.step(1.0 / 30.0);
+        assert_eq!(tree.minima(), ("408000".into(), gpu.into()));
+        assert!(ui.lifecycle_text().contains("clock.gpu.requested_hz=400000000"));
+        clock.advance(Duration::from_secs(1));
+    }
+    drop(ui);
+    assert_eq!(tree.minima(), ("408000".into(), "200000000".into()));
 }
 
 struct Failing {
@@ -187,6 +252,9 @@ impl Port for Failing {
     }
     fn entries(&self, path: &str) -> io::Result<Vec<String>> {
         self.inner.entries(path)
+    }
+    fn read_link(&self, path: &str) -> io::Result<PathBuf> {
+        self.inner.read_link(path)
     }
     fn write(&mut self, path: &str, value: u64) -> io::Result<()> {
         let mut failures = oos_hal::sync::lock(&self.failures);
@@ -221,6 +289,9 @@ fn failed_raise_keeps_original_and_gpu_still_runs() {
     let mut c = Controller::new(Box::new(port), Config::parse(""), Some(GPU), tree.0.join("saved"));
     c.update(true);
     assert_eq!(tree.minima(), ("408000".into(), "600000000".into()));
+    let state = status_text(&c);
+    assert!(state.contains("clock.cpu.applied=0 clock.cpu.current_hz=816000000 clock.cpu.reason=apply_failed"));
+    assert!(state.contains("clock.gpu.applied=1 clock.gpu.current_hz=400000000 clock.gpu.reason=none"));
     c.update(false);
     assert_eq!(tree.minima(), ("408000".into(), "400000000".into()));
 }
@@ -291,26 +362,76 @@ fn logging_child() {
     }
 }
 
-struct Clamping(linux::Sysfs);
-impl Port for Clamping {
+struct AlteredWrite {
+    inner: linux::Sysfs,
+    first: Option<(u64, io::Result<()>)>,
+}
+impl Port for AlteredWrite {
     fn read(&self, path: &str) -> io::Result<String> {
-        self.0.read(path)
+        self.inner.read(path)
     }
     fn entries(&self, path: &str) -> io::Result<Vec<String>> {
-        self.0.entries(path)
+        self.inner.entries(path)
+    }
+    fn read_link(&self, path: &str) -> io::Result<PathBuf> {
+        self.inner.read_link(path)
     }
     fn write(&mut self, path: &str, value: u64) -> io::Result<()> {
-        self.0.write(path, if value == 1_416_000 { 816000 } else { value })
+        if let Some((minimum, result)) = self.first.take() {
+            self.inner.write(path, minimum)?;
+            return result;
+        }
+        self.inner.write(path, value)
     }
 }
 
 #[test]
-fn mismatched_read_back_still_restores_the_original() {
+fn mismatched_read_back_reports_applied_and_retries_at_guard_cadence() {
+    for (minimum, applied) in [(816_000, 0), (1_800_000, 1)] {
+        let tree = Tree::new();
+        let port = AlteredWrite { inner: linux::Sysfs(tree.0.clone()), first: Some((minimum, Ok(()))) };
+        let clock = ManualClock::new();
+        let mut c = Controller::with_clock(
+            Box::new(port),
+            Config::parse("perf.gpu_floor = off"),
+            None,
+            tree.0.join("saved"),
+            clock.source(),
+        );
+        c.update(true);
+        assert!(status_text(&c).contains(&format!(
+            "clock.cpu.applied={applied} clock.cpu.current_hz=816000000 clock.cpu.reason=apply_failed"
+        )));
+        clock.advance(Duration::from_secs(1) - Duration::from_nanos(1));
+        c.update(true);
+        assert_eq!(tree.minima().0, minimum.to_string());
+        clock.advance(Duration::from_nanos(1));
+        c.update(true);
+        assert_eq!(tree.minima().0, "1416000");
+        assert!(status_text(&c).contains("clock.cpu.applied=1 clock.cpu.current_hz=816000000 clock.cpu.reason=none"));
+        c.update(false);
+        assert_eq!(tree.minima().0, "408000");
+    }
+}
+
+#[test]
+fn matching_read_back_succeeds_even_with_write_error() {
     let tree = Tree::new();
-    let port = Clamping(linux::Sysfs(tree.0.clone()));
+    let port = AlteredWrite {
+        inner: linux::Sysfs(tree.0.clone()),
+        first: Some((1_416_000, Err(io::ErrorKind::PermissionDenied.into()))),
+    };
     let mut c = Controller::new(Box::new(port), Config::parse("perf.gpu_floor = off"), None, tree.0.join("saved"));
     c.update(true);
-    assert_eq!(tree.minima().0, "816000");
+    assert!(status_text(&c).contains("clock.cpu.applied=1 clock.cpu.current_hz=816000000 clock.cpu.reason=none"));
     c.update(false);
     assert_eq!(tree.minima().0, "408000");
+}
+
+fn status_text(controller: &Controller) -> String {
+    let mut text = String::new();
+    for status in controller.status() {
+        status.write_scpi(&mut text);
+    }
+    text
 }

@@ -2,11 +2,20 @@
 use super::*;
 use crate::system::clocks::{Config, Controller, Handle, Port};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 struct Fake(Arc<Mutex<u64>>);
 impl Port for Fake {
     fn read(&self, path: &str) -> std::io::Result<String> {
-        Ok(if path.ends_with("/type") {
+        Ok(if path.ends_with("cdev0/type") {
+            if path.contains("zone7") {
+                "cpufreq-cpu4".into()
+            } else {
+                "devfreq-ff9a0000.gpu".into()
+            }
+        } else if path.ends_with("cdev0_trip_point") {
+            "0".into()
+        } else if path.ends_with("/type") {
             if path.contains("zone7") {
                 "cpu-thermal".into()
             } else {
@@ -28,8 +37,11 @@ impl Port for Fake {
         Ok(if path == "class/thermal" {
             vec!["thermal_zone7".into(), "thermal_zone2".into()]
         } else {
-            vec!["trip_point_0_type".into()]
+            vec!["trip_point_0_type".into(), "cdev0".into()]
         })
+    }
+    fn read_link(&self, path: &str) -> std::io::Result<PathBuf> {
+        Ok(PathBuf::from(if path.contains("zone7") { "../cooling_device9" } else { "../cooling_device5" }))
     }
     fn write(&mut self, _: &str, value: u64) -> std::io::Result<()> {
         *oos_hal::sync::lock(&self.0) = value;
@@ -68,7 +80,7 @@ fn memory_hold_restores_floors_before_the_early_step_return() {
 }
 
 #[test]
-fn demo_run_does_not_request_hardware_clock_floors() {
+fn demo_run_does_not_request_the_cpu_floor() {
     let (host, min) = fixture();
     let mut ui = Ui::new(Source::Demo { t: 0.0 }, host);
     ui.step(0.04);
@@ -82,6 +94,9 @@ impl Port for RejectRestore {
     }
     fn entries(&self, path: &str) -> std::io::Result<Vec<String>> {
         self.0.entries(path)
+    }
+    fn read_link(&self, path: &str) -> std::io::Result<PathBuf> {
+        self.0.read_link(path)
     }
     fn write(&mut self, path: &str, value: u64) -> std::io::Result<()> {
         if value == 408000 {
@@ -97,7 +112,15 @@ fn memory_hold_does_not_force_restore_retries_every_frame() {
     let attempts = Arc::new(Mutex::new(0));
     let receipt = journal();
     let port = RejectRestore(Fake(Arc::new(Mutex::new(408000))), attempts.clone());
-    let c = Controller::new(Box::new(port), Config::parse("perf.gpu_floor = off"), None, receipt.clone());
+    let now = Arc::new(Mutex::new(Instant::now()));
+    let clock = now.clone();
+    let c = Controller::with_clock(
+        Box::new(port),
+        Config::parse("perf.gpu_floor = off"),
+        None,
+        receipt.clone(),
+        Box::new(move || *oos_hal::sync::lock(&clock)),
+    );
     let host = Host::fixture_with_clocks(Handle::fixture(c));
     let mut ui = Ui::new(Source::Hw { shared: Default::default(), seen: 0 }, host);
     ui.step(0.04);
@@ -106,12 +129,15 @@ fn memory_hold_does_not_force_restore_retries_every_frame() {
     ));
     ui.host.text = |path| (path == "/proc/self/status").then(|| "VmRSS: 4096 kB".into());
     ui.step(0.04);
+    *oos_hal::sync::lock(&now) += Duration::from_millis(999);
     for _ in 0..100 {
         ui.step(0.001);
     }
     assert!(ui.memory_stopped());
-    let count = *oos_hal::sync::lock(&attempts);
+    assert_eq!(*oos_hal::sync::lock(&attempts), 1, "per-frame polling must wait for the retry deadline");
+    *oos_hal::sync::lock(&now) += Duration::from_millis(1);
+    ui.step(0.001);
+    assert_eq!(*oos_hal::sync::lock(&attempts), 2, "memory hold retries at the deadline");
     drop(ui);
     std::fs::remove_file(receipt).unwrap();
-    assert_eq!(count, 1, "memory hold uses the same one-second retry cadence as polling");
 }

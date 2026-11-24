@@ -1,14 +1,17 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-//! Reversible RUN clock floors. The port owns platform IO; the controller owns saved minima.
+//! Reversible UI clock floors. The port owns platform IO; the controller owns saved minima.
 mod floor;
 mod journal;
 mod linux;
+mod status;
 mod thermal;
 use floor::Floor;
+use status::Status;
 #[cfg(test)]
 mod tests;
 
 use std::io;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -36,74 +39,68 @@ pub trait Port: Send {
     fn read(&self, path: &str) -> io::Result<String>;
     fn write(&mut self, path: &str, value: u64) -> io::Result<()>;
     fn entries(&self, path: &str) -> io::Result<Vec<String>>;
+    /// A port without link metadata cannot establish a cooling binding.
+    fn read_link(&self, _path: &str) -> io::Result<PathBuf> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+}
+
+#[derive(Clone, Copy)]
+enum Request {
+    Off,
+    Draw,
+    Run,
+}
+impl Request {
+    // Policy4 uses kHz and devfreq uses Hz.
+    fn minima(self) -> [Option<u64>; 2] {
+        match self {
+            Self::Off => [None, None],
+            Self::Draw => [None, Some(400_000_000)],
+            Self::Run => [Some(1_416_000), Some(600_000_000)],
+        }
+    }
 }
 
 pub struct Controller {
     port: Box<dyn Port>,
-    floors: Vec<Floor>,
+    floors: [Floor; 2],
     journal: journal::Journal,
-    thermal: thermal::Guard,
-    running: bool,
     recovery_failed: bool,
-    requested: bool,
-    next_restore: Instant,
+    request: Request,
+    critical: thermal::Guard,
+    next_receipt_sync: Option<Instant>,
     clock: Box<dyn Fn() -> Instant + Send>,
 }
 impl Controller {
-    pub fn new(port: Box<dyn Port>, config: Config, gpu: Option<&str>, saved: std::path::PathBuf) -> Self {
+    pub fn new(port: Box<dyn Port>, config: Config, gpu: Option<&str>, saved: PathBuf) -> Self {
         Self::with_clock(port, config, gpu, saved, Box::new(Instant::now))
     }
 
-    fn with_clock(
+    pub(crate) fn with_clock(
         port: Box<dyn Port>,
         config: Config,
         gpu: Option<&str>,
-        saved: std::path::PathBuf,
+        saved: PathBuf,
         clock: Box<dyn Fn() -> Instant + Send>,
     ) -> Self {
         let now = clock();
-        let mut floors = vec![Floor::new(
-            "cpu",
-            "devices/system/cpu/cpufreq/policy4",
-            "scaling_min_freq",
-            "scaling_available_frequencies",
-            1_416_000,
-        )];
-        if let Some(gpu) = gpu {
-            floors.push(Floor::new("gpu", gpu, "min_freq", "available_frequencies", 600_000_000));
-        }
-        let thermal = thermal::Guard::discover(port.as_ref(), now);
+        let floors = [Floor::cpu(port.as_ref(), config.cpu, now), Floor::gpu(port.as_ref(), config.gpu, gpu, now)];
+        let critical = thermal::Guard::critical(port.as_ref(), now);
         let mut me = Self {
             port,
             floors,
             journal: journal::Journal::new(saved),
-            thermal,
-            running: false,
             recovery_failed: false,
-            requested: false,
-            next_restore: now,
+            request: Request::Off,
+            critical,
+            next_receipt_sync: None,
             clock,
         };
         // Recover irrespective of current opt-outs, before reading any new previous minimum.
         if let Err(error) = me.recover() {
             eprintln!("oos-ui: clock_floor recovery_error={error}; floors disabled");
             me.recovery_failed = true;
-            me.floors.clear();
-            return me;
-        }
-        me.floors.retain(|f| {
-            let enabled = if f.name == "cpu" { config.cpu } else { config.gpu };
-            if !enabled {
-                return false;
-            }
-            let present = me.port.read(&f.minimum).is_ok() && me.port.read(&f.available).is_ok();
-            if !present {
-                eprintln!("oos-ui: clock_floor device={} absent; disabled", f.name);
-            }
-            present
-        });
-        if config.gpu && gpu.is_none() {
-            eprintln!("oos-ui: clock_floor device=gpu absent; disabled");
         }
         me
     }
@@ -123,49 +120,73 @@ impl Controller {
         self.journal.clear()
     }
 
-    fn raise(&mut self, index: usize) -> io::Result<()> {
-        if self.floors[index].saved.is_some() {
-            return Ok(());
+    fn apply(&mut self, index: usize, target: u64) -> io::Result<()> {
+        let floor = &self.floors[index];
+        let previous = floor.prepare(self.port.as_ref(), target)?;
+        if floor.saved.is_none() {
+            self.journal.save(&self.floors, index, previous)?;
+            self.next_receipt_sync = None;
         }
-        let previous = self.floors[index].prepare(self.port.as_ref())?;
-        self.journal.save(&self.floors, index, previous)?;
-        self.floors[index].saved = Some(previous);
-        self.floors[index].raise(self.port.as_mut())
+        self.floors[index].apply(self.port.as_mut(), previous, target)
     }
 
+    /// Update the request for a drawing UI. Hardware RUN also requests the CPU floor.
     pub fn update(&mut self, running: bool) {
-        self.requested = running;
+        self.tick(if running { Request::Run } else { Request::Draw }, false);
+    }
+
+    pub fn restore(&mut self) {
+        self.tick(Request::Off, true);
+    }
+
+    fn tick(&mut self, request: Request, force: bool) {
+        self.request = request;
         if self.recovery_failed {
             return;
         }
         let now = (self.clock)();
-        let allowed = running && !self.floors.is_empty() && self.thermal.allowed(self.port.as_ref(), now);
-        if allowed == self.running
-            && (allowed || self.floors.iter().all(|f| f.saved.is_none()) || now < self.next_restore)
-        {
-            return;
+        let critical = match request {
+            Request::Off => None,
+            _ => self.critical.inhibit(self.port.as_ref(), "all", now),
+        };
+        for (index, target) in request.minima().into_iter().enumerate() {
+            self.update_floor(index, target, critical, now, force);
         }
-        self.running = allowed;
-        if !allowed {
-            self.next_restore = now + thermal::SAMPLE_PERIOD;
-        }
-        for index in 0..self.floors.len() {
-            let result = if allowed { self.raise(index) } else { self.floors[index].restore(self.port.as_mut()) };
-            // Restore reports only the first failure and eventual success for each device.
-            if let (true, Err(error)) = (allowed, result) {
-                eprintln!("oos-ui: clock_floor device={} running={allowed} error={error}", self.floors[index].name);
-            }
-        }
-        if !allowed && self.floors.iter().all(|f| f.saved.is_none()) {
-            if let Err(error) = self.journal.clear() {
+        if self.next_receipt_sync.is_some_and(|next| force || now >= next) {
+            self.next_receipt_sync = self.journal.sync(&self.floors).err().map(|error| {
                 eprintln!("oos-ui: clock_floor journal_error={error}");
-            }
+                now + thermal::SAMPLE_PERIOD
+            });
         }
     }
 
-    pub fn restore(&mut self) {
-        self.running = true;
-        self.update(false);
+    fn update_floor(
+        &mut self,
+        index: usize,
+        target: Option<u64>,
+        critical: Option<status::Reason>,
+        now: Instant,
+        force: bool,
+    ) {
+        let floor = &mut self.floors[index];
+        let inhibit = floor.inhibit(self.port.as_ref(), target.is_some(), critical, now);
+        if inhibit.is_some() || floor.restore_failed() {
+            if floor.release(self.port.as_mut(), inhibit, now, force) {
+                self.next_receipt_sync = Some(now);
+            }
+            if inhibit.is_some() || floor.restore_failed() {
+                return;
+            }
+        }
+        if let Some(target) = target.filter(|&target| floor.should_apply(target, now)) {
+            let result = self.apply(index, target);
+            self.floors[index].finish_apply(target, now, result);
+        }
+    }
+
+    fn status(&self) -> [Status; 2] {
+        let minima = self.request.minima();
+        std::array::from_fn(|index| self.floors[index].status(self.port.as_ref(), minima[index], self.recovery_failed))
     }
 }
 impl Drop for Controller {
@@ -205,10 +226,14 @@ impl Handle {
         handle
     }
 
+    fn status(&self) -> [Status; 2] {
+        oos_hal::sync::lock(&self.0).status()
+    }
+
     pub fn poll(&self) {
         let mut controller = oos_hal::sync::lock(&self.0);
-        let requested = controller.requested;
-        controller.update(requested);
+        let request = controller.request;
+        controller.tick(request, false);
     }
 
     pub fn update(&self, running: bool) {
@@ -222,4 +247,12 @@ impl Drop for Handle {
     fn drop(&mut self) {
         self.restore();
     }
+}
+
+pub(crate) fn with_status(mut text: String, handle: Option<&Handle>) -> String {
+    let floors = handle.map_or_else(Status::absent, Handle::status);
+    for floor in floors {
+        floor.write_scpi(&mut text);
+    }
+    text
 }

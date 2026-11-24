@@ -116,9 +116,8 @@ pub(crate) fn pack(a: &Args) {
             die(&format!("--models '{}', image models '{}': refused", selected, models));
         }
     }
-    // this tree's oos-update finishes a kexec start (update::kexec): the image says so in its package
-    let p = pkg::build_with(&seed, build, &kernel, &img, &[("models", models.as_str()), kexec::LINE])
-        .unwrap_or_else(|e| die(&e));
+    let capabilities = [("models", models.as_str()), kexec::LINE, kexec::STAGED_LINE];
+    let p = pkg::build_with(&seed, build, &kernel, &img, &capabilities).unwrap_or_else(|e| die(&e));
     pkg::verify(&p, &[pk]).unwrap_or_else(|e| die(&format!("self-check: {}", e)));
     std::fs::write(out, &p).unwrap_or_else(|e| die(&format!("{}: {}", out, e)));
     out!("{}: build {}, {} bytes, key {}", out, build, p.len(), hex(&pkg::key_id(&pk)));

@@ -84,6 +84,21 @@ fn test_key() -> [u8; 32] {
     oos_hal::update::ed25519::public_key(&[9; 32])
 }
 
+#[test]
+fn pack_signs_the_staged_capability_and_still_offers_a_legacy_trial() {
+    let f = Fixture::new();
+    success(&f.test_pack().output().expect("test setup"));
+    let mut bytes = std::fs::read(f.path("package")).expect("test setup");
+    let (header, payload) = pkg::verify(&bytes, &[test_key()]).expect("older parser accepts extra signed lines");
+    assert_eq!(payload, image());
+    // The pre-bridge sender tests only the legacy capability. The parser preserves other signed lines.
+    assert!(kexec::announced(&header.manifest));
+    let line = b"\ntrial staged\n";
+    let at = bytes[..header.data_offset].windows(line.len()).position(|part| part == line).expect("staged line");
+    bytes[at + line.len() - 2] = b'D';
+    assert!(pkg::verify(&bytes, &[test_key()]).unwrap_err().contains("SIGNATURE INVALID"));
+}
+
 fn image() -> Vec<u8> {
     let mut img = vec![0; 4096];
     img[..8].copy_from_slice(b"ANDROID!");

@@ -527,73 +527,6 @@ fn stop_watcher() {
     }
 }
 
-/// rcS, in the start by kexec: this kernel reached rcS and found the card and /oos. Now the package is installed for
-/// real. The kexec start is no trial start (its device tree and loader path are the old build's, the display comes up
-/// from another state): an ordinary restart begins the trial. False when nothing was installed.
-fn finish_kexec(a: &Args, p: &Path, f: kexec::Flags) -> bool {
-    let pk = read_file(kexec::PACKAGE);
-    let build = update::running_build().unwrap_or_default();
-    let short = update::short(&build).to_string();
-    let _ = std::fs::write(
-        "/dev/tty1",
-        format!("\nUpdate {}: started by kexec, installing it. Do not power off.\n", short),
-    );
-    tell(&format!("build {} started by kexec: kernel, card and /oos work; installing it", short));
-    // where the previous kernel put the initramfs, for a damaged package
-    let at = |n: &str| {
-        std::fs::read(format!("/proc/device-tree/chosen/linux,{}", n))
-            .ok()
-            .map(|b| b.iter().fold(0u64, |a, &x| a << 8 | x as u64))
-    };
-    if let (Some(a0), Some(a1)) = (at("initrd-start"), at("initrd-end")) {
-        tell(&format!("initramfs at {:#x}..{:#x}", a0, a1));
-    }
-    // the running build verified the package; this build may trust other keys (a key change by update)
-    let mut keys = update::trusted_keys();
-    if let Some(k) = std::fs::read_to_string(kexec::KEY_FILE)
-        .ok()
-        .and_then(|t| update::hash::unhex(t.trim()))
-        .and_then(|b| <[u8; 32]>::try_from(b).ok())
-    {
-        keys.push(k);
-    }
-    let mut c = a.open_card(true).unwrap_or_else(|e| die(&e));
-    let done = match update::install(&mut c, p, &pk, &keys, &Args::kexec_opt(f, &a.running_model(false))) {
-        Ok(r) => {
-            r.lines.iter().for_each(|l| out!("{}", l));
-            if r.written {
-                notice(&messages::installed(&short));
-            } else {
-                let _ = update::kexec_clear(p, &format!("started build {} by kexec: nothing to install", short));
-            }
-            r.written
-        }
-        Err(e) => {
-            // a write that began names this build on trial: the previous image goes back, so the watcher of this start
-            // cannot confirm a damaged recovery
-            let st = State::load(p).unwrap_or_default();
-            let began = st.trial.is_some() && st.current.as_ref().is_some_and(|c| c.build.trim() == build.trim());
-            let back = if began && st.previous.is_some() {
-                match update::rollback(&mut c, p, "its install after the kexec start failed", true, None) {
-                    Ok(r) => messages::restore_result("previous image restored", &r),
-                    Err(r) => messages::restore_failed(&r),
-                }
-            } else {
-                messages::no_restore(began).to_string()
-            };
-            let m = format!("Update {} ran when started by kexec, but its install failed: {}; {}", short, e, back);
-            let _ = update::kexec_clear(p, &m);
-            notice(&m);
-            // kept in RAM until the next start: what damaged it shows in the bytes
-            tell(&format!("the package stays at {} until the next start", kexec::PACKAGE));
-            return false;
-        }
-    };
-    drop(pk);
-    let _ = std::fs::remove_file(kexec::PACKAGE);
-    done
-}
-
 /// The mark of a restart after a kexec install: the build it was for. Removed by the next ordinary start.
 fn restart_mark(p: &Path) -> PathBuf {
     p.with_file_name("kexec-restart")
@@ -766,8 +699,8 @@ fn status(a: &Args) {
 
 fn boot(a: &Args) {
     let p = state_path(a);
-    let word = kexec::flags(&kexec::running_cmdline());
-    let kx = word.filter(|_| Path::new(kexec::PACKAGE).exists());
+    let word = kexec::receive(&kexec::running_cmdline());
+    let kx = word.filter(|source| matches!(source, kexec::Receive::Staged(_)) || Path::new(kexec::PACKAGE).exists());
     keep_booted_tree(a, word.is_some());
     if !p.parent().is_some_and(|d| d.exists()) {
         if kx.is_some() {
@@ -777,8 +710,8 @@ fn boot(a: &Args) {
     }
     match kx {
         // not the trial start of anything: a failed install, or the install, whose trial begins at the next start
-        Some(f) => {
-            if finish_kexec(a, &p, f) {
+        Some(source) => {
+            if oos_update::receive::finish(a, &p, source) {
                 restart_for_trial(a, &p);
             }
             return;

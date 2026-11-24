@@ -368,6 +368,7 @@ fn mode_and_lock() {
 }
 
 mod keys;
+mod staged;
 
 /// Review of 2026-11-05: a power cut while `recovery` is written must leave a card that boots.
 #[test]

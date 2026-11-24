@@ -31,12 +31,14 @@ mod budget;
 mod evidence;
 #[cfg(target_os = "linux")]
 mod legacy;
+pub(super) mod receive;
 #[cfg(any(target_os = "linux", test))]
 pub mod undo;
 #[cfg(any(target_os = "linux", test))]
 mod watchdog;
 #[cfg(target_os = "linux")]
 pub use legacy::prepare_jump;
+pub use receive::{flags, receive, record_staged_refusal, staged_package, Receive, HEADER_FILE, STAGED_LINE};
 #[cfg(target_os = "linux")]
 /// Validate watchdog handoff before stopping services; recover only requests whose recorded requester is dead.
 pub fn preflight_watchdog() -> Result<(), String> {
@@ -193,23 +195,6 @@ pub fn cmdline(running: &str, f: Flags) -> String {
     }
     w.push(&v);
     w.join(" ")
-}
-
-/// The install word of the running kernel's command line, if this is a kexec start.
-pub fn flags(cmdline: &str) -> Option<Flags> {
-    let v = cmdline.split_whitespace().find_map(|w| w.strip_prefix(KEY))?;
-    let mut f = Flags::default();
-    let mut install = false;
-    for p in v.split(',') {
-        match p {
-            "install" => install = true,
-            "downgrade" => f.downgrade = true,
-            "force" => f.force = true,
-            "any-model" => f.any_model = true,
-            _ => {}
-        }
-    }
-    install.then_some(f)
 }
 
 /// The running kernel's command line.

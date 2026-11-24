@@ -36,6 +36,7 @@ pub mod text;
 pub use card::Card;
 use card::{check_image, Region};
 use hash::hex;
+pub use kexec::receive::kexec_clear;
 pub use state::{confirm, confirm_running, confirm_with_sd_mode};
 use std::path::Path;
 
@@ -372,19 +373,6 @@ pub fn kexec_stage(
     st.save(state_path).map_err(io("writing the update state (nothing written to the card)"))?;
     r.say(format!("starting build {} by kexec: it installs itself once it runs", short(&staged.build)));
     Ok((r, Some(staged)))
-}
-
-/// The kexec start is over without the install it was for (the load or the start failed, or the started image could
-/// not install itself): forget it, with `event` as the last event.
-pub fn kexec_clear(state_path: &Path, event: &str) -> Result<(), String> {
-    let _l = lock(state_path)?;
-    let mut st = State::load(state_path).map_err(io("reading the update state"))?;
-    if st.kexec.take().is_none() {
-        return Ok(());
-    }
-    st.sd_trial = None;
-    st.event = event.into();
-    st.save(state_path).map_err(io("writing the update state"))
 }
 
 /// Early in rcS of an ordinary start: a kexec start that was under way did not finish its install (the new kernel or its

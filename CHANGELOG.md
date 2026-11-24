@@ -24,6 +24,17 @@ it also ran on a DHO924S (2026-11-16).
 
 Added:
 
+- [Release tooling](docs/release.md) builds the signed update package, USB GEL, release manifest and `SHA256SUMS`
+  from the unsigned CI image. The optional bridge is signed with [upstream OOS](https://github.com/dekajoule/oos)'s
+  community key so that upstream's update page accepts it. Verify it against this release's `SHA256SUMS`.
+  The candidate GEL and bridge ran on a DHO924S on 2026-11-24. The exact CI release image
+  still needs its unit check.
+- [`cargo xtask unit-matrix`](docs/development.md#live-acquisition-matrix) runs repeatable SCPI acquisition groups,
+  compares builds and supports sustained runs. It needs a build with `private-picture-counts`.
+  The release candidate was measured on the unit using the public state counters.
+- `oos-update leave` clears update tracking before switching firmware, preserving the current boot selection.
+  The switch from the candidate to upstream OOS 0.1.15 and back ran on a DHO924S on 2026-11-24.
+
 - System information and `:SYSTem:STATe?` show the boot SD card's negotiated speed and running device-tree
   ceiling. Host-tested only.
 
@@ -45,6 +56,29 @@ Changed:
   Reverse PTR, QU unicast replies and host publication without registered services are dropped. Host-tested only.
 
 - Batch is the sole acquisition pipeline. Startup logs and ignores the retired `acq.pipeline` key.
+- Batch sizes follow measured placement cost. Workers place eligible records before the UI combines their results.
+  In the 2026-11-24 unit benchmark, the release candidate reported 32.4 to 32.5 pictures/s across the measured views.
+  At 5 ns/div with one channel it showed about 17,800 waveforms/s, versus about 6,000 on upstream OOS 0.1.15.
+  Upstream reported about 36,900 acquisitions/s and the candidate about 17,800. The acquisition counters may
+  count different events across builds. The shown waveform rate is comparable.
+  With four channels at 1 µs/div, the candidate showed about 6,400 waveforms/s in Normal and 4,000 in Average.
+  These are state-counter measurements from one unit. The panel rate was not independently measured.
+- [Played windows](docs/fork/played-window.md) read the screen and trigger region of live-compressed Normal batches
+  up to 1 M points per channel. A separate raw reread can still supply the whole record. At 1 M points and 10 µs/div,
+  one DHO924S test on 2026-11-24 went from 46 to 253 records/s.
+- Software Average on eligible raw batches runs on workers. The average grid also supplies measurements, tracked
+  cursors, zoom and NORM/MAX waveform transfers. Four-channel Average ran in the 2026-11-24 unit benchmark.
+- Picture pacing follows panel refresh by default, with a timer fallback when vblank events stop. The default is
+  one picture every three refreshes. The candidate's cadence was measured on the unit. The vblank-loss fallback
+  was host-tested only.
+- Signed updates can stage the new image on the card before kexec. The measured handoff payload was about 45 MB
+  with staging and about 89 MB on the legacy path. Staged install, stock GEL install, bridge install and automatic
+  rollback from a failed bridge trial ran in the 2026-11-24 unit session. In three unit power-cut tests during updates,
+  the system came back and the data area remained intact.
+- Start-up checks a scratch copy of the `/oos` data area before mounting it. It adds a metadata journal to new
+  filesystems and to existing ones with room, and verifies repairs before writing them back. The journaled area
+  mounted across the 2026-11-24 switching session. Forced offline repair, journal replay edge cases and interrupted
+  first-format recovery were exercised on synthetic host images.
 
 - Boot card mode is a device setting (`sd.mode = hs|sdr104`, default HS). The updater selects the next boot DTB
   from the generic image and keeps HS for trial rollback. Device capability overrides are labelled as device
@@ -67,6 +101,12 @@ Changed:
 
 Fixed:
 
+- STOP retains the accepted capture for readout and stopped views. RUN publishes a new acquisition epoch before
+  releasing the hold. `*OPC?` waits for an armed SINGLE's completion. In the 2026-11-24 unit benchmark, `:SINGLE`
+  followed by `*OPC?` took 7 ms in SDR104 and 16 ms in High Speed. See [STOP and the retained record](docs/fork/stop-exact.md)
+  for the host coverage of stopped views and final reads.
+- Start-up reconciles tracking with the image in `recovery`. A GEL reinstall marked the image untracked on the
+  unit on 2026-11-24, even with the same build stamp. Reconciliation of interrupted rollback writes was host-tested.
 - At minimum persistence, Batch combines up to three recent deposits so sparse updates keep their trace density.
   Deposits expire after 67 ms. Host-tested only (#204).
 - RUN after SINGLE restores the previous NORMAL or AUTO sweep, including after STOP (#183). Host-tested only.

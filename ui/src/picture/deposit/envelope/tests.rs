@@ -263,7 +263,7 @@ fn masked_neon_columns_match_scalar_at_both_record_ends() {
                         for join in [false, true] {
                             let expected = scalar::reduce(words, &correction, joined(start, end, join)..end);
                             actual.clear();
-                            neon::reduce(words, &correction, &[start, end], join, &mut actual);
+                            neon::reduce(words, &correction, &[start, end], join, &mut actual, keep_extrema);
                             assert_eq!(actual, [expected], "lanes={N} len={len} range={start}..{end} join={join}");
                         }
                     }
@@ -310,7 +310,14 @@ fn neon_matches_sample_correction_at_every_phase_and_clamp_boundary() {
                                 let first = start.saturating_sub(usize::from(join));
                                 let expected = scalar::reduce(&words[..len], &correction, first..end);
                                 actual.clear();
-                                neon::reduce(&words[..len], &correction, &[start, end], join, &mut actual);
+                                neon::reduce(
+                                    &words[..len],
+                                    &correction,
+                                    &[start, end],
+                                    join,
+                                    &mut actual,
+                                    keep_extrema,
+                                );
                                 assert_eq!(
                                     actual,
                                     [expected],

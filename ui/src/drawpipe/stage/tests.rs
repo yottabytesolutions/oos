@@ -6,6 +6,48 @@ use crate::drawpipe::budget::WORK_BUDGET;
 use crate::system::test_allocator::own_high_water;
 
 #[test]
+fn live_capture_peak_folds_leave_the_measurement_to_the_reference() {
+    let model = Model { meas: vec![(Meas::Vpp, WaveId::Ch(0))], ..Model::default() };
+    let mut folds = crate::framestats::folds_for(&model);
+    let mut frame = Frame { envelope: true, fixed_ti: Some(4388.0), acq: (78_125_000.0, 8784), ..Frame::default() };
+    let layout = CodeLayout::uncorrected(1, [Some(0), None, None, None], [(1.0, 0.0); NCH], |code, _| f32::from(code));
+    let bytes = [0; 2 * 8784];
+    assert!(!fold_codes(&mut frame, &model, (&bytes, layout), &mut folds, |_| {
+        panic!("the decoded fold discards live Peak pairs")
+    }));
+    assert_eq!(folds[0].1.n, 0);
+}
+
+#[test]
+fn full_rate_reference_work_is_reported_separately() {
+    use super::super::{
+        clock::StageClock,
+        tests::{batch, dec, model, Bytes},
+    };
+    let pipe = Pipe::start(0, 0, Box::leak(Box::default()));
+    let id = oos_core::change::Identity::default();
+    pipe.publish_view(&model(1e-6, false, false), 97, 48, Interp::Exact, id);
+    let view = oos_hal::sync::lock(&pipe.view).view.clone().unwrap();
+    let (bytes, fb, settings, params) = batch(1, 400, false);
+    let mut painter = Painter::new(1, 0);
+    let metrics = &pipe.counters.metrics;
+    for cost in [8, 12] {
+        let mut reference =
+            pipe.feed_batch(Box::new(Bytes(bytes.clone())), fb, 0..1, (0, Some(id)), dec(&settings, &params), None);
+        Arc::get_mut(&mut reference).unwrap().clock = StageClock::from(Instant::now()).with_reference_admission();
+        metrics.inject_worker_time(id, Duration::from_millis(cost));
+        let deposit = painter.batch(None, &pipe.slot, &reference, &view, Some(id)).unwrap();
+        assert_eq!(deposit.records, 1);
+        assert_eq!(metrics.worker_time(id, 1), None, "reference work cannot be stored as a grant sample");
+    }
+    let state = pipe.counters.pipeline_text(WORK_BUDGET, 0);
+    assert!(state.contains(" work.v1 refine=0/0 envelope=0/0 tiles=0/0 pool=0/0 "), "{state}");
+    let (_, source) = state.split_once(" source.v1 ").unwrap();
+    assert!(source.contains(" work_per_record_ns=0 "), "{source}");
+    assert!(source.contains(" reference_count=2 reference_work_ns=8000000/12000000 "), "{source}");
+}
+
+#[test]
 fn coalesced_records_do_not_dilute_the_current_batch_cost() {
     use super::super::{
         clock::StageClock,

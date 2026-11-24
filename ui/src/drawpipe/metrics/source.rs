@@ -24,6 +24,8 @@ pub(super) struct Samples {
     captured_discarded: u64,
     uncorrected: u64,
     model: [u64; 3],
+    reference_count: u64,
+    reference_work: Window<1>,
     #[cfg(any(target_os = "linux", test))]
     pending: Option<Duration>,
     #[cfg(any(target_os = "linux", test))]
@@ -31,6 +33,11 @@ pub(super) struct Samples {
 }
 
 impl Samples {
+    pub(super) fn reference(&mut self, records: u64, work_per_record: u64) {
+        self.reference_count += records;
+        self.reference_work.add([Some(work_per_record)]);
+    }
+
     #[cfg(target_os = "linux")]
     fn capture_duty(&self, since: Instant) -> Option<f64> {
         if self.last_read.is_none_or(|last| last <= since) || self.window.quantiles(5)[0] == 0 {
@@ -63,6 +70,8 @@ impl Samples {
         let _ = write!(text, " captured_discarded={} uncorrected={}", self.captured_discarded, self.uncorrected);
         let [work, fixed, workers] = self.model;
         let _ = write!(text, " work_per_record_ns={work} fixed_cost_ns={fixed} parallelism={workers}");
+        let [p50, p90] = self.reference_work.quantiles(0);
+        let _ = write!(text, " reference_count={} reference_work_ns={p50}/{p90}", self.reference_count);
     }
 }
 

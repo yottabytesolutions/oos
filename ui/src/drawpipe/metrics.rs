@@ -61,6 +61,17 @@ impl Metrics {
     }
 
     pub(super) fn work(&self, identity: Option<Identity>, work: &Work, records: u64, truncated: bool) {
+        self.batch_work(identity, work, records, truncated, false);
+    }
+
+    pub(super) fn batch_work(
+        &self,
+        identity: Option<Identity>,
+        work: &Work,
+        records: u64,
+        truncated: bool,
+        reference: bool,
+    ) {
         if let Some(mut current) = self.current(identity) {
             current.truncated += u64::from(truncated);
             if records > 0 {
@@ -68,8 +79,12 @@ impl Metrics {
                 let worker_time = times[0].saturating_add(times[1]).saturating_add(times[2]);
                 #[cfg(test)]
                 let worker_time = current.test_worker_time.unwrap_or(worker_time);
-                current.worker_time = Some((records, worker_time));
-                current.work.add(times.map(|ns| Some(ns / records)));
+                if reference {
+                    current.source.reference(records, worker_time / records);
+                } else {
+                    current.worker_time = Some((records, worker_time));
+                    current.work.add(times.map(|ns| Some(ns / records)));
+                }
             }
         }
     }

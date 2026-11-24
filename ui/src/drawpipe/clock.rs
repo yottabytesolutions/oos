@@ -6,7 +6,8 @@ use std::time::{Duration, Instant};
 #[derive(Clone, Copy, Default)]
 pub(crate) struct StageClock {
     first_trigger_at: Option<Instant>,
-    admitted: bool,
+    // A submitted flight always reserves a slot. Only batches with a sample train the cost model.
+    admission_sample: Option<bool>,
     #[cfg(test)]
     test_dequeue: Option<Instant>,
     #[cfg(test)]
@@ -34,7 +35,14 @@ impl StageClock {
 
     #[cfg(any(target_os = "linux", test))]
     pub(crate) fn with_admission(mut self) -> Self {
-        self.admitted = true;
+        self.admission_sample = Some(true);
+        self
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn with_reference_admission(mut self) -> Self {
+        // The full-rate reference enters as a singleton independently of the batch cost.
+        self.admission_sample = Some(false);
         self
     }
 
@@ -78,7 +86,15 @@ impl StageClock {
     }
 
     pub(super) fn admitted(self) -> bool {
-        self.admitted
+        self.admission_sample.is_some()
+    }
+
+    pub(super) fn trains_admission(self) -> bool {
+        self.admission_sample == Some(true)
+    }
+
+    pub(super) fn is_reference(self) -> bool {
+        self.admission_sample == Some(false)
     }
 
     pub(super) fn read_at(self) -> Instant {

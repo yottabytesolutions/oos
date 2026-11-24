@@ -85,6 +85,7 @@ See [presentation](../../ui/src/pacing/presentation.rs),
 
 Each field is p50/p90 in nanoseconds per deposited record over up to 64 batches.
 Each batch contributes its measured durations divided by the number of records it deposited.
+Full-rate reference records contribute to `source.v1 reference_work_ns`.
 
 | Field | Unit | Observation |
 |---|---|---|
@@ -121,7 +122,7 @@ See [route selection](../../ui/src/drawpipe/route.rs), [deposit accounting](../.
 
 ## source.v1
 
-Quantiles are p50/p90 over up to 64 completed ordinary batch reads. The wait
+Ordinary read quantiles are p50/p90 over up to 64 completed batch reads. The wait
 quantiles use only sampled reads that had accumulated waits.
 
 | Field | Unit | Observation |
@@ -143,6 +144,8 @@ quantiles use only sampled reads that had accumulated waits.
 | `work_per_record_ns` | ns/record | Most recently reported application-model work estimate used in a grant. |
 | `fixed_cost_ns` | ns/batch | Most recently reported application-model fixed service cost used in a grant. |
 | `parallelism` | Worker lanes | The reported grant's record allowance capped at the worker count. |
+| `reference_count` | Records | Full-rate reference records deposited for the current acquisition identity. |
+| `reference_work_ns` | ns/record | p50/p90 of summed refinement, envelope and tile worker time over up to 64 deposited full-rate references. |
 
 See [source metrics](../../ui/src/drawpipe/metrics/source.rs),
 [grant model](../../ui/src/drawpipe/admission/model.rs), [source timing](../../ui/src/board/dho/hw/batch_timing.rs)

@@ -14,6 +14,7 @@ pub(super) fn reduce<const N: usize>(
     edges: &[usize],
     join: bool,
     out: &mut Vec<Extrema<N>>,
+    finish: impl FnMut(usize, [usize; 2], Extrema<N>) -> Extrema<N>,
 ) {
     let mode = if !correction.active {
         RAW
@@ -32,9 +33,9 @@ pub(super) fn reduce<const N: usize>(
     };
     let masks = Masks::new(correction, mode);
     match mode {
-        RAW => columns::<RAW, N>(words, len, edges, join, out, &masks),
-        SIGNED => columns::<SIGNED, N>(words, len, edges, join, out, &masks),
-        _ => columns::<WIDE, N>(words, len, edges, join, out, &masks),
+        RAW => columns::<RAW, N>(words, len, edges, join, out, &masks, finish),
+        SIGNED => columns::<SIGNED, N>(words, len, edges, join, out, &masks, finish),
+        _ => columns::<WIDE, N>(words, len, edges, join, out, &masks, finish),
     }
 }
 
@@ -86,18 +87,20 @@ fn columns<const MODE: u8, const N: usize>(
     join: bool,
     out: &mut Vec<Extrema<N>>,
     masks: &Masks<N>,
+    mut finish: impl FnMut(usize, [usize; 2], Extrema<N>) -> Extrema<N>,
 ) {
     let rows = WORDS / N;
     let last_load = words.len() - rows;
-    out.extend(edges.array_windows().map(|&[start, end]| {
-        let start = joined(start, end, join);
+    out.extend(edges.array_windows().enumerate().map(|(column, &range)| {
+        let [first, end] = range;
+        let start = joined(first, end, join);
         let end = end.min(len);
         if start >= end {
-            return Extrema::EMPTY;
+            return finish(column, range, Extrema::EMPTY);
         }
         // SAFETY: NEON is baseline on aarch64. Every load starts at or before last_load;
         // the final vector has enough words even when the input was padded on the stack.
-        unsafe {
+        let extrema = unsafe {
             let (low, high) = if end - start < rows {
                 let base = start.min(last_load);
                 let value = masks.load::<MODE>(words, base);
@@ -119,7 +122,8 @@ fn columns<const MODE: u8, const N: usize>(
                 (low, high)
             };
             horizontal(low, high)
-        }
+        };
+        finish(column, range, extrema)
     }));
 }
 

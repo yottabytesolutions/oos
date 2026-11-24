@@ -5,6 +5,7 @@ use crate::board::dho::hw::header::{dispatch_fixture, for_each_fixture, Fixture}
 use std::sync::mpsc::sync_channel;
 use std::{ops::Range, sync::mpsc::Receiver};
 
+mod capture;
 mod probe;
 mod report;
 pub(crate) use probe::{at, note_split_dispatch, record, sample, sample_channel, sample_fold, split_dispatch_start};
@@ -23,6 +24,10 @@ struct Replay {
 
 impl Replay {
     fn new(fixture: &Fixture) -> Option<Self> {
+        Self::with_dispatch(fixture, |pipe, trace| dispatch_fixture(fixture, pipe, Some(trace)))
+    }
+
+    fn with_dispatch(fixture: &Fixture, dispatch: impl FnOnce(&Pipe, Box<route::RouteTrace>)) -> Option<Self> {
         let settings = fixture.placement_view()?;
         let (m, size, interp, zoom) = settings.inputs();
         let (workers, prior_hits) = settings.scheduling();
@@ -36,7 +41,7 @@ impl Replay {
             let _ = send.send((report.route().into(), report.range()));
         });
         trace.set_replay_prior_hits(prior_hits);
-        dispatch_fixture(fixture, &pipe, Some(trace));
+        dispatch(&pipe, trace);
         let Message::Batch(batch) = receive.recv().expect("fixture dispatch submits one batch") else {
             unreachable!("the fixture submits a DMA batch")
         };

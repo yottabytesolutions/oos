@@ -19,7 +19,7 @@ use crate::board::Frame;
 use crate::model::*;
 
 mod codes;
-pub(crate) use codes::{fold_codes, requires_frame};
+pub(crate) use codes::fold_codes;
 mod tap;
 pub(crate) use tap::{measurement_bounds, measurement_slice, measurement_view, TapFolds};
 

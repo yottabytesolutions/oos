@@ -314,20 +314,37 @@ fn place<const N: usize>(
     match edges {
         Edges::Pairs(edges, dots) => {
             fixture_stage!(ColumnEdges, edges.update_for(width, words.len(), map, true));
-            fixture_stage!(MinMax, {
-                reduce_columns(words, &correction, (edges.ranges().c0, &edges.ranges().first, false), &lanes, out);
-                adapt::pairs::join_codes(words, &correction, edges, (dots, map.x_per_sample), out);
-            });
+            fixture_stage!(MinMax, reduce_pairs(words, &correction, edges, (dots, map.x_per_sample), &lanes, out));
         }
         Edges::Record(edges) => {
             fixture_stage!(ColumnEdges, edges.update(width, words.len(), map));
             envelope(words, &correction, edges, &lanes, out);
         }
         Edges::Columns(c0, first) => {
-            fixture_stage!(MinMax, reduce_columns(words, &correction, (c0, first, true), &lanes, out))
+            fixture_stage!(MinMax, reduce_columns(words, &correction, (c0, first, true), &lanes, out, keep_extrema))
         }
     }
     write_spans(out, &inputs, (width, height), pairs, rows, spans);
+}
+
+pub(super) fn reduce_pairs<const N: usize>(
+    words: &[[u16; N]],
+    correction: &Correction<N>,
+    edges: &ColumnEdges,
+    (dots, spacing): (bool, f64),
+    lanes: &LaneMap<N>,
+    out: &mut Envelopes<N>,
+) {
+    let ranges = edges.ranges();
+    let columns = (ranges.c0, ranges.first.as_slice(), false);
+    if dots {
+        reduce_columns(words, correction, columns, lanes, out, keep_extrema);
+    } else {
+        let mut joins = adapt::pairs::CodeJoin::new(words, correction, edges, spacing);
+        reduce_columns(words, correction, columns, lanes, out, |column, range, extrema| {
+            joins.finish(column, range, extrema)
+        });
+    }
 }
 
 fn write_spans<const N: usize>(

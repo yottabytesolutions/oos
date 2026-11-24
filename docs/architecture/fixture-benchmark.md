@@ -49,3 +49,10 @@ is divided across the records whose tiles populated the planes. `split_columns` 
 shards and also includes dispatch bookkeeping in the cold pass. The shard kernels have their own stage timings.
 `placement_geometry` measures the batch layout and view projection lookups, including first-use setup. `place_remainder` reports the wall time
 outside the named placement stages, including probe overhead. Check it against 5% of `place` on target.
+
+For reduced-Peak and matching full-rate fixture groups, run `capture_profile_worker_benchmark --ignored
+--nocapture --test-threads=1` once per group with `OOS_FIXTURES` set to the group directory. This uses the live
+capture-profile callbacks, including the stored-word axis for Peak, then calls the production batch worker with
+one host worker. Full-rate fixtures also run the ordinary batch route. The benchmark reports median warmed wall
+and worker nanoseconds per placed record, source preparation for the singleton full-rate reference, and a
+fingerprint of the deposited counts. Capture and profile-switch IO are outside the benchmark.

@@ -76,11 +76,8 @@ fn fold_at(
     folds: &mut crate::framestats::Folds,
     decode: impl FnOnce(&mut Frame),
 ) -> bool {
-    if !crate::framestats::requires_frame(model, scratch, folds) {
-        let timing = Frame { dt: scratch.dt, fixed_ti: Some(ti), ..Frame::default() };
-        if let Some(measured) = crate::framestats::fold_codes(&timing, model, bytes, layout, folds) {
-            return measured;
-        }
+    if let Some(measured) = crate::framestats::fold_codes(scratch, model, bytes, layout, folds, Some(ti)) {
+        return measured;
     }
     Cause::ZoomMeasurementDecode.mark();
     decode(scratch);

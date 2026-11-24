@@ -105,7 +105,7 @@ pub(crate) fn envelope<const N: usize>(
 ) {
     crate::drawpipe::stage::fixture_stage!(
         MinMax,
-        reduce_columns(words, correction, (edges.ranges().c0, &edges.ranges().first, true), lanes, out)
+        reduce_columns(words, correction, (edges.ranges().c0, &edges.ranges().first, true), lanes, out, keep_extrema)
     );
 }
 
@@ -115,16 +115,22 @@ fn reduce_columns<const N: usize>(
     (c0, edges, join): (usize, &[usize], bool),
     lanes: &LaneMap<N>,
     out: &mut Envelopes<N>,
+    mut finish: impl FnMut(usize, [usize; 2], Extrema<N>) -> Extrema<N>,
 ) {
     out.lanes = *lanes;
     out.c0 = c0;
     out.columns.clear();
     #[cfg(target_arch = "aarch64")]
-    neon::reduce(words, correction, edges, join, &mut out.columns);
+    neon::reduce(words, correction, edges, join, &mut out.columns, &mut finish);
     #[cfg(not(target_arch = "aarch64"))]
-    out.columns.extend(
-        edges.array_windows().map(|&[start, end]| scalar::reduce(words, correction, joined(start, end, join)..end)),
-    );
+    out.columns.extend(edges.array_windows().enumerate().map(|(column, &[start, end])| {
+        let extrema = scalar::reduce(words, correction, joined(start, end, join)..end);
+        finish(column, [start, end], extrema)
+    }));
+}
+
+fn keep_extrema<const N: usize>(_: usize, _: [usize; 2], extrema: Extrema<N>) -> Extrema<N> {
+    extrema
 }
 
 #[inline]

@@ -59,6 +59,7 @@ fn acquisition_pair_resets_accepted_rejected_source_and_work() {
     }
 
     metrics.work(Some(id), &Work { pool: elapsed, ..Work::default() }, 2, true);
+    metrics.batch_work(Some(id), &Work { envelope: elapsed, ..Work::default() }, 1, false, true);
     metrics.source_wait(id, elapsed);
     for i in 1..=2 {
         metrics.source_batch(
@@ -86,7 +87,7 @@ fn acquisition_pair_resets_accepted_rejected_source_and_work() {
     assert!(text.contains(" pool=5000000/5000000 "));
     assert!(text.contains(" wait_admission=1,10.000/10.000 arm=1.000/1.000 fill=5.000/5.000 read=2.000/2.000 readout=1.000/1.000 records_per_s=200.000/200.000 duty=0.500/0.500"));
     assert!(text.ends_with(
-        " budget_ms=17 source.serial=1 first_trigger=3.000/3.000 grant=1/2 bytes=8192/8192 captured_discarded=1 uncorrected=0 work_per_record_ns=0 fixed_cost_ns=0 parallelism=0"
+        " budget_ms=17 source.serial=1 first_trigger=3.000/3.000 grant=1/2 bytes=8192/8192 captured_discarded=1 uncorrected=0 work_per_record_ns=0 fixed_cost_ns=0 parallelism=0 reference_count=1 reference_work_ns=10000000/10000000"
     ));
     metrics.set_identity(stats_only);
     assert_eq!(metrics.text(&routes, budget), text);
@@ -101,7 +102,7 @@ fn acquisition_pair_resets_accepted_rejected_source_and_work() {
     assert!(text.contains(" work.v1 refine=0/0 envelope=0/0 tiles=0/0 pool=0/0 "));
     assert!(text.contains(" source.v1 wait_admission=0,0.000/0.000 arm=0.000/0.000 "));
     assert!(text
-        .ends_with(" budget_ms=17 source.serial=0 first_trigger=0.000/0.000 grant=0/0 bytes=0/0 captured_discarded=0 uncorrected=0 work_per_record_ns=0 fixed_cost_ns=0 parallelism=0"));
+        .ends_with(" budget_ms=17 source.serial=0 first_trigger=0.000/0.000 grant=0/0 bytes=0/0 captured_discarded=0 uncorrected=0 work_per_record_ns=0 fixed_cost_ns=0 parallelism=0 reference_count=0 reference_work_ns=0/0"));
 }
 
 #[test]
@@ -140,5 +141,5 @@ fn state_query_appends_the_versioned_sections_after_legacy_fields() {
     assert!(fallback.starts_with("no_adapter=0 no_words=0 invalid_layout=0 "));
     assert!(fallback.trim_end().ends_with("direct_record=0"));
     assert_eq!(disarm.trim_end(), "total=0 unknown=0 no_completed_record=0 recorded=0 dropped=0");
-    assert!(source.ends_with("duty=0.000/0.000 budget_ms=17 source.serial=0 first_trigger=0.000/0.000 grant=0/0 bytes=0/0 captured_discarded=0 uncorrected=0 work_per_record_ns=0 fixed_cost_ns=0 parallelism=0 step.missed=0"));
+    assert!(source.ends_with("duty=0.000/0.000 budget_ms=17 source.serial=0 first_trigger=0.000/0.000 grant=0/0 bytes=0/0 captured_discarded=0 uncorrected=0 work_per_record_ns=0 fixed_cost_ns=0 parallelism=0 reference_count=0 reference_work_ns=0/0 step.missed=0"));
 }

@@ -313,7 +313,10 @@ fn completed_free_bode_restores_settings_on_the_next_intake() {
     assert!(!ui.bode.running);
     assert_eq!((ui.m.tscale, ui.m.trig_mode), (active.tscale, active.trig_mode), "restoration is deferred");
     ui.step(0.001);
-    assert_eq!((ui.m.tscale, ui.m.trig_mode, ui.m.auto_roll), (initial.tscale, initial.trig_mode, initial.auto_roll));
+    assert_eq!(
+        (ui.m.tscale, ui.m.trig_mode, ui.m.auto_acquisition.roll()),
+        (initial.tscale, initial.trig_mode, initial.auto_acquisition.roll())
+    );
     ui.step(0.001);
     assert_eq!((ui.m.tscale, ui.m.trig_mode), (initial.tscale, initial.trig_mode));
 }

@@ -92,6 +92,10 @@ pub(super) const ACQUISITION: &[Key] = keys! { m, _i, v;
     "seg_hw" => value(m.seg_hw, p_bool(v)?);
     "seg_interval" => value(m.seg_ivl, p_f32(v)?.clamp(0.0, crate::ui::SEG_IVL_MAX));
     "mdepth" => value(m.mdepth, p_idx(v, mdepths().len())?);
+    "auto_depth" => custom(
+        Some(name(m.auto_acquisition.depth())),
+        m.auto_acquisition.set_depth(p_enum(v, &AutoDepth::ALL)?)
+    );
     "persist" => value(m.persist, p_idx(v, PERSIST.len())?);
     "intensity" => value(m.intensity, p_u32(v)?.clamp(10, 100));
     "grid" => named(m.grid, p_enum(v, &GRIDS)?);

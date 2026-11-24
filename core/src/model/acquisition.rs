@@ -3,12 +3,54 @@
 
 use super::*;
 
+/// Record length policy when the Acquire menu's memory depth is Auto.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum AutoDepth {
+    #[default]
+    Extended,
+    Screen,
+}
+
+impl AutoDepth {
+    pub const ALL: [Self; 2] = [Self::Extended, Self::Screen];
+}
+
+/// Automatic choices for the record length and the transition to streaming acquisition.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AutoAcquisition {
+    pub(crate) auto_roll: bool,
+    pub(crate) auto_depth: AutoDepth,
+}
+
+impl AutoAcquisition {
+    pub fn roll(self) -> bool {
+        self.auto_roll
+    }
+
+    pub fn set_roll(&mut self, enabled: bool) {
+        self.auto_roll = enabled;
+    }
+
+    pub fn depth(self) -> AutoDepth {
+        self.auto_depth
+    }
+
+    pub fn set_depth(&mut self, depth: AutoDepth) {
+        self.auto_depth = depth;
+    }
+}
+
+impl Default for AutoAcquisition {
+    fn default() -> Self {
+        Self { auto_roll: true, auto_depth: AutoDepth::default() }
+    }
+}
+
 impl Model {
     pub fn n_on_in(&self, config: &Config) -> usize {
         self.ch.iter().take(config.channels()).filter(|c| c.on).count()
     }
-    /// Maximum sample rate for the number of enabled channels (1.25 GSa/s shared by the ADC cores; platform limits,
-    /// provided by the application.
+    /// Maximum sample rate for the enabled channels, with platform limits supplied by the application.
     pub fn max_srate_in(&self, config: &Config) -> f64 {
         let r = config.srate(self.n_on_in(config));
         // the analog rate is halved while the LA is on and a channel is shown (la.md 3.1)
@@ -18,7 +60,7 @@ impl Model {
             r
         }
     }
-    /// for an LA line.
+    /// The trigger coupling defaults to DC for non-edge triggers and LA lines.
     pub fn trig_coupling_in(&self, config: &Config) -> TrigCoup {
         if self.trig_type == TrigType::Edge && self.trig_line_in(config).is_none() {
             self.trig_coup
@@ -97,8 +139,8 @@ impl Model {
         // with the LA on: 31.25 / 12.5 / 10 M (`max_mem_la`, la.md 3.2)
         config.mem(self.n_on_in(config), self.la_on_in(config))
     }
-    /// (sample rate, memory depth) as the acquisition would use them.
-    pub fn srate_depth_in(&self, config: &Config) -> (f64, u64) {
+    /// Estimated (sample rate, memory depth) for synthetic acquisition.
+    pub fn demo_rate_depth_in(&self, config: &Config) -> (f64, u64) {
         let window = self.hw_time_per_div() as f64 * HDIV as f64;
         let want = config.depths()[self.mdepth].1;
         let maxsr = self.max_srate_in(config);

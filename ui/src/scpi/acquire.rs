@@ -5,13 +5,16 @@ use super::*;
 
 fn model(scpi: &mut Scpi, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str) -> Option<Option<Vec<u8>>> {
     let m = &mut ui.m;
-    let src = &ui.src;
     let n0 = nodes.first().copied().unwrap_or("");
     if kw(n0, "ACQuire") && nodes.len() == 3 && kw(nodes[1], "ULTRa") && kw(nodes[2], "MAXFrame") {
         return ultra(scpi, query, arg, m);
     }
-    if kw(n0, "ACQuire") && nodes.len() == 2 && !query && kw(nodes[1], "MDEPth") {
-        return depth(arg, m);
+    if kw(n0, "ACQuire") && (2..=3).contains(&nodes.len()) && kw(nodes[1], "MDEPth") {
+        return match nodes.get(2) {
+            None if !query => depth(arg, m),
+            Some(sub) if kw(sub, "AUTO") => auto_depth(scpi, query, arg, m),
+            _ => None,
+        };
     }
     if kw(n0, "ACQuire") && nodes.len() == 2 && kw(nodes[1], "CORes") {
         return cores(query, arg, m);
@@ -29,7 +32,7 @@ fn model(scpi: &mut Scpi, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str) -
         return Some(None);
     }
     if kw(n0, "ACQuire") && nodes.len() == 2 {
-        return settings(scpi, nodes, query, arg, m, src);
+        return settings(scpi, nodes[1], query, arg, m);
     }
 
     None
@@ -37,6 +40,13 @@ fn model(scpi: &mut Scpi, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str) -
 
 pub(super) fn exec(scpi: &mut Scpi, ui: &mut Ui, cmd: &str, nodes: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
     let n0 = nodes.first().copied().unwrap_or("");
+    if query && kw(n0, "ACQuire") && nodes.len() == 2 {
+        let memory = kw(nodes[1], "MDEPth");
+        if memory || kw(nodes[1], "SRATe") {
+            let (rate, depth) = ui.src.rate_depth(&ui.m, ui.switches());
+            return text_reply(&e(if memory { depth as f64 } else { rate }));
+        }
+    }
     if let Some(resp) = model(scpi, ui, nodes, query, arg) {
         if !query {
             change::edited(ui);
@@ -79,6 +89,25 @@ fn depth(arg: &str, m: &mut Model) -> Option<Option<Vec<u8>>> {
     Some(None)
 }
 
+fn auto_depth(scpi: &mut Scpi, query: bool, arg: &str, m: &mut Model) -> Option<Option<Vec<u8>>> {
+    if query {
+        return Some(text_reply(match m.auto_acquisition.depth() {
+            AutoDepth::Screen => "SCR",
+            AutoDepth::Extended => "EXT",
+        }));
+    }
+    let depth = if kw(arg.trim(), "SCReen") {
+        AutoDepth::Screen
+    } else if kw(arg.trim(), "EXTended") {
+        AutoDepth::Extended
+    } else {
+        scpi.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
+        return Some(None);
+    };
+    m.auto_acquisition.set_depth(depth);
+    Some(None)
+}
+
 fn cores(query: bool, arg: &str, m: &mut Model) -> Option<Option<Vec<u8>>> {
     // the ADC cores matched in software (on) or the words as they come (Acquire > ADC cores)
     if query {
@@ -114,30 +143,12 @@ fn segments(nodes: &[&str], query: bool, arg: &str, m: &mut Model) -> Option<Opt
     Some(None)
 }
 
-fn settings(
-    scpi: &mut Scpi,
-    nodes: &[&str],
-    query: bool,
-    arg: &str,
-    m: &mut Model,
-    src: &crate::wave::Source,
-) -> Option<Option<Vec<u8>>> {
-    let n1 = nodes[1];
+fn settings(scpi: &mut Scpi, n1: &str, query: bool, arg: &str, m: &mut Model) -> Option<Option<Vec<u8>>> {
     if kw(n1, "TYPE") {
         return mode(scpi, query, arg, m);
     }
     if kw(n1, "AVERages") {
         return averages(scpi, query, arg, m);
-    }
-    if query {
-        // what the top bar shows: the live hardware record, not the model's stock-system choice for Auto
-        let (sr, depth) = src.rate_depth(m);
-        if kw(n1, "SRATe") {
-            return Some(text_reply(&e(sr)));
-        }
-        if kw(n1, "MDEPth") {
-            return Some(text_reply(&e(depth as f64)));
-        }
     }
     None
 }

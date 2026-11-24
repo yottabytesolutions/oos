@@ -13,7 +13,7 @@ fn setup(kind: BatchKind) -> (Ui, crate::board::HwShared, SingleWorker) {
         .iter()
         .position(|&v| v == if matches!(kind, BatchKind::Roll | BatchKind::Scan) { 0.2 } else { 1e-6 })
         .unwrap();
-    ui.m.auto_roll = kind == BatchKind::Roll;
+    ui.m.auto_acquisition.set_roll(kind == BatchKind::Roll);
     if kind == BatchKind::DeepPairs {
         ui.m.mdepth = 5;
     }
@@ -187,7 +187,7 @@ fn incomplete_single_survives_a_stream_mode_reconfigure() {
     let (mut ui, shared, mut worker) = setup(BatchKind::Scan);
     let old = worker.read(&shared, &ui.m, ui.switches()).unwrap();
     let want = lock(&shared).want.clone();
-    ui.m.auto_roll = true;
+    ui.m.auto_acquisition.set_roll(true);
     crate::ui::change::edited(&mut ui);
     ui.step(0.03);
     assert_eq!(lock(&shared).slow, crate::board::Slow::Roll);

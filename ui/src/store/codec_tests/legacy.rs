@@ -187,6 +187,7 @@ fn acquisition_display_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("seg_hw", m.seg_hw.to_string());
     kv("seg_interval", m.seg_ivl.to_string());
     kv("mdepth", m.mdepth.to_string());
+    kv("auto_depth", name(m.auto_acquisition.depth()));
     kv("persist", m.persist.to_string());
     kv("intensity", m.intensity.to_string());
     kv("grid", name(m.grid));
@@ -283,7 +284,7 @@ fn decoders_display_lines(m: &Model, kv: &mut dyn FnMut(&str, String)) {
     kv("strip_dock", name(m.strip_dock));
     kv("trend_sel", format!("{} {}", m.trend_sel[0], m.trend_sel[1]));
     kv("zoom", m.zoom.to_string());
-    kv("auto_roll", m.auto_roll.to_string());
+    kv("auto_roll", m.auto_acquisition.roll().to_string());
     kv("zoom_tdiv", tscales()[m.zscale].to_string());
     kv("zdelay", m.zdelay.to_string());
     kv("color_grade", m.color_grade.to_string());

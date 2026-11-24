@@ -66,7 +66,7 @@ impl<'a> Input<'a> {
             s.trig_src,
             s.slope,
             s.trig_couple,
-            s.trigger, s.holdoff, s.noise_reject
+            s.trigger, s.holdoff, s.trigger_options.noise_reject()
         );
         let (mode, average) = match s.mode {
             Mode::Normal => ("normal", 0),

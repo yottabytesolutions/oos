@@ -67,7 +67,8 @@ The synchronous command/HTTP adapter cannot retain a pending `*OPC?` and reports
 | `:TIMebase[:MAIN]:SCALe[?]` | Seconds/div; nearest supported timebase. |
 | `:TIMebase[:MAIN]:OFFSet[?]` | Horizontal delay in seconds; `POSition` is an alias. |
 | `:ACQuire:SRATe?` | ADC/model sample rate, not a loaded reference's native rate. |
-| `:ACQuire:MDEPth[?]` | Set `AUTO` or a supported menu depth, e.g. `1000000`, `1M`. Query returns the numeric configured/effective acquisition depth. |
+| `:ACQuire:MDEPth[?]` | Set `AUTO` or a supported menu depth, e.g. `1000000`, `1M`. Query returns the captured depth in points per channel, or the planned Auto depth before the first frame. |
+| `:ACQuire:MDEPth:AUTO[?]` | `SCReen\|EXTended`. Query returns `SCR` or `EXT`. `Extended` is the default. The policy applies to triggered acquisitions with Auto depth. `Screen` uses the screen plus a one-eighth margin where the board can keep the same sample rate. Trigger delay can increase the depth. See [setup keys](spec/setup-keys.md#auto-memory). |
 | `:TRIGger:MODE[?]` | Actual trigger type. Same OOS handler as `:TRIGger:TYPe[?]`. |
 | `:TRIGger:SWEep[?]` | `AUTO|NORMal|SINGle`; independent of trigger type. |
 | `:TRIGger:STATus?` | `STOP|TD|AUTO|WAIT`. A completed Single reports STOP. |

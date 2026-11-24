@@ -205,7 +205,7 @@ fn geometry(fields: &Fields<'_>) -> Result<(seq::Settings, hz::Params), String> 
         },
         trigger: trigger::parse(field(fields, "trigger")?)?,
         holdoff: finite(fields, "holdoff")?,
-        noise_reject: value(fields, "noise_reject")?,
+        trigger_options: seq::TriggerOptions::new(false, value(fields, "noise_reject")?),
         ..seq::Settings::default()
     };
     restore_channels(fields, &mut s.ch)?;

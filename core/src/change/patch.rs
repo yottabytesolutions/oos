@@ -6,8 +6,10 @@ use crate::math::{MathOp, Window};
 use crate::model::*;
 
 macro_rules! define_patch {
-    ($($(#[$attribute:meta])* $group:ident $module:ident {
-        $($index:literal $variant:ident($field:ident: $ty:ty) $policy:ident [$($class:tt)*];)*
+    (nested { $($nested:tt)* }
+    $($(#[$attribute:meta])* $group:ident $module:ident {
+        $($index:literal $variant:ident($($root:ident)? $([$parent:ident] $field:ident)? : $ty:ty)
+            $policy:ident [$($class:tt)*];)*
     })*) => {
         $(mod $module {
             use super::*;
@@ -17,12 +19,12 @@ macro_rules! define_patch {
             impl $group {
                 pub(super) fn apply(&self, m: &mut Model) {
                     match self { $(Self::$variant(value) => {
-                        apply!($policy, &mut m.$field, value);
+                        apply!($policy, &mut m.$($root)?$($parent.$field)?, value);
                     },)* }
                 }
                 pub(super) fn reuse(&mut self, m: &Model) {
                     match self { $(Self::$variant(value) => {
-                        reuse!($policy, value, &m.$field);
+                        reuse!($policy, value, &m.$($root)?$($parent.$field)?);
                     },)* }
                 }
                 pub(super) fn bytes(&self) -> usize {
@@ -35,7 +37,9 @@ macro_rules! define_patch {
         impl Patch {
             pub(super) fn capture(index: usize, m: &Model) -> Option<Self> {
                 Some(match index {
-                    $($($index => Self::$group($module::$group::$variant(capture!($policy, &m.$field))),)*)*
+                    $($($index => Self::$group($module::$group::$variant(
+                        capture!($policy, &m.$($root)?$($parent.$field)?)
+                    )),)*)*
                     _ => return None,
                 })
             }

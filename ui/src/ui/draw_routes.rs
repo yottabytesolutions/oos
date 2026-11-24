@@ -27,7 +27,7 @@ struct Route {
 impl Route {
     fn new(kind: BatchKind, channels: usize, tdiv: f32) -> Self {
         let mut ui = Ui::new(Source::Hw { shared: Default::default(), seen: 0 }, host::Host::headless());
-        ui.m.auto_roll = kind == BatchKind::Roll;
+        ui.m.auto_acquisition.set_roll(kind == BatchKind::Roll);
         ui.m.meas.clear();
         ui.m.meas2.clear();
         ui.m.tscale = tscales().iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-4).unwrap();

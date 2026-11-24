@@ -104,7 +104,7 @@ impl State {
         if s.blocks & 4 != 0 {
             st.push(Step::Note(format!("SCU {} trigger", if s.auto { "auto" } else { "normal" })));
             // a time base of 0 gives the shortest auto times (t1 10 ms, t2 100 ms)
-            let tb = if s.auto_fast { 0 } else { tdiv_fs(s.tdiv) };
+            let tb = if s.trigger_options.auto_fast() { 0 } else { tdiv_fs(s.tdiv) };
             st.extend(scu::auto_trigger(&mut self.sh, s.auto, tb, time_fs(s.holdoff)).into_iter().map(Step::Wr));
         }
         Ok((st, p))

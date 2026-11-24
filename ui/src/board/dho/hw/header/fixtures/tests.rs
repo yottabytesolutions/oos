@@ -293,7 +293,7 @@ fn fixture_round_trips_the_armed_settings_and_raw_newest() {
             upper: 3e-9,
         },
         holdoff: 2e-8,
-        noise_reject: true,
+        trigger_options: seq::TriggerOptions::new(false, true),
         ..Default::default()
     };
     s.ch[0].invert = true;
@@ -322,7 +322,7 @@ fn fixture_round_trips_the_armed_settings_and_raw_newest() {
     let path = scratch.0.join("batch-000");
     let fixture = Fixture::load(&path).unwrap();
     let observed = fixture.settings().0;
-    assert_eq!((observed.holdoff, observed.noise_reject), (s.holdoff, s.noise_reject));
+    assert_eq!((observed.holdoff, observed.trigger_options), (s.holdoff, s.trigger_options));
     assert_eq!(observed.trigger, s.trigger);
     assert_eq!(observed.ch[0], s.ch[0]);
     let (_, (_, avail, _), newest) = fixture.source();

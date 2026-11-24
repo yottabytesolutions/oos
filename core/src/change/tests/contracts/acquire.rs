@@ -72,6 +72,7 @@ pub(super) const CASES: &[Case] = &[
         },
         C::ACQ.union(C::STATS),
     ),
+    ("auto_depth", |m| m.auto_acquisition.set_depth(AutoDepth::Screen), C::ACQ.union(C::STATS)),
     (
         "hw_stamp",
         |m| {

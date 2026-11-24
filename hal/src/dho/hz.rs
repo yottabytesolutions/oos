@@ -240,6 +240,35 @@ pub(super) fn centered_params(ratio: u32, rate: u64, points: u32) -> Params {
     geometry(i128::from(ratio), i128::from(rate), i128::from(points), 0)
 }
 
+/// Change the stored depth independently of the time base's rate selection.
+pub(super) fn at_rate(mask: u32, real_rate: u64, points: i128, offset_fs: i128) -> Option<Params> {
+    use crate::dho::clock;
+
+    let ratio = i128::from(ratio(mask));
+    let rate = clock::to_nominal_rate(i128::from(real_rate));
+    let max = CLOCK / ratio;
+    let base = if rate > 62_500_000 { max } else { 62_500_000 };
+    // Match the divider word the SPU writes. Its division rounds the rate down to whole Sa/s.
+    if !(1..=max).contains(&rate)
+        || base / (base / rate) != rate
+        || clock::from_nominal_rate(rate) != i128::from(real_rate)
+        || !(8..=i128::from(u32::MAX)).contains(&points)
+        || points % 8 != 0
+    {
+        return None;
+    }
+    let dot = FS / rate;
+    let half = dot * points / 2;
+    let offset = clock::to_nominal_fs(offset_fs).clamp(-half, half);
+    let mut p = geometry(ratio, rate, points, offset);
+    if i128::from(p.seg) * 10 < points * ratio {
+        return None;
+    }
+    p.rate = real_rate;
+    p.dot_fs = clock::from_nominal_fs(dot) as u64;
+    Some(p)
+}
+
 fn geometry(ratio: i128, rate: i128, memsel: i128, offset_fs: i128) -> Params {
     let dot = FS / rate;
     let seg = mem_size(memsel * ratio);

@@ -656,6 +656,7 @@ enum Item {
     AcqMode,
     AcqAvg,
     AcqDepth,
+    AcqAutoDepth,
     AcqSeg,
     /// software matching of the ADC cores' offsets (`board::dho::cores`)
     AcqCores,
@@ -5281,10 +5282,9 @@ impl Ui {
             (false, full)
         } else {
             // tighter, then the rate alone (large text with the view buttons, a USB stick, a WLAN stick)
-            let tight = format!("{}\u{b7}{}", rate.replace(' ', ""), pts.replace(' ', ""));
-            let alone = rate.replace(' ', "");
-            let main = [tight, alone].into_iter().find(|t| x + f.m.width(t) <= room).unwrap_or_default();
-            (false, main)
+            let rate = rate.replace(' ', "");
+            let tight = format!("{rate}\u{b7}{}", pts.replace(' ', ""));
+            (false, [tight, rate].into_iter().find(|t| x + f.m.width(t) <= room).unwrap_or_default())
         };
         let end = x + if bold { f.mb.width(&main) } else { f.m.width(&main) };
         let mode = format!(" \u{b7} {}", mode);
@@ -5313,9 +5313,9 @@ impl Ui {
         let tcol = if acq_open { ACCENT } else { TEXT };
         cv.set_clip(Rect::new(x0, top.y, (room - x0).max(1), top.h));
         if live_acq {
-            let (sr, depth) =
-                self.src.hw_rate_depth().map(|(r, n)| (r, n as _)).unwrap_or_else(|| self.m.srate_depth());
-            let (bold, main, mode) = Self::top_acq(f, x0, room, sr, depth as f64, self.acq_name());
+            let (sr, depth) = self.src.rate_depth(&self.m, self.switches());
+            let mode = self.acq_name();
+            let (bold, main, mode) = Self::top_acq(f, x0, room, sr, depth as f64, mode);
             let x = cv.text(if bold { &f.mb } else { &f.m }, x0, 25, &main, tcol);
             if let Some(m) = mode {
                 cv.text(&f.m, x, 25, &m, tcol);
@@ -6115,7 +6115,7 @@ impl Ui {
     /// res): the hardware keeps every n-th sample and filters nothing before, so a signal above it shows at a wrong,
     /// lower frequency. None at the full rate and in Peak, whose min/max see every sample.
     pub fn alias_above(&self) -> Option<f64> {
-        let (sr, _) = self.m.srate_depth();
+        let (sr, _) = self.src.planned_rate_depth(&self.m, self.switches());
         (self.m.acq != AcqMode::Peak && sr < self.m.max_srate() * 0.999).then_some(sr / 2.0)
     }
 
@@ -9909,7 +9909,7 @@ mod tests {
         ui.key(key::FORCE);
         assert!(take(&shared) && ui.dialog.is_none());
         // roll streams without a trigger: no pulse
-        ui.m.auto_roll = true;
+        ui.m.auto_acquisition.set_roll(true);
         ui.m.tscale = tscales().iter().position(|&t| (t - 0.2).abs() < 1e-6).unwrap();
         ui.key(key::FORCE);
         assert!(!take(&shared));

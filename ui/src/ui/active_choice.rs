@@ -105,6 +105,7 @@ fn acquisition(u: &Ui, it: Item) -> Option<usize> {
     Some(match it {
         Item::AcqMode => m.acq as usize,
         Item::AcqDepth => m.mdepth,
+        Item::AcqAutoDepth => return position(&AutoDepth::ALL, m.auto_acquisition.depth()),
         Item::AcqAvg => return position(&AVERAGES, m.avg_count),
         Item::AcqSeg => return position(&u.seg_options(), if m.segments == 0 { 0 } else { u.seg_count() }),
         Item::AcqSegIvl => return position(&SEG_IVLS, m.seg_ivl),
@@ -112,7 +113,7 @@ fn acquisition(u: &Ui, it: Item) -> Option<usize> {
         Item::AcqAvgHw => usize::from(m.avg_hw),
         Item::AcqCores => usize::from(m.cores),
         Item::Zoom => usize::from(m.zoom),
-        Item::AutoRoll => usize::from(m.auto_roll),
+        Item::AutoRoll => usize::from(m.auto_acquisition.roll()),
         Item::LogOn => usize::from(u.log.file.is_some()),
         Item::Persist => m.persist,
         Item::ColorGrade => usize::from(m.color_grade),

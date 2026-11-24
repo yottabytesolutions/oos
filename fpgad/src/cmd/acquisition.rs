@@ -82,6 +82,10 @@ impl Parser {
             "--app-mask" => self.app_mask = int(v)?,
             "--tdiv" => self.s.tdiv = num(v)?,
             "--depth" => self.s.depth = num(v)? as i128,
+            "--sample-rate" => {
+                self.s.sample_rate =
+                    Some(v.ok_or("--sample-rate needs Sa/s")?.parse().map_err(|_| "invalid sample rate")?);
+            }
             "--scale" => self.chan.scale = num(v)?,
             "--offset" => self.chan.offset = num(v)?,
             "--level" => self.s.level = num(v)?,
@@ -147,6 +151,9 @@ impl Parser {
         let whole_record = self.all || (self.capture.is_some() && self.n.is_none() && self.at.is_none());
         self.s.window = (!whole_record).then(|| (self.n.unwrap_or(4000), self.at.unwrap_or(-2000)));
         if let Some(Capture { peak, factor }) = self.capture {
+            if self.s.sample_rate.is_some() {
+                return Err("--sample-rate cannot be combined with --capture".into());
+            }
             if self.s.reduce_capture(peak, factor, true).is_none() {
                 let mode = if peak { "peak" } else { "decimate" };
                 return Err(format!("incompatible settings for --capture {mode}:{factor}"));
@@ -200,6 +207,14 @@ mod tests {
     }
 
     #[test]
+    fn sample_rate_flag_keeps_record_depth_independent_of_the_time_base() {
+        let o = parse(&["--tdiv", "5e-4", "--depth", "70312", "--sample-rate", "12500000", "--all"].map(String::from))
+            .unwrap();
+        let p = seq::record_geometry(&o.s).unwrap();
+        assert_eq!((p.rate, p.memsel), (12_500_000, 70_312));
+    }
+
+    #[test]
     fn capture_flag_rejects_unsupported_combinations() {
         for args in [
             &["--capture"][..],
@@ -210,6 +225,7 @@ mod tests {
             &["--capture", "peak:2", "--average", "4"],
             &["--capture", "peak:2", "--mask", "2", "--src", "2"],
             &["--capture", "peak:8", "--mask", "15"],
+            &["--capture", "peak:2", "--sample-rate", "625000000"],
         ] {
             let args: Vec<String> = args.iter().map(|arg| (*arg).into()).collect();
             assert!(parse(&args).is_err(), "{args:?}");

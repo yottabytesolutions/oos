@@ -15,9 +15,9 @@ pub const SCAN_TDIV: f64 = 0.2;
 pub fn slow_mode(m: &Model) -> Slow {
     // f32 time bases: 5 ms is 4.99999989 ms
     let tdiv = m.hw_time_per_div() as f64 * 1.0001;
-    if m.auto_roll && tdiv >= ROLL_TDIV {
+    if m.auto_acquisition.roll() && tdiv >= ROLL_TDIV {
         Slow::Roll
-    } else if !m.auto_roll && tdiv >= SCAN_TDIV && m.acq != AcqMode::Average {
+    } else if !m.auto_acquisition.roll() && tdiv >= SCAN_TDIV && m.acq != AcqMode::Average {
         Slow::Scan { delay: m.delay as f64, single: m.trig_mode == TrigMode::Single }
     } else {
         Slow::Off

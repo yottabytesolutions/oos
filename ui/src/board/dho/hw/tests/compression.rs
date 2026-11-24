@@ -244,11 +244,11 @@ fn modes_that_use_raw_samples() -> &'static [ModeCase] {
         ("segments", |m| m.segments = 8),
         ("roll", |m| {
             m.tscale = tscales().iter().position(|&t| t as f64 >= ROLL_TDIV).unwrap();
-            m.auto_roll = true;
+            m.auto_acquisition.set_roll(true);
         }),
         ("scan", |m| {
             m.tscale = tscales().iter().position(|&t| t as f64 >= SCAN_TDIV).unwrap();
-            m.auto_roll = false;
+            m.auto_acquisition.set_roll(false);
         }),
         ("Z input", |m| m.z_src = Some(1)),
     ]

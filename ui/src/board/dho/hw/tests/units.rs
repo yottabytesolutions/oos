@@ -87,7 +87,7 @@ fn slow_modes_follow_auto_roll() {
     };
     assert_eq!(at(&mut m, 0.1), Slow::Off);
     assert_eq!(at(&mut m, 0.2), Slow::Roll);
-    m.auto_roll = false;
+    m.auto_acquisition.set_roll(false);
     assert_eq!(at(&mut m, 0.1), Slow::Off);
     assert_eq!(at(&mut m, 0.2), Slow::Scan { delay: 0.0, single: false });
     m.trig_mode = TrigMode::Single;

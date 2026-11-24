@@ -61,7 +61,7 @@ pub(super) const CASES: &[Case] = &[
     (
         "auto_roll",
         |m| {
-            m.auto_roll = !m.auto_roll;
+            m.auto_acquisition.set_roll(!m.auto_acquisition.roll());
         },
         C::ACQ.union(C::STATS),
     ),

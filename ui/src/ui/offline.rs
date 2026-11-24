@@ -165,8 +165,12 @@ impl Ui {
             }
             None
         });
-        let (sr, depth) =
-            self.src.hw_rate_depth().map(|(r, n)| (r, n as u64)).or(captured).unwrap_or_else(|| self.m.srate_depth());
+        let (sr, depth) = self
+            .src
+            .hw_rate_depth()
+            .map(|(r, n)| (r, n as u64))
+            .or(captured)
+            .unwrap_or_else(|| self.src.planned_rate_depth(&self.m, self.switches()));
         (format!("{} \u{b7} {}", si_digits(sr, "Sa/s", 3), si_digits(depth as f64, "pts", 3)), true)
     }
 

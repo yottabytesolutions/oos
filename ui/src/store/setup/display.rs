@@ -41,7 +41,7 @@ pub(super) const DISPLAY: &[Key] = keys! { m, _i, v;
         }
     );
     "zoom" => value(m.zoom, p_bool(v)?);
-    "auto_roll" => value(m.auto_roll, p_bool(v)?);
+    "auto_roll" => custom(Some(m.auto_acquisition.roll().to_string()), m.auto_acquisition.set_roll(p_bool(v)?));
     "zoom_tdiv" => custom(Some(tscales()[m.zscale].to_string()), m.zscale = tdiv_index(v)?);
     "zdelay" => value(m.zdelay, p_f32(v)?);
     "color_grade" => value(m.color_grade, p_bool(v)?);

@@ -93,6 +93,8 @@ pub trait Board: scripted::ScriptedBoard + Sync + 'static {
 
     // ---- acquisition
     fn want(&self, m: &Model, sw: &crate::sysconf::Switches) -> Self::Want;
+    /// Planned sample rate and depth when memory depth is Auto.
+    fn auto_rate_depth(&self, m: &Model, sw: &crate::sysconf::Switches) -> Option<(f64, u64)>;
     /// roll, scan or ordinary records for the model's time base
     fn slow_mode(&self, m: &Model) -> Slow;
     /// time base (s/div) from which the board streams in roll mode

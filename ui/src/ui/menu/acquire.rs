@@ -6,6 +6,8 @@ use crate::model::AcqMode as AcquisitionMode;
 
 pub(super) const AREA: Area = Area { descriptors: ROWS, adjust, activate, ..Area::EMPTY };
 
+const AUTO_DEPTH_LABELS: [&str; 2] = ["Extended", "Screen"];
+
 const ROWS: &[Descriptor] = {
     use Item::*;
     use Kind::*;
@@ -52,6 +54,14 @@ const ROWS: &[Descriptor] = {
             |_| true,
         ),
         Descriptor::new(
+            AcqAutoDepth,
+            Choice,
+            "Auto memory",
+            |u| AUTO_DEPTH_LABELS[auto_depth_index(u.m.auto_acquisition.depth())].into(),
+            |_| AUTO_DEPTH_LABELS.into_iter().map(String::from).collect(),
+            |u| u.src.is_hw() && u.m.mdepth == 0,
+        ),
+        Descriptor::new(
             AcqSeg,
             Choice,
             "Segments",
@@ -89,6 +99,10 @@ const ROWS: &[Descriptor] = {
     ]
 };
 
+fn auto_depth_index(depth: AutoDepth) -> usize {
+    AutoDepth::ALL.iter().position(|&choice| choice == depth).expect("all Auto memory policies are listed")
+}
+
 fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
     if seg_adjust(ui, it, d) {
         return true;
@@ -107,6 +121,10 @@ fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
             m.avg_count = AVERAGES[step(i, AVERAGES.len(), d)];
         }
         Item::AcqDepth => m.mdepth = cyc(m.mdepth, mdepths().len(), d),
+        Item::AcqAutoDepth => {
+            let i = auto_depth_index(m.auto_acquisition.depth());
+            m.auto_acquisition.set_depth(AutoDepth::ALL[cyc(i, AutoDepth::ALL.len(), d)]);
+        }
         Item::AcqCores => m.cores = !m.cores,
         _ => {}
     }

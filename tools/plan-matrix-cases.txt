@@ -71,3 +71,7 @@
 --mask 1 --app-mask 1 --src 1 --tdiv 1e-5 --capture peak:8
 --mask 3 --app-mask 3 --src 1 --tdiv 1e-6 --capture peak:2
 --mask 15 --app-mask 15 --src 1 --tdiv 1e-5 --capture peak:4
+--mask 1 --app-mask 1 --src 1 --tdiv 1e-5 --depth 70312 --sample-rate 625000000 --all
+--mask 1 --app-mask 1 --src 1 --tdiv 5e-4 --depth 70312 --sample-rate 12500000 --all
+--mask 15 --app-mask 15 --src 1 --tdiv 1e-4 --depth 70312 --sample-rate 62500000 --all
+--mask 1 --app-mask 1 --src 1 --tdiv 1e-2 --depth 56256 --sample-rate 500000 --all

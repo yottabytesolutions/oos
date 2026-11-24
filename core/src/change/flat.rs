@@ -2,6 +2,8 @@
 
 use super::storage::refresh;
 use super::{Classes as C, FieldDiff};
+#[cfg(test)]
+use crate::model::AutoAcquisition;
 use crate::model::{Model, TrigMode, TrigType};
 
 macro_rules! classes {
@@ -15,25 +17,32 @@ macro_rules! classes {
 }
 
 macro_rules! define_flat {
-    ($($(#[$attribute:meta])* $group:ident $module:ident {
-        $($index:literal $variant:ident($field:ident: $ty:ty) $policy:ident [$($class:tt)*];)*
+    (nested { $($nested:ident: $nested_ty:ident { $($member:ident),* })* }
+    $($(#[$attribute:meta])* $group:ident $module:ident {
+        $($index:literal $variant:ident($($root:ident)? $([$parent:ident] $field:ident)? : $ty:ty)
+            $policy:ident [$($class:tt)*];)*
     })*) => {
         pub(super) fn fields(a: &Model, b: &Model, mut emit: impl FnMut(FieldDiff)) {
             let mut channels = None;
-            $($(let diff = FieldDiff::new($index, stringify!($field), a.$field != b.$field, classes!(a, b; $($class)*));
+            $($(let diff = FieldDiff::new(
+                $index,
+                stringify!($($root)?$($field)?),
+                a.$($root)?$($parent.$field)? != b.$($root)?$($parent.$field)?,
+                classes!(a, b; $($class)*)
+            );
                 if $index == 0 { channels = Some(diff); } else { emit(diff); }
             )*)*
             // The whole-channel slot has always followed the other whole fields.
             if let Some(diff) = channels { emit(diff); }
         }
         pub(super) fn refresh(a: &mut Model, b: &Model) {
-            $($(refresh!($policy, &mut a.$field, &b.$field);)*)*
+            $($(refresh!($policy, &mut a.$($root)?$($parent.$field)?, &b.$($root)?$($parent.$field)?);)*)*
         }
         #[cfg(test)]
-        pub(super) const ENTRIES: &[(usize, &str)] = &[$($(($index, stringify!($field)),)*)*];
+        pub(super) const ENTRIES: &[(usize, &str)] = &[$($(($index, stringify!($($root)?$($field)?)),)*)*];
         #[cfg(test)]
         pub(super) fn assert_exhaustive(m: &Model) {
-            let Model { $($($field: _,)*)* } = m;
+            let Model { $($($($root: _,)?)*)* $($nested: $nested_ty { $($member: _,)* },)* } = m;
         }
     };
 }

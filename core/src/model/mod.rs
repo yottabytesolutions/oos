@@ -22,6 +22,7 @@ use crate::config::Config;
 use crate::math::{MathOp, Window};
 use crate::protocols::Context;
 pub use crate::protocols::Proto;
+pub use acquisition::{AutoAcquisition, AutoDepth};
 pub use analysers::*;
 pub use bus::*;
 pub use channel::*;

@@ -35,7 +35,7 @@ also holds the parts listed here. Each keeps its own licence.
 | Mesa | 26.0.8 | MIT, and the licences its file lists | `libEGL`, `libGLESv2`, `libgbm`, `libgallium` of the GPU helper | `mesa` | `mesa_26.0.8.orig.tar.xz` |
 | libdrm | 2.4.131 (Ubuntu 2.4.131-1) | MIT | shared library of the GPU helper | `libdrm` | `libdrm_2.4.131.orig.tar.xz`, `libdrm_2.4.131-1.debian.tar.xz`, `.dsc` |
 | zlib | 1.3.1 (Ubuntu 1.3.dfsg+really1.3.1-1ubuntu3.2) | Zlib | shared library of the GPU helper | `zlib` | `zlib_1.3.dfsg+really1.3.1.orig.tar.gz`, `…-1ubuntu3.2.debian.tar.xz`, `.dsc` |
-| e2fsprogs (`e2fsck`) | 1.47.2 | GPL-2.0-only; its libraries LGPL-2.0-only, BSD-3-Clause and MIT, as its notice says | `/bin/e2fsck`, static | `e2fsck`, `GPL-2.0.txt` | `e2fsprogs-1.47.2.tar.xz` |
+| e2fsprogs (`e2fsck`, `tune2fs`) | 1.47.2 | GPL-2.0-only; its libraries LGPL-2.0-only, BSD-3-Clause and MIT, as its notice says | `/bin/e2fsck`, `/bin/tune2fs`, static | `e2fsck` (shared notice), `GPL-2.0.txt` | `e2fsprogs-1.47.2.tar.xz` |
 | kexec-tools | 2.0.32 | GPL-2.0-only | `/bin/kexec`, static | `kexec-tools` | `kexec-tools-2.0.32.tar.xz` |
 | wpa_supplicant (`wpa_supplicant`, `wpa_cli`) | 2.11 | BSD-3-Clause | `/bin`, static | `wpa_supplicant` | `wpa_supplicant-2.11.tar.gz` |
 | libnl | 3.11.0 (Alpine `libnl3-static` 3.11.0-r0) | LGPL-2.1-or-later | linked into `wpa_supplicant` and `wpa_cli` | `LGPL-2.1.txt` | `libnl-3.11.0.tar.gz`, `libnl3-musl.patch` (Alpine's one patch) |
@@ -44,7 +44,7 @@ also holds the parts listed here. Each keeps its own licence.
 | libnftnl | 1.2.9 | GPL-2.0-or-later | linked into `nft` | `GPL-2.0.txt` | `libnftnl-1.2.9.tar.xz` |
 | Dropbear (`dropbear`, `dropbearkey`, `scp`) | 2026.94 | MIT, and the licences of its parts its file lists | `/bin/dropbearmulti`, static | `dropbear` | `dropbear-2026.94.tar.bz2` |
 | OpenSSH (`sftp-server` only) | 10.6p2 | BSD licences, as its file lists | `/bin/sftp-server`, static | `openssh-sftp-server` | `openssh-10.6p2.tar.gz` |
-| musl | the one of Alpine 3.22 (C programs) and of Rust's musl target (Rust programs) | MIT | linked into `e2fsck`, `kexec`, `wpa_supplicant`, `wpa_cli`, `nft`, `dropbearmulti`, `sftp-server`, `oos-ui`, `oos-fpgad`, `oos-update` | `musl.txt` | not required |
+| musl | the one of Alpine 3.22 (C programs) and of Rust's musl target (Rust programs) | MIT | linked into `e2fsck`, `tune2fs`, `kexec`, `wpa_supplicant`, `wpa_cli`, `nft`, `dropbearmulti`, `sftp-server`, `oos-ui`, `oos-fpgad`, `oos-update` | `musl.txt` | not required |
 | Rust standard library | the toolchain of the build | MIT OR Apache-2.0; parts under other permissive licences | linked into `oos-ui`, `oos-fpgad`, `oos-update` | `rust.txt`, `Apache-2.0.txt` | not required |
 | `libc` crate | as in `ui/Cargo.lock` | MIT OR Apache-2.0 | linked into `oos-ui`, `oos-fpgad`, `oos-update` | `rust.txt`, `Apache-2.0.txt` | not required |
 | Roboto (roboto-classic) | as in `ui/tools/fonts/` | Apache-2.0 | its glyphs, drawn into `oos-ui` | `Apache-2.0.txt` ([ui/tools/fonts/LICENSE-Roboto.txt](ui/tools/fonts/LICENSE-Roboto.txt)) | not required |

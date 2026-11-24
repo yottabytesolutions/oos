@@ -40,7 +40,7 @@ class ProtectedStorageTests(unittest.TestCase):
     def test_shell_raw_writes_and_formatters_are_rejected(self):
         for text in ['dd if=image of=$dev', 'dd of="/dev/mmcblk0p4"',
                      'cat image > /dev/mtd0', 'cat image > "$dev"', 'mke2fs -L oosdata $P',
-                     'e2fsck -p $P', 'flash_erase /dev/mtd0 0 0']:
+                     'e2fsck -p $P', 'tune2fs -j $P', 'flash_erase /dev/mtd0 0 0']:
             self.assertTrue(guard.violations('rootfs/initramfs/bin/raw', text), text)
         self.assertFalse(guard.violations('tools/read.sh', 'dd if=/dev/mmcblk0 bs=512 count=1'))
         self.assertFalse(guard.violations('tools/gel-sim.sh', 'dd of=/w/card bs=512'))

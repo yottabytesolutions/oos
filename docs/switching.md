@@ -3,6 +3,8 @@
 Draft outline for the unit round. The two forks share the card layout and the package format. Their signing
 trust is separate.
 
+Upstream sees the shared `/oos` files on an ext3-compatible filesystem when this fork has enabled the journal.
+
 ## Upstream to this fork
 
 1. Verify the labelled bridge against the authenticated release `SHA256SUMS`.

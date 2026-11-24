@@ -301,29 +301,43 @@ its write. The updater reads the card to verify "already holds", so an interrupt
 
 ### Data area after an unclean shutdown
 
-Before mounting `/oos`, startup copies its 16 MiB to a regular file. A completely zero area is formatted as ext2.
-For an existing ext filesystem, startup tries `e2fsck -p`, then judges the copy with `e2fsck -fn`. If verification
-fails, startup runs `e2fsck -fy` and verifies again. If the primary superblock lost its signature, startup looks for
-a backup at a block group location consistent with its geometry and runs `e2fsck -fy -b` using that backup. The
-checked writer writes, syncs and reads back only changed sectors after a clean verification. It writes the
-superblock and group descriptor copies after the other sectors, with the primary superblock last. A foreign
-file system or failed final verification leaves the original bytes in place.
+Before mounting `/oos`, startup copies its 16 MiB to a regular file. For a completely zero area, the bundled BusyBox
+`mke2fs` creates ext2 on scratch, then `tune2fs` adds a 1 MiB metadata journal before the first write to the card.
+Startup syncs a first-format intent, writes the backup superblocks and descriptors early, and clears the intent
+after the primary superblock is durable. If interrupted before the primary lands, startup repeats the format.
 
-The panel reports a repair and the startup log gives the number of 512-byte sectors rewritten. Startup removes
-inode-numbered entries in `lost+found` only when their contents match a recognized state or settings format and
-an identical copy is already available under its live pathname. It keeps and counts the other entries. The checker
-cannot recover the original name of an unattached inode, so a distinct recovered setup or incomplete write stays
-available for inspection.
+For an existing area with a dirty journal, startup replays committed transactions on scratch before checking the
+filesystem. A read-only check skips replay and can see damage that a committed transaction already resolves.
+Startup uses `e2fsck -y -E journal_only` if the primary recovery flag is clear but the journal still has
+pending transactions. After replay it tries `e2fsck -p`, then uses `e2fsck -fn` to decide whether to run
+`e2fsck -fy`. If the primary lost its signature, startup uses a geometry-matched backup with `e2fsck -fy -b`,
+which replays a pending journal before repairing. The final read-only check must pass. A foreign filesystem
+or failed verification leaves the original bytes in place.
+
+For repair, replay and conversion, the checked writer syncs and reads back changed ordinary sectors first
+and superblock and group descriptor copies next. Once the replayed home blocks are durable, the writer empties
+the journal. It writes the primary superblock last, ending with the sector containing the feature flags.
+
+Startup adds only the ext3-compatible `has_journal` feature to a checked ext2 area. With 1 KiB blocks, the
+journal costs 1 MiB plus five 1 KiB indirect blocks. The initramfs starts `oos-ui` as root, so it can use
+the ext reserved blocks. Startup keeps ext2 and logs the skip if conversion would leave less than 1 MiB
+available after reserved blocks. The forced read-only check still detects inconsistent metadata if a conversion
+stops before the feature flag is written. `oos-update status` reports the flag.
+Repair, conversion and replay have been exercised on synthetic host images and await hardware verification.
+See [ADR 0039](adr/0039-data-journal.md).
+
+The panel reports a repair and warns that recent changes may be lost when the checker resets a corrupt
+journal. When the repair only undoes writes that match the retried conversion, startup logs the restart.
+The startup log gives the number of 512-byte sectors rewritten. Startup removes inode-numbered entries in
+`lost+found` only when their contents match a recognized state or settings format and an identical copy is
+already available under its live pathname. It keeps and counts the other entries. The checker cannot recover
+the original name of an unattached inode, so a distinct recovered setup or incomplete write stays available
+for inspection.
 
 On failure the panel says that saved settings and the calibration copy are unavailable and network identity is
 temporary for this start. When rcS confirmed stock selection, power-cycling starts stock Android. If selection
 could not be confirmed, the notice gives the `oos-oneshot` command and asks the operator to power-cycle once it
 succeeds. The panel asks the operator to save `/tmp/oos-data.log` and contact support before changing the card.
-
-The format is still ext2. A metadata journal would likely have kept the directory and counters consistent for the
-observed interrupted rename, assuming the card honored flushes. A migration would need a verified backup, an offline
-conversion or restore with enough space for the journal, checked write-back and power-cut tests of forward and
-rollback boots. The recovery path is host-tested and awaits unit validation.
 
 ## Package `.oosupd`
 

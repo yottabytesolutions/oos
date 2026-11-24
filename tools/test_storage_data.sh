@@ -1,7 +1,7 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-2.0-or-later
-# Exercise first-boot formatting and later repair with the image's BusyBox and standalone e2fsck.
-# Requires the initramfs builder, rootfs/out/e2fsck and a debug ARM oos-update build.
+# Exercise first-boot formatting and repeat startup with the exact filesystem tools in the image.
+# Requires the initramfs builder, rootfs/build-fsck.sh outputs and a debug ARM oos-update build.
 set -eu
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 . "$root/tools/output.sh"
@@ -11,6 +11,7 @@ trap 'exit 1' HUP INT TERM
 image=$("$root/tools/build-env.sh" resolve initramfs)
 cp "$CARGO_TARGET_DIR/aarch64-unknown-linux-musl/debug/oos-update" "$w/oos-update"
 cp "$root/rootfs/out/e2fsck" "$w/e2fsck"
+cp "$root/rootfs/out/tune2fs" "$w/tune2fs"
 docker run --rm --pull=never --network=none --platform linux/arm64 "$image" cat /bin/busybox > "$w/busybox"
 chmod +x "$w/busybox"
 python3 - "$root" "$w" <<'PY'
@@ -23,12 +24,15 @@ board = boardconf.load()
 start = int(board['OOS_OOSDATA_LBA']) * 512
 size = int(board['OOS_OOSDATA_SECTORS']) * 512
 parm = int(board['OOS_PARM_LBA']) * 512
+boot = int(board['OOS_BOOT_LBA']) * 512
 work = Path(sys.argv[2])
 with (work / 'card').open('wb') as output:
     output.truncate(start + size + 512)
     output.seek(parm)
     output.write(b'PARM ' + board['OOS_PARM_MARKS'].encode()
                  + b' 0x00020000@0x0002c000(recovery) 0x00038000@0x0004c000(backup)')
+    output.seek(boot)
+    output.write(b'KRNL')
     output.seek(start - 512)
     output.write(bytes([91]) * 512)
     output.seek(start + size)
@@ -41,9 +45,12 @@ docker run --rm --pull=never --network=none --platform linux/arm64 -v "$w:/w" "$
     mkdir /tmp/storage-tools
     ln -s /w/busybox /tmp/storage-tools/mke2fs
     ln -s /w/e2fsck /tmp/storage-tools/e2fsck
+    ln -s /w/tune2fs /tmp/storage-tools/tune2fs
     export PATH=/tmp/storage-tools:$PATH
     /w/oos-update storage-data --card /w/card
     /w/oos-update storage-data --card /w/card
+    status=$(/w/oos-update status --quick --card /w/card)
+    printf "%s\n" "$status" | grep -Fx "data journal enabled"
 '
 python3 - "$root" "$w" <<'PY'
 import hashlib
@@ -60,6 +67,7 @@ with (work / 'card').open('rb') as source:
     data = source.read(size)
     assert data[1080:1082] == b'\x53\xef', 'missing ext superblock'
     assert data[1144:1160].rstrip(b'\0') == b'oosdata', 'missing data label'
+    assert [int.from_bytes(data[offset:offset + 4], 'little') for offset in (1116, 1120, 1124)] == [0x24, 2, 1]
     assert source.read() == bytes([92]) * 512, 'write beyond OOS data'
-print('storage-data: first-boot format and repeat repair passed; other areas unchanged')
+print('storage-data: first-boot journal, status and repeat check passed; other areas unchanged')
 PY

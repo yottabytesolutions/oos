@@ -64,6 +64,7 @@ def revision(root=None):
 # the native rootfs tools: their builder (rootfs/build-<builder>.sh) and their rootfs/deps.lock lines
 NATIVE_TOOLS = {
     "e2fsck": ("fsck", "e2fsprogs"),
+    "tune2fs": ("fsck", "e2fsprogs"),
     "kexec": ("kexec", "kexec-tools"),
     "wpa_supplicant": ("wlan-tools", "wpa_supplicant", "libnl", "libnl-musl-patch"),
     "wpa_cli": ("wlan-tools", "wpa_supplicant", "libnl", "libnl-musl-patch"),

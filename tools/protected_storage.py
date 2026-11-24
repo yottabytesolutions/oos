@@ -68,7 +68,7 @@ def violations(name, text):
                 bad.append(f'{number}: raw storage redirection')
             if re.search(r'\b(flash_erase|flashcp|nandwrite|mtd_debug)\b', line):
                 bad.append(f'{number}: raw flash command')
-            if re.search(r'\b(mke2fs|e2fsck|mkfs(?:\.\w+)?)\s+.*(?:\$(?:P|dev|DEV)\b|' + DEVICE + ')', line):
+            if re.search(r'\b(mke2fs|e2fsck|tune2fs|mkfs(?:\.\w+)?)\s+.*(?:\$(?:P|dev|DEV)\b|' + DEVICE + ')', line):
                 bad.append(f'{number}: filesystem tool on raw storage')
             if re.search(r'open\s*\(\s*"' + DEVICE + r'".*O_(WRONLY|RDWR)', line):
                 bad.append(f'{number}: raw C storage open')

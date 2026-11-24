@@ -117,7 +117,7 @@ class RootfsReceipts(unittest.TestCase):
         self.addCleanup(self.patch.stop)
 
     def test_rust_changes_preserve_all_rootfs_tools_and_real_inputs_invalidate(self):
-        artifacts = ('e2fsck', 'kexec', 'wpa_supplicant', 'wpa_cli', 'nft', 'dropbearmulti', 'sftp-server')
+        artifacts = ('e2fsck', 'tune2fs', 'kexec', 'wpa_supplicant', 'wpa_cli', 'nft', 'dropbearmulti', 'sftp-server')
         out = self.root / 'rootfs/out'
         out.mkdir()
         for name in artifacts:
@@ -129,7 +129,7 @@ class RootfsReceipts(unittest.TestCase):
                 output.stamp(binary, before)
                 (self.root / 'source.rs').write_text('unrelated Rust edit')
                 output.verify(binary)
-        cases = [('build-fsck.sh', 'e2fsck'), ('build-kexec.sh', 'kexec'),
+        cases = [('build-fsck.sh', 'e2fsck'), ('build-fsck.sh', 'tune2fs'), ('build-kexec.sh', 'kexec'),
                  ('build-wlan-tools.sh', 'wpa_supplicant'), ('deps.sh', 'nft'),
                  ('deps.lock', 'dropbearmulti'), ('build-sftp-server.sh', 'sftp-server')]
         for filename, artifact in cases:
@@ -156,7 +156,7 @@ class RootfsReceipts(unittest.TestCase):
         out = self.root / 'rootfs/out'
         out.mkdir()
         with patch.object(output, 'revision', side_effect=AssertionError('whole tree used')):
-            for name in ('e2fsck', 'kexec', 'wpa_supplicant', 'wpa_cli', 'nft', 'dropbearmulti', 'sftp-server'):
+            for name in ('e2fsck', 'tune2fs', 'kexec', 'wpa_supplicant', 'wpa_cli', 'nft', 'dropbearmulti', 'sftp-server'):
                 binary = out / name
                 binary.write_bytes(b'executable')
                 output.stamp(binary, output.source_identity(binary))

@@ -63,3 +63,4 @@ ADR paths across the repository. The `links` step also checks Markdown links and
 | [0036](0036-threads-and-channels.md) | Threads share named cells and bounded channels | code | target: M5 and F3 |
 | [0037](0037-ports.md) | Ports cover the IO the step depends on | code | target: M16 and IO-port follow-up in docs/architecture/migration.md#adr-baseline-follow-ups |
 | [0038](0038-menus-and-parser.md) | Menus are data and the SCPI parser comes from one table | code | target: M5, M15, M17 |
+| [0039](0039-data-journal.md) | Journal the shared data area | system | in force |

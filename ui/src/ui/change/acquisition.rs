@@ -183,7 +183,6 @@ fn stage(
     g.queue.retain(|f| current(f, id));
     let removed = (before - g.queue.len()) as u64;
     crate::drawpipe::Counters::add(&crate::drawpipe::counters().losses.ui_publish, removed);
-    crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, removed);
 }
 
 fn segment_quota(ui: &Ui, g: &mut crate::board::Shared, id: Identity) {

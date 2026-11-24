@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::{model::*, sparse::Interp, wave::Phosphor};
-use std::sync::atomic::Ordering;
 
 #[test]
 #[ignore = "host Batch picture baseline: release, OOS_PERF_TESTS=1, one test thread"]
@@ -90,7 +89,8 @@ fn completed_deposits_rejected_by_key_or_epoch_enter_distinct_record_buckets() {
             }),
             "{text}"
         );
-        assert_eq!(counters.losses.pipe.load(Ordering::Relaxed), if epoch { 6 } else { 0 });
+        let stale_pipe = if epoch { 6 } else { 0 };
+        assert!(counters.snapshot().legacy_losses_text().contains(&format!(" stale_pipe={stale_pipe} ")));
         host::barrier(&pipe);
         assert_eq!(pipe.accept(&mut ph, &mut true, &mut [0; 4], &mut (0.0, 0.0)).frames, 1);
     }

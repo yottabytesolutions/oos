@@ -11,7 +11,6 @@ use std::sync::OnceLock;
 pub struct Counters {
     pub acquired: AtomicU64,
     pub used: AtomicU64,
-    pub dropped: AtomicU64,
     /// frames whose cheap measurements went into the statistics (framestats.rs)
     pub measured: AtomicU64,
     pub deposited: AtomicU64,
@@ -41,7 +40,7 @@ pub struct Losses {
     pub worker_push: AtomicU64,
     pub ui_publish: AtomicU64,
     pub queue_pop: AtomicU64,
-    pub pipe: AtomicU64,
+    stale_batch: AtomicU64,
     pub overflow: AtomicU64,
     pub(super) unexpected_full: AtomicU64,
     pub(super) unexpected_busy: AtomicU64,
@@ -49,8 +48,26 @@ pub struct Losses {
     pub folds: AtomicU64,
     /// frames looked at by the header log in its `off` mode (`board::dho::switches::HeaderProbe`), not a loss
     pub probed: AtomicU64,
-    source: [AtomicU64; Lost::ALL.len()],
-    rejected: [AtomicU64; Rejection::ALL.len()],
+    source: SourceLosses,
+    rejected: [AtomicU64; 3],
+}
+
+#[derive(Default)]
+struct SourceLosses {
+    other: [AtomicU64; Lost::ALL.len()],
+    // Some sites for the same reason (e.g. a short read) also contribute to legacy dropped.
+    dropped: [AtomicU64; Lost::ALL.len()],
+}
+
+impl SourceLosses {
+    fn counts(&self) -> ([u64; Lost::ALL.len()], u64) {
+        let dropped = self.dropped.each_ref().map(load);
+        let mut counts = self.other.each_ref().map(load);
+        for (count, dropped) in counts.iter_mut().zip(dropped) {
+            *count = count.wrapping_add(dropped);
+        }
+        (counts, sum(dropped))
+    }
 }
 
 #[derive(Default)]
@@ -101,27 +118,29 @@ impl Lost {
 }
 
 #[derive(Clone, Copy)]
-pub(super) enum Rejection {
-    StaleKey,
+enum Rejection {
+    Mapping,
+    Generation,
     Epoch,
 }
 impl Rejection {
-    const ALL: [Self; 2] = [Self::StaleKey, Self::Epoch];
-
-    fn label(self) -> &'static str {
-        match self {
-            Self::StaleKey => "stale_key",
-            Self::Epoch => "epoch",
-        }
-    }
-
-    pub(super) fn between(a: Option<oos_core::change::Identity>, b: Option<oos_core::change::Identity>) -> Self {
+    fn between(a: Option<oos_core::change::Identity>, b: Option<oos_core::change::Identity>) -> Self {
         if a.map(|id| id.epoch()) != b.map(|id| id.epoch()) {
             Self::Epoch
+        } else if !super::same_pair(a, b) {
+            Self::Generation
         } else {
-            Self::StaleKey
+            Self::Mapping
         }
     }
+}
+
+fn load(value: &AtomicU64) -> u64 {
+    value.load(Ordering::Relaxed)
+}
+
+fn sum(values: impl IntoIterator<Item = u64>) -> u64 {
+    values.into_iter().fold(0, u64::wrapping_add)
 }
 
 impl Counters {
@@ -136,7 +155,7 @@ impl Counters {
     }
     /// (acquired, used, dropped)
     pub fn read(&self) -> (u64, u64, u64) {
-        (self.acquired.load(Ordering::Relaxed), self.used.load(Ordering::Relaxed), self.dropped.load(Ordering::Relaxed))
+        (load(&self.acquired), load(&self.used), self.losses.snapshot().dropped())
     }
     pub(super) fn publish(&self, progress: &crate::claim_timing::Progress, frames: u64) {
         if progress.measured > 0 {
@@ -151,15 +170,16 @@ impl Counters {
         if records == 0 || !self.diagnostics_enabled() {
             return 0;
         }
-        self.losses.source[reason as usize].fetch_add(records, Ordering::Relaxed).wrapping_add(records)
+        self.losses.source.other[reason as usize].fetch_add(records, Ordering::Relaxed).wrapping_add(records)
     }
     pub(crate) fn discard(&self, reason: Lost, records: u64) {
-        Self::add(&self.dropped, records);
-        self.lose(reason, records);
+        Self::add(&self.losses.source.dropped[reason as usize], records);
     }
-    pub(super) fn reject(&self, reason: Rejection, records: u64) {
-        if self.diagnostics_enabled() {
-            Self::add(&self.losses.rejected[reason as usize], records);
+    pub(super) fn reject_batch(&self, stale_identity: bool, records: u64) {
+        if stale_identity {
+            Self::add(&self.losses.stale_batch, records);
+        } else {
+            self.discard(Lost::Settings, records);
         }
     }
     pub(crate) fn reject_deposit(
@@ -168,11 +188,7 @@ impl Counters {
         current: Option<oos_core::change::Identity>,
         records: u64,
     ) {
-        if !super::same_pair(previous, current) {
-            Self::add(&self.losses.pipe, records);
-        }
-        self.reject(Rejection::between(previous, current), records);
-        Self::add(&self.dropped, records);
+        Self::add(&self.losses.rejected[Rejection::between(previous, current) as usize], records);
     }
     pub(crate) fn pipeline_text(&self, budget: std::time::Duration, step_missed: u64) -> String {
         let full = self.losses.unexpected_full.load(Ordering::Relaxed);
@@ -185,57 +201,128 @@ impl Counters {
         text
     }
 
-    fn source_losses(&self) -> [u64; Lost::ALL.len()] {
-        let n = |value: &AtomicU64| value.load(Ordering::Relaxed);
-        let mut source = self.losses.source.each_ref().map(n);
-        source[Lost::Settings as usize] +=
-            n(&self.losses.worker_push) + n(&self.losses.ui_publish) + n(&self.losses.queue_pop);
-        source
-    }
-
     #[cfg(any(target_os = "linux", test))]
     pub(crate) fn capture_counts(&self) -> (u64, u64) {
-        let n = |value: &AtomicU64| value.load(Ordering::Relaxed);
-        let mut lost = self.losses.source.each_ref().map(n);
+        let (mut lost, _) = self.losses.source.counts();
         lost[Lost::Settings as usize] = 0;
         lost[Lost::Superseded as usize] = 0;
         lost[Lost::Frame0 as usize] = 0; // The first read slot is deliberately excluded.
-        (n(&self.shown), lost.into_iter().sum::<u64>() + n(&self.losses.overflow))
+        (load(&self.shown), sum(lost).wrapping_add(load(&self.losses.overflow)))
     }
 
-    pub(crate) fn records_text(&self) -> String {
-        let n = |a: &AtomicU64| a.load(Ordering::Relaxed);
-        let mut text =
-            format!(" records read={} deposited={} shown={}", n(&self.acquired), n(&self.deposited), n(&self.shown));
+    pub(crate) fn snapshot(&self) -> RecordSnapshot {
         let handoff = &self.losses.record_handoff;
-        text.push_str(&format!(
-            " records.unexpected_queue={} records.sample_mismatch={}",
-            n(&handoff.unexpected_queue),
-            n(&handoff.sample_mismatch)
-        ));
-        #[cfg(feature = "private-picture-counts")]
-        text.push_str(&self.timing.picture_counts().text());
-        let (acquired, used, _) = self.read();
-        text.push_str(&format!(" not_used={}", acquired.saturating_sub(used)));
-        let source = self.source_losses();
-        for reason in Lost::ALL {
-            let count = source[reason as usize];
-            text.push_str(&format!(" lost.{}={count}", reason.label()));
+        RecordSnapshot {
+            acquired: load(&self.acquired),
+            used: load(&self.used),
+            measured: load(&self.measured),
+            deposited: load(&self.deposited),
+            shown: load(&self.shown),
+            handoff: [load(&handoff.unexpected_queue), load(&handoff.sample_mismatch)],
+            losses: self.losses.snapshot(),
+            #[cfg(feature = "private-picture-counts")]
+            picture_counts: self.timing.picture_counts().text(),
         }
-        text.push_str(&format!(" lost.queue_overflow={}", n(&self.losses.overflow)));
-        for reason in Rejection::ALL {
-            text.push_str(&format!(" rejected.{}={}", reason.label(), n(&self.losses.rejected[reason as usize])));
-        }
-        text
+    }
+
+    #[cfg(test)]
+    pub(crate) fn records_text(&self) -> String {
+        self.snapshot().records_text()
     }
 }
 
+struct LossSnapshot {
+    source: [u64; Lost::ALL.len()],
+    discarded: u64,
+    worker_push: u64,
+    ui_publish: u64,
+    queue_pop: u64,
+    stale_batch: u64,
+    overflow: u64,
+    folds: u64,
+    rejected: [u64; 3],
+}
+
 impl Losses {
-    pub fn text(&self) -> String {
-        let n = |a: &AtomicU64| a.load(Ordering::Relaxed);
+    fn snapshot(&self) -> LossSnapshot {
+        let (source, discarded) = self.source.counts();
+        LossSnapshot {
+            source,
+            discarded,
+            worker_push: load(&self.worker_push),
+            ui_publish: load(&self.ui_publish),
+            queue_pop: load(&self.queue_pop),
+            stale_batch: load(&self.stale_batch),
+            overflow: load(&self.overflow),
+            folds: load(&self.folds),
+            rejected: self.rejected.each_ref().map(load),
+        }
+    }
+}
+
+impl LossSnapshot {
+    fn stale_before_deposit(&self) -> u64 {
+        sum([self.worker_push, self.ui_publish, self.queue_pop, self.stale_batch])
+    }
+
+    fn dropped(&self) -> u64 {
+        sum(self.rejected).wrapping_add(sum([self.discarded, self.stale_before_deposit(), self.overflow]))
+    }
+
+    fn stale_pipe(&self) -> u64 {
+        sum([self.stale_batch, self.rejected[Rejection::Generation as usize], self.rejected[Rejection::Epoch as usize]])
+    }
+}
+
+/// One read of each raw record counter for both state response formats.
+pub(crate) struct RecordSnapshot {
+    acquired: u64,
+    used: u64,
+    measured: u64,
+    deposited: u64,
+    shown: u64,
+    handoff: [u64; 2],
+    losses: LossSnapshot,
+    #[cfg(feature = "private-picture-counts")]
+    picture_counts: String,
+}
+
+impl RecordSnapshot {
+    pub(crate) fn legacy_totals(&self) -> (u64, u64, u64, u64) {
+        (self.acquired, self.used, self.losses.dropped(), self.measured)
+    }
+
+    pub(crate) fn records_text(&self) -> String {
+        use std::fmt::Write;
+        let [unexpected_queue, sample_mismatch] = self.handoff;
+        let mut text = format!(
+            " records read={} deposited={} shown={} records.unexpected_queue={unexpected_queue} records.sample_mismatch={sample_mismatch}",
+            self.acquired, self.deposited, self.shown
+        );
+        #[cfg(feature = "private-picture-counts")]
+        text.push_str(&self.picture_counts);
+        let _ = write!(text, " not_used={}", self.acquired.saturating_sub(self.used));
+        let mut source = self.losses.source;
+        source[Lost::Settings as usize] =
+            source[Lost::Settings as usize].wrapping_add(self.losses.stale_before_deposit());
+        for (reason, count) in Lost::ALL.into_iter().zip(source) {
+            let _ = write!(text, " lost.{}={count}", reason.label());
+        }
+        let [mapping, generation, epoch] = self.losses.rejected;
+        let _ = write!(
+            text,
+            " lost.queue_overflow={} rejected.stale_key={} rejected.epoch={epoch}",
+            self.losses.overflow,
+            mapping.wrapping_add(generation)
+        );
+        text
+    }
+
+    pub(crate) fn legacy_losses_text(&self) -> String {
+        let LossSnapshot { worker_push, ui_publish, queue_pop, overflow, folds, .. } = &self.losses;
         format!(
-            " stale_worker_push={} stale_ui_publish={} stale_queue_pop={} stale_pipe={} queue_overflow={} fold_drops={}",
-            n(&self.worker_push), n(&self.ui_publish), n(&self.queue_pop), n(&self.pipe), n(&self.overflow), n(&self.folds)
+            " stale_worker_push={worker_push} stale_ui_publish={ui_publish} stale_queue_pop={queue_pop} stale_pipe={} queue_overflow={overflow} fold_drops={folds}",
+            self.losses.stale_pipe()
         )
     }
 }
@@ -252,8 +339,9 @@ mod tests {
             assert_eq!(counters.lose(reason, count), count);
             assert_eq!(counters.lose(reason, 1), count + 1);
         }
-        counters.reject(Rejection::StaleKey, 11);
-        counters.reject(Rejection::Epoch, 13);
+        assert_eq!(counters.read().2, 0, "selection buckets preserve the legacy dropped aggregate");
+        counters.reject_deposit(None, None, 11);
+        counters.reject_deposit(None, Some(Default::default()), 13);
         let text = counters.records_text();
         for (i, label) in
             ["settings", "frame0", "average", "error", "buffer", "unclaimed", "budget", "superseded", "frame1"]
@@ -263,6 +351,6 @@ mod tests {
             assert!(text.contains(&format!(" lost.{label}={} ", i + 2)), "{text}");
         }
         assert!(text.ends_with("rejected.stale_key=11 rejected.epoch=13"), "{text}");
-        assert_eq!(counters.read().2, 0, "selection buckets preserve the legacy dropped aggregate");
+        assert_eq!(counters.read().2, 24);
     }
 }

@@ -47,7 +47,7 @@ fn peak_backpressure_preserves_repeated_maximum_batches() {
         assert!(lock(&shared).queue.is_empty());
     }
     assert_eq!(crate::drawpipe::counters().losses.overflow.load(Relaxed), 0);
-    assert_eq!(crate::drawpipe::counters().dropped.load(Relaxed), 0);
+    assert_eq!(crate::drawpipe::counters().read().2, 0);
 }
 
 #[test]

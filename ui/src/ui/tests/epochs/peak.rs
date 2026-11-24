@@ -35,7 +35,7 @@ fn peak_burst_reaches_records_picture_measurements_and_history_across_steps() {
     assert!(ui.mstat[0].n > 0, "the existing measurement feed receives the retained records");
     let counters = crate::drawpipe::counters();
     assert_eq!(counters.losses.overflow.load(Relaxed), 0);
-    assert_eq!(counters.dropped.load(Relaxed), 0);
+    assert_eq!(counters.read().2, 0);
     ui.step(0.04);
     assert_eq!(ui.records, 720, "an empty step cannot duplicate a capture");
 }

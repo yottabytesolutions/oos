@@ -282,7 +282,6 @@ pub(super) fn current(g: &crate::board::Shared, f: &Frame) -> bool {
     }
     let counters = crate::drawpipe::counters();
     crate::drawpipe::Counters::add(&counters.losses.worker_push, 1);
-    crate::drawpipe::Counters::add(&counters.dropped, 1);
     false
 }
 

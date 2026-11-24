@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Device-local boot card mode, applied only after authenticating the package.
+//! Device-local boot card mode. Install applies it after package verification.
 
 use super::{card, fdt, hash, io, kexec, Card, Entry, Report, State};
 use std::path::Path;
@@ -83,9 +83,30 @@ pub fn patch_tree(blob: &[u8], mode: Mode) -> Result<Vec<u8>, String> {
 /// Replace the single-tree RSCE and recompute the stock loader's Android image id.
 pub fn image(image: &[u8], mode: Mode) -> Result<Vec<u8>, String> {
     let (kernel, ramdisk, second) = kexec::parts(image)?;
+    let Some(rsce) = patched_second(second, mode)? else { return Ok(image.to_vec()) };
+    let mut out = image[..2048].to_vec();
+    out[24..28].copy_from_slice(&(rsce.len() as u32).to_le_bytes());
+    let id = card::loader_id(&out, kernel, ramdisk, &rsce);
+    out[576..596].copy_from_slice(&id);
+    for section in [kernel, ramdisk, &rsce] {
+        out.extend_from_slice(section);
+        out.resize(out.len().div_ceil(2048) * 2048, 0);
+    }
+    card::check_image(&out)?;
+    Ok(out)
+}
+
+/// The loader ID after applying the same SDR104 change as install, without copying the image.
+pub(super) fn sdr104_loader_id(image: &[u8]) -> Option<[u8; 20]> {
+    let (kernel, ramdisk, second) = kexec::parts(image).ok()?;
+    let rsce = patched_second(second, Mode::Sdr104).ok()??;
+    Some(card::loader_id(image, kernel, ramdisk, &rsce))
+}
+
+fn patched_second(second: &[u8], mode: Mode) -> Result<Option<Vec<u8>>, String> {
     // Older HS packages need no FDT edits. An SDR104 request always requires a patchable tree.
     if mode == Mode::Hs && !second.starts_with(b"RSCE") {
-        return Ok(image.to_vec());
+        return Ok(None);
     }
     let original = fdt::rsce_file(second, fdt::TREE)?;
     if mode == Mode::Hs {
@@ -93,12 +114,12 @@ pub fn image(image: &[u8], mode: Mode) -> Result<Vec<u8>, String> {
         let enabled = find_mut(&mut tree.root, "mmc@fe320000")
             .is_some_and(|sd| sd.prop("sd-uhs-sdr50").is_some() || sd.prop("sd-uhs-sdr104").is_some());
         if !enabled {
-            return Ok(image.to_vec());
+            return Ok(None);
         }
     }
     let dtb = patch_tree(original, mode)?;
     if dtb == original {
-        return Ok(image.to_vec());
+        return Ok(None);
     }
     if second.get(8..12) != Some(&[1, 1, 1, 0]) || second.get(12..16) != Some(&1u32.to_le_bytes()) {
         return Err("SD mode patch requires a single-tree RSCE container".into());
@@ -108,24 +129,7 @@ pub fn image(image: &[u8], mode: Mode) -> Result<Vec<u8>, String> {
     rsce[776..780].copy_from_slice(&(dtb.len() as u32).to_le_bytes());
     rsce.extend_from_slice(&dtb);
     rsce.resize(rsce.len().div_ceil(4) * 4, 0);
-    let mut out = image[..2048].to_vec();
-    out[24..28].copy_from_slice(&(rsce.len() as u32).to_le_bytes());
-    let id = hash::sha1(&[
-        kernel,
-        &(kernel.len() as u32).to_le_bytes(),
-        ramdisk,
-        &(ramdisk.len() as u32).to_le_bytes(),
-        &rsce,
-        &(rsce.len() as u32).to_le_bytes(),
-        &out[32..576],
-    ]);
-    out[576..596].copy_from_slice(&id);
-    for section in [kernel, ramdisk, &rsce] {
-        out.extend_from_slice(section);
-        out.resize(out.len().div_ceil(2048) * 2048, 0);
-    }
-    card::check_image(&out)?;
-    Ok(out)
+    Ok(Some(rsce))
 }
 
 /// Re-stage a confirmed active image for the next boot using the updater's verified write path.

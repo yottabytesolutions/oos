@@ -48,6 +48,80 @@ fn set_mode(f: &Fake, mode: &str) {
     std::fs::write(f.dir.join("oos/system.conf"), format!("# Device\nsd.mode = {}\n", mode)).unwrap();
 }
 
+/// A signed install applies SDR104. GEL then puts this package's default image back in recovery.
+fn gel_rewrite(name: &str, stamp: &str) -> (Fake, Vec<u8>) {
+    let f = Fake::new(name, Some(1));
+    std::fs::create_dir(f.dir.join("oos")).unwrap();
+    set_mode(&f, "sdr104");
+    let mut tree = fdt::Fdt::parse(&base_tree()).unwrap();
+    // Fill the last page of the default image so the SDR104 properties add a page.
+    tree.root.set("padding", &[]);
+    let padding = (1024 - tree.to_bytes().len()) / 4 * 4;
+    tree.root.set("padding", &vec![0; padding]);
+    let stamped = bootimg_build(2, stamp);
+    let ramdisk = kexec::parts(&stamped).unwrap().1.to_vec();
+    let default = bootimg_parts(2, ramdisk, rsce(&tree.to_bytes()));
+    let package = pkg::build(&SEED, KX_BUILD, "test", &default).unwrap();
+    assert!(install_direct(&mut f.card(), &f.state(), &package, &[pk()], &RUN).unwrap().written);
+    let uhs = f.region(Region::Recovery);
+    assert_ne!(check_image(&default).unwrap().id, check_image(&uhs).unwrap().id);
+    assert_ne!(default.len(), uhs.len());
+    (f, default)
+}
+
+#[test]
+fn gel_reinstall_retracks_the_default_tree_and_keeps_rollback() {
+    let (f, default) = gel_rewrite("gel-same-build", KX_BUILD);
+    assert_eq!(boot_started(&f.state(), Some(KX_BUILD)).unwrap(), Boot::Trial(1));
+    assert!(confirm_running(&f.state(), None, Some(KX_BUILD)).unwrap());
+    let mut expected = f.st();
+    f.poke(RECOVERY_LBA, &default);
+
+    let mut card = f.card();
+    let reason = reconcile_recovery(&mut card, &f.state()).unwrap().unwrap();
+    assert_eq!(reason, format!("recovery image for build {} was rewritten by an installer", short(KX_BUILD)));
+    let entry = Entry { build: KX_BUILD.into(), sha256: hash::sha256(&default), len: default.len() as u64 };
+    expected.track_recovery(entry, check_image(&default).unwrap().id);
+    expected.event = reason;
+    assert_eq!(f.st(), expected);
+    assert_eq!(f.region(Region::Recovery), default);
+    assert_eq!(f.region(Region::Slot), bootimg(1));
+    assert_eq!(&f.magic(), b"OOSK");
+    assert_eq!(reconcile_recovery(&mut card, &f.state()).unwrap(), None);
+    assert_eq!(f.st(), expected);
+}
+
+#[test]
+fn gel_reinstall_with_a_different_image_stamp_ends_tracking() {
+    // Even an image that reproduces the saved SDR104 ID must name the tracked build in its own initramfs.
+    let (f, default) = gel_rewrite("gel-different-stamp", "20261101-000000 kernel fixture");
+    assert_eq!(boot_started(&f.state(), Some(KX_BUILD)).unwrap(), Boot::Trial(1));
+    assert!(confirm_running(&f.state(), None, Some(KX_BUILD)).unwrap());
+    f.poke(RECOVERY_LBA, &default);
+
+    let reason = reconcile_recovery(&mut f.card(), &f.state()).unwrap().unwrap();
+    assert!(reason.starts_with("recovery changed since build "), "{reason}");
+    let state = f.st();
+    assert_eq!(state.untracked_reason(), Some(reason.as_str()));
+    assert!(state.current.is_none() && state.previous.is_none());
+    assert_eq!(f.region(Region::Slot), bootimg(1));
+}
+
+#[test]
+fn gel_reinstall_during_a_trial_leaves_the_state_alone() {
+    let (f, default) = gel_rewrite("gel-open-trial", KX_BUILD);
+    let pending = f.st();
+    assert_eq!(pending.trial, Some(0));
+    f.poke(RECOVERY_LBA, &default);
+
+    let mut card = f.card();
+    assert_eq!(reconcile_recovery(&mut card, &f.state()).unwrap(), None);
+    assert_eq!(card.read_bytes, 0);
+    assert_eq!(f.st(), pending);
+    assert_eq!(f.region(Region::Recovery), default);
+    assert_eq!(f.region(Region::Slot), bootimg(1));
+}
+
 #[test]
 fn unchanged_tree_merge_failure_explains_why_to_install_directly() {
     let f = active("same-tree-phandle");

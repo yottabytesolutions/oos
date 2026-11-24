@@ -9,6 +9,11 @@ pub use ifaddrs::ipv4_all;
 use std::io;
 use std::path::Path;
 
+/// Whether the data partition is mounted at /oos, by the text of /proc/mounts.
+pub(crate) fn oos_mounted(mounts: &str) -> bool {
+    mounts.lines().any(|line| line.split_whitespace().nth(1) == Some("/oos"))
+}
+
 /// Publish a complete file after syncing its staged contents, then sync the renamed entry.
 pub(crate) fn durable_replace(
     path: &Path,

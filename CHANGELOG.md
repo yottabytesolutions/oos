@@ -1,5 +1,26 @@
 # Changes
 
+## 0.2.1: Fixes from the first release
+
+Found while 0.2.0 was installed, switched and released on a DHO924S (2026-11-24). All of it is tested on the host.
+The release package was installed on that unit before publication.
+
+Fixed:
+
+- A raw SCPI client that disconnected while a program was pending could still have a buffered command run: the
+  reply that abandoned the pending query released the connection before the session closed. The session now
+  closes first. The test that covers it waits for the end of the stream instead of thread timing.
+- The first install from the stock system no longer prints "could not save vendor key cache" in
+  `oos-install.log`: the cache is written only when the data area is mounted.
+- After a GEL install of the build that is already installed, start-up keeps tracking that build and its
+  rollback entry. It reported `untracked (recovery changed since build ...)` before, because the image differs
+  in the boot card mode of its device tree.
+
+Changed:
+
+- The release builder's artifact tests run in the gate and in the pull request checks, with a built host
+  updater. They ran only in the release workflow before, so a defect in the builder reached `main`.
+
 ## 0.2.0: Hard fork
 
 This tree is now a hard fork of OOS with its own trunk, `main`

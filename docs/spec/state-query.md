@@ -81,7 +81,10 @@ disarm.v1 total=N unknown=N no_completed_record=N recorded=N dropped=N
 | `recorded` | Confirmed disarms whose post-pulse play-info word has DONE set. |
 | `dropped` | Retained batches discarded because their newest slot was inside the programmed capture range. This includes failed captures that needed no disarm. |
 
-The range rule is independent of the reported outcome. Older matrix reports can omit the section entirely.
+The range rule is independent of the reported outcome. Older replies carry extra fields for the
+retired keep experiment, including keep and drop subtotals, raw samples, and history tuples.
+Readers can use the five fields above from either form. Older matrix reports can also omit
+the section entirely.
 
 ## UI summary and graphics timing
 

@@ -111,7 +111,8 @@ that range stays valid. The source drops every in-range slot and clears pending 
 of the disarm status. STOP keeps the published capture when the retained slot is invalid.
 
 The stop pulse can clear DONE even after a record completes. The fill count cannot bound writes
-before STOPPED.
+before STOPPED. The [STOP and RUN findings](../backlog/stop-run.md#stopped-view-and-raw-capture)
+record the rationale for using the programmed range.
 
 A cancelled first-trigger wait disarms before the next hardware operation, including before hold.
 The acquisition thread spends about 10 ms on disarm once per cancel (settings, identity or route
@@ -145,4 +146,4 @@ Clear during an in-flight serial STOP read discards the stale record and acknowl
 Held roll and scan keep their initial STOP acknowledgement. Held segments poll every 5 ms without arming.
 The virtual-time tests cover the 10 ms disarm poll, serial STOP cancellation after 2 s without a trigger,
 RUN and SINGLE retry after a missing trigger, and the 2 ms completed-SINGLE poll until hold.
-[Wait traces](../../ui/src/board/dho/hw/acq/tests/bounds.rs)
+[Wait traces](../../ui/src/board/dho/hw/acq/tests/bounds.rs) · [STOP and RUN findings](../backlog/stop-run.md)

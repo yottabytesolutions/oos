@@ -36,6 +36,7 @@ hardware" (written down or coded, never run on a scope).
 ## Protocols
 
 - [acquisition-start.md](protocols/acquisition-start.md): RUN / SINGLE / STOP, auto trigger, frame fetch and re-arm.
+- [C2H DMA timeout](backlog/stop-run.md#c2h-dma-timeout): open acquisition read bound.
 - [adc-mode.md](protocols/adc-mode.md): what changes when the set of enabled channels changes.
 - [adc-spu-init.md](protocols/adc-spu-init.md): init of the RT8847IQ ADC and the acquisition unit (SPU), data lane alignment.
 - [afe-settings.md](protocols/afe-settings.md): AFE writes per setting: V/div, offset, coupling, bandwidth, invert.

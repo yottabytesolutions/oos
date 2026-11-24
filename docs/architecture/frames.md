@@ -188,7 +188,7 @@ readings continue during the hold.
 RUN publishes the new acquisition epoch before releasing the hold. RUN itself leaves the phosphor
 and window contents to the usual picture rules. Pending deposits and queued records are subject to
 the published identity. SCPI `*OPC?` tracks an armed SINGLE through its completion receipt. STOP and
-RUN have no operation tokens. See [STOP behavior](../fork/stop-exact.md).
+RUN have no operation tokens. See [STOP behavior](../fork/stop-exact.md) and the [open item](../backlog/stop-run.md).
 
 ## Performance estimates
 

@@ -46,6 +46,8 @@ pull request that fixes a mistake: what happened, then the rule.
 
 - The disarm simulator preserved DONE through the stop pulse, hiding a hardware assumption in ring replay. Exercise
   alternate register behavior in host tests and keep the default conservative until the unit confirms the behavior.
+- The first completed record can leave position at the first slot while the stop pulse clears DONE. Include the
+  pre-pulse words in replay checks and reproduce that exact case in the simulator.
 - Disarm trace assertions counted the new samples as poll iterations and assumed the preceding batch's record count
   was the successor's arm size. Check the poll and samples separately and use the actual programmed slots.
 - Concurrent golden runs in one build profile removed each other's scratch directories. Run the full golden

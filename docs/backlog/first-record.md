@@ -28,23 +28,24 @@ publication outcomes at dispatch so a helper-level match cannot hide a change in
 
 The [host comparison](../../ui/src/board/dho/hw/acq/tests/record_selection.rs) runs the same DMA bytes and
 armed settings through both dispatch requests. It observes the record queue, worker intake, composed picture,
-newest waveform and loss counters. The tests characterize current behavior. The policy below is a proposal.
+newest waveform and loss counters. Empty handoff suppression and average readiness are implemented. The shared
+selection policy below is a proposal.
 For raw substitution the fixture injects a separately decoded waveform at the readout boundary. The host
 fixtures establish selection and accounting. Hardware freshness and comparator equivalence still need unit
 evidence.
 
-### Current divergences and defects
+### Host outcomes and remaining divergences
 
 Slots are zero-based. Ranges are half-open. A retained raw replacement uses the sequence of its DMA slot.
 
 | Host case | Decoded record path | Deposit request | Which outcome serves the user |
 |---|---|---|---|
-| Two normal records, frame 1 off edge, drop | No output. One frame 0 and one frame 1 loss. | Submits empty `1..1` with no newest. Same losses and no picture. | Complete at the source. Both records already have a loss reason, and empty work produces no waveform. The same divergence occurs when a short buffer leaves two full slots and when frame 1 is deep. |
-| Ready hardware average, two records, off edge, drop | Loses the averaged result. One average and one frame 1 loss. | Same outcome via record fallback. | Publish the ready result. A composite waveform can smear or move the crossing even when its input triggers were valid. With four records current selection publishes the newest average and counts three average losses. |
+| Two normal records, frame 1 off edge, drop | No output. One frame 0 and one frame 1 loss. | No submission. Same losses and no picture. | Both records already have a loss reason. The same no-submission rule applies when a short buffer leaves two full slots or when frame 1 is deep. |
+| Ready hardware average, two records, off edge, drop | Publishes the newest average. One average loss. | Same outcome via record fallback. | A composite waveform can smear or move the crossing even when its input triggers were valid. Four records still produce the newest average and three average losses. |
 | Deep interior frame 1, off edge, drop | Keeps `2..3`. One frame 0 and one frame 1 loss. | Keeps `1..3`. Only frame 0 is lost because the depth exceeds 100,000 points. | Unknown, needs the unit. At depths on both sides of the cutoff, capture a trigger-synchronous signal with identifiable epochs and compare slot stamps, the local edge and known-fresh sample windows. A bounded probe can remove the CPU reason for a depth cutoff. |
 | Frame 1 crosses only before ADC core correction, drop | Keeps `2..3` with correction enabled. Lacks a crossing on the resulting waveform. | Keeps `1..3` with correction enabled. Finds the crossing on the DMA codes before correction. | Unknown, needs the unit. Sweep a reference edge across the trigger level with cores on and off. Compare the external reference and the FPGA trigger marker against the same lane's raw and corrected crossings, including a known-fresh and known-stale slot. |
 | Two records, DMA frame 1 off edge, separate raw newest on edge | Rejects the slot before substitution. | Keeps slot 1 and taps its raw replacement. | Unknown, needs the unit. Read both representations of the same slot before any overlapping arm. Verify their trigger-relative sample windows and slot identity against a signal with a per-trigger marker. |
-| Two records, DMA frame 1 on edge, separate raw newest off edge | Taps the off-edge raw replacement of slot 1. | Rejects slot 1 and submits an empty range. | Unknown, needs the unit. In addition to the paired reads above, measure whether the separation is caused by raw replay alignment, the filtered trigger, or the slot being overwritten. Use the waveform carrying the proven slot and time alignment for both paths. |
+| Two records, DMA frame 1 on edge, separate raw newest off edge | Taps the off-edge raw replacement of slot 1. | Rejects slot 1 and makes no submission. | Unknown, needs the unit. In addition to the paired reads above, measure whether the separation is caused by raw replay alignment, the filtered trigger, or the slot being overwritten. Use the waveform carrying the proven slot and time alignment for both paths. |
 
 Both paths accept frame 1 when a high-frequency signal puts a crossing in every window. The test uses a
 periodic signal above 20 MHz. A crossing within 32 samples verifies local alignment for eligible records.
@@ -143,20 +144,18 @@ selection and final delivery, including pre-worker rejection and held publicatio
 slot earns no second record credit. Use the disjoint loss buckets for conservation and keep the established
 record-queue and deposit telemetry meanings.
 
-### User-visible changes after adoption
+### Remaining user-visible changes
 
-- Two off-edge records with frame-0 drop will finish at the source, with the same losses and no queued empty job.
-- A ready two-record hardware average will appear even if the averaged waveform lacks a local trigger edge.
 - Subject to the deep-slot comparison, the deposit path will reject off-edge interior frame 1 above 100,000 points and count one frame 1 loss.
 - Subject to the comparator comparison, a crossing present only before ADC core correction will keep frame 1 on the decoded path as well as the deposit path.
 - Subject to the reread comparison, both paths will keep slot 1 when its validated raw reread is on edge and reject it when that reread is off edge.
 
 ### Follow-up jobs
 
-1. Reuse the empty-range regression to specify zero worker submissions and a full tap refund. Ship the empty
-   result at the source with the same sequence consumption and loss totals.
-2. Add an acceptance test for the ready two-record average and keep the pending and four-record controls.
-   Publish by average progress, independent of frame-1 alignment.
+1. Done on host. An empty selection finishes at the source with zero worker submissions, a full tap refund and
+   the same sequence consumption and loss totals. Output-slot release still wakes the worker to publish a retained deposit.
+2. Done on host. Publish by average progress, independent of frame-1 alignment. The pending and four-record
+   controls still pass. Reconfiguration clears the accumulator, and the identity check charges obsolete results to settings.
 3. Test identical verdicts at threshold ties, window bounds, alternate trigger lanes, steps and pair layouts.
    Extract one bounded probe with byte and decoded adapters, preserving route behavior through explicit inputs.
 4. Test one decision and both consumers against the complete host matrix, held STOP, SINGLE, matcher exclusions

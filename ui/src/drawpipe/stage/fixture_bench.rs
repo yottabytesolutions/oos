@@ -23,7 +23,7 @@ struct Replay {
 
 impl Replay {
     fn new(fixture: &Fixture) -> Option<Self> {
-        let settings = fixture.view()?;
+        let settings = fixture.placement_view()?;
         let (m, size, interp, zoom) = settings.inputs();
         let (workers, prior_hits) = settings.scheduling();
         let id = oos_core::change::Identity::default();
@@ -112,18 +112,26 @@ impl Replay {
     }
 }
 
-fn run_fixture(fixture: &Fixture, options: &Options) {
-    if fixture.view().is_none() {
-        eprintln!("{}: no worker view; skipping benchmark", fixture.name());
-        return;
-    }
+/// Whether the fixture was measured; a skipped one says why on stderr.
+fn run_fixture(fixture: &Fixture, options: &Options) -> bool {
+    let Some(mut replay) = Replay::new(fixture) else {
+        return false;
+    };
     for pass in options.passes() {
-        let mut replay = Replay::new(fixture).expect("worker fixture has a frozen view");
         let channels = replay.view.m.ch.each_ref().map(|ch| ch.on);
         let samples = replay.run(&pass);
         pass.report(fixture.name(), replay.range.clone(), channels, &samples);
+        drop(replay);
+        replay = Replay::new(fixture).expect("a replayed fixture replays again");
     }
-    Replay::new(fixture).expect("worker fixture has a frozen view").verify_route(fixture);
+    replay.verify_route(fixture);
+    true
+}
+
+fn run_group(group: impl FnOnce(&mut dyn FnMut(&Fixture)), options: &Options) {
+    let mut measured = 0;
+    group(&mut |fixture| measured += usize::from(run_fixture(fixture, options)));
+    assert!(measured > 0, "the fixture group has no measurable fixture: no batch submitted records");
 }
 
 #[test]
@@ -132,7 +140,7 @@ fn raw_batch_stage_benchmark() {
     let options = Options::from_env();
     options.pin();
     println!();
-    for_each_fixture(&mut |fixture| run_fixture(fixture, &options));
+    run_group(for_each_fixture, &options);
 }
 
 #[test]
@@ -143,7 +151,9 @@ fn captured_fallback_counts() {
     let mut records = 0;
     let mut totals = BTreeMap::new();
     for_each_fixture(&mut |fixture| {
-        let mut replay = Replay::new(fixture).expect("capture has the worker view");
+        let Some(mut replay) = Replay::new(fixture) else {
+            return;
+        };
         let painted = replay.paint();
         assert_eq!(painted as usize, replay.range.len(), "{}", fixture.name());
         records += painted;
@@ -164,7 +174,9 @@ fn captured_fallback_counts() {
 #[ignore = "set OOS_FIXTURES to a captured short time-base group"]
 fn captured_interpolated_spans_match_the_legacy_screen_grid() {
     for_each_fixture(&mut |fixture| {
-        let replay = Replay::new(fixture).expect("capture has the worker view");
+        let Some(replay) = Replay::new(fixture) else {
+            return;
+        };
         let mut frame = Frame::default();
         let mut screen = std::array::from_fn(|_| Vec::new());
         let mut p = Prepared::reuse(&mut None, &replay.view, 0);
@@ -195,7 +207,9 @@ fn captured_interpolated_spans_match_the_legacy_screen_grid() {
 fn captured_screen_refinement_has_identical_bits_when_the_shared_search_reads_codes() {
     assert!(std::env::var_os("OOS_FIXTURES").is_some(), "set OOS_FIXTURES");
     for_each_fixture(&mut |fixture| {
-        let replay = Replay::new(fixture).expect("capture has the worker view");
+        let Some(replay) = Replay::new(fixture) else {
+            return;
+        };
         let mut scratch = Frame::default();
         let mut p = Prepared::reuse(&mut None, &replay.view, 0);
         let mut checked = 0;
@@ -302,6 +316,15 @@ pub(crate) fn verify_fixture(fixture: &Fixture, stages: &[(Stage, usize)]) {
         }
     }
     Replay::new(fixture).unwrap().verify_route(fixture);
+}
+
+pub(crate) fn assert_benchmark_skips(fixture: &Fixture) {
+    assert!(Replay::new(fixture).is_none(), "{}: replay setup", fixture.name());
+    assert!(!run_fixture(fixture, &Options::for_test(Stage::Place, 1)), "{}: benchmark", fixture.name());
+}
+
+pub(crate) fn benchmark_group(fixtures: &[&Fixture]) {
+    run_group(|each| fixtures.iter().for_each(|&fixture| each(fixture)), &Options::for_test(Stage::Place, 1));
 }
 
 fn compare_legacy_short_hull(

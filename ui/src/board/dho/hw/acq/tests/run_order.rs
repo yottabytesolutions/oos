@@ -140,6 +140,33 @@ fn settings_change_during_dma_accounts_for_old_records_before_intake() {
 }
 
 #[test]
+fn settings_change_during_average_dma_rejects_the_old_result() {
+    let result = twice(|| {
+        let _scope = Scope::new();
+        let out = HwShared::default();
+        let mut ui = headless(&out, false);
+        ui.m.acq = crate::model::AcqMode::Average;
+        ui.m.avg_hw = true;
+        ui.m.avg_count = 2;
+        change::settle(&mut ui);
+        let want = lock(&out).want.clone().unwrap();
+        assert_eq!(want.mode, Mode::Average { count: 2 });
+        let (mut io, trace) = sim::fixture(&want, out.clone(), (Run::Selection, 2, false), None);
+        let (mut source, started) = source(&out, &io);
+        source.switches.board.frame0_drop = true;
+        let shared = out.clone();
+        io.c2h.on_dma(move |trace| trace.events.extend(edit_level(&mut ui, &shared)));
+        capture(&mut source, &mut io);
+        snapshot(&out, &io, &trace, started)
+    });
+    assert!(result.queue.is_empty() && result.latest.is_none());
+    assert_eq!(result.counters.read, 2);
+    assert_eq!(result.counters.loss("lost.settings") + result.counters.loss("lost.average"), 2);
+    assert!(result.counters.loss("lost.settings") > 0);
+    assert_eq!(result.counters.loss("lost.frame1"), 0);
+}
+
+#[test]
 fn settings_change_during_overlapping_fill_cancels_old_dma_admission() {
     let result = twice(change_during_fill);
     let events = &result.events;

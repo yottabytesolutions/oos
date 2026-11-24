@@ -121,4 +121,4 @@ fn write_pattern(out: &mut String, c: usize, pattern: Pattern) {
 #[cfg(test)]
 mod load;
 #[cfg(test)]
-pub(crate) use load::Fixture;
+pub(crate) use load::{Fixture, PictureView};

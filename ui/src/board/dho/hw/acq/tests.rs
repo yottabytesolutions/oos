@@ -314,6 +314,13 @@ fn four_and_six_records_skip_zero_and_off_trigger_one() {
 }
 
 #[test]
+fn two_record_average_is_published_even_off_edge() {
+    let average = Settings { mode: Mode::Average { count: 2 }, ..settings() };
+    selected((2, 2), (false, false), average.clone(), &[Frame::average(2, 32770)], 1);
+    selected((2, 2), (false, true), average, &[Frame::average(2, 32770)], 1);
+}
+
+#[test]
 fn one_available_record_from_a_multi_record_batch_is_treated_as_a_singleton() {
     selected((4, 1), (false, false), settings(), &[], 0);
 }

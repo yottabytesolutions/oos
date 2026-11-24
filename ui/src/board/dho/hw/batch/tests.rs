@@ -7,6 +7,8 @@ use crate::board::{
 };
 use crate::{model::Model, sparse::Interp, wave::Phosphor};
 
+mod empty_batch;
+
 #[test]
 fn normal_lines_four_channel_admission_preserves_the_real_read_plans() {
     for staged in [false, true] {

@@ -1,5 +1,8 @@
-OOS replaces the software of a Rigol DHO800/DHO900 oscilloscope with a Linux 6.12 kernel and a new scope application
-written in Rust. It runs from the scope's own SD card, next to the stock system, and you can switch back at any time.
+This fork of OOS runs a Linux 6.12 kernel and a Rust oscilloscope application on Rigol DHO800/DHO900 scopes. It runs
+from the scope's SD card alongside the stock system.
+
+See [[Installation]], [[Switching between OOS versions]], [[Performance and reliability]] and
+[Known issues](https://github.com/yottabytesolutions/oos/blob/main/docs/known-issues.md).
 
 ![Two channels: a 10:1 probe on the calibration signal and the built-in generator](https://raw.githubusercontent.com/yottabytesolutions/oos/main/docs/images/channels.png)
 

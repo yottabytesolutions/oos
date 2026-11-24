@@ -7,6 +7,9 @@ hardware" (written down or coded, never run on a scope).
 ## System
 
 - [Known issues](known-issues.md) records measured limits and workarounds.
+- [Performance and reliability](https://github.com/yottabytesolutions/oos/wiki/Performance-and-reliability) records
+  the on-unit comparison and update evidence.
+- [Port notes](port-notes.md) describe reusable modules and the switching compatibility contract.
 - [Architecture](architecture/README.md): target layers, ownership and data flow.
 - [System](architecture/system.md): how the SD card, kernel, Rust crates and GUI fit together.
 - [development.md](development.md): the gate (`cargo xtask check`), what it enforces, the ratchets, hooks and CI.

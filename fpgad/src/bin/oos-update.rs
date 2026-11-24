@@ -7,6 +7,7 @@
 //!   oos-update status [--quick]            what recovery and the rollback slot hold, trial state, boot mode
 //!                                          (--quick: headers only, no SHA-256 over the images)
 //!   oos-update install FILE.oosupd [--execute] [--downgrade] [--force] [--any-model] [--no-kexec | --new-dt]
+//!   oos-update leave                     forget tracked builds before switching firmware
 //!                                          check the signature and the image (dry run without --execute), then start
 //!                                          the new image by kexec while recovery stays intact; that start
 //!                                          installs it (rollback slot, recovery, read back, OOS armed),
@@ -109,7 +110,9 @@ fn tell(msg: &str) {
 }
 
 fn notice(msg: &str) {
-    let _ = std::fs::write(NOTICE, format!("{}\n", msg));
+    if let Err(error) = std::fs::write(NOTICE, format!("{msg}\n")) {
+        tell(&format!("writing the update notice: {error}"));
+    }
     tell(msg);
 }
 
@@ -174,7 +177,9 @@ fn read_file(p: &str) -> Vec<u8> {
 fn main() {
     let a = Args::parse();
     match a.command() {
-        "status" => status(&a),
+        "status" => oos_update::startup::status(&a),
+        "leave" => oos_update::startup::leave(&a),
+        "boot" => oos_update::startup::boot(&a),
         "verify" => {
             let f = a.rest.get(1).unwrap_or_else(|| die("verify FILE"));
             let p = read_file(f);
@@ -213,35 +218,7 @@ fn main() {
                 Err(e) => die(&e),
             }
         }
-        "mode" => {
-            need_data(&a);
-            let p = state_path(&a);
-            match a.rest.get(1).map(String::as_str) {
-                // the choice counts from the next power-on: the boot selection follows at once
-                Some("persist") => {
-                    update::set_mode(&p, true).unwrap_or_else(|e| die(&e));
-                    if let Err(e) = update::arm_checked(&mut a.open_card(true).unwrap_or_else(|e| die(&e)), &p) {
-                        out!("not selected for the next power-on yet: {}", e);
-                    }
-                }
-                Some("oneshot") => {
-                    update::set_mode(&p, false).unwrap_or_else(|e| die(&e));
-                    a.open_card(true).unwrap_or_else(|e| die(&e)).disarm_oos().unwrap_or_else(|e| die(&e));
-                }
-                None => {}
-                Some(m) => die(&format!("mode '{}': oneshot or persist", m)),
-            }
-            let st = State::load(&p).unwrap_or_else(|e| die(&e.to_string()));
-            out!(
-                "mode {}",
-                if st.persist {
-                    "persist: OOS arms itself again after every confirmed start (an unconfirmed start -> stock next time)"
-                } else {
-                    "oneshot: the power-on after an OOS start boots stock (oos-boot-oos-again to stay)"
-                }
-            );
-        }
-        "boot" => boot(&a),
+        "mode" => oos_update::startup::mode(&a),
         "watch" => watch(&a),
         "keygen" => keygen(&a),
         "pack" => pack(&a),
@@ -269,7 +246,7 @@ fn install(a: &Args) {
         if a.flag("--new-dt") {
             out!("--new-dt: written directly; a kernel or device tree that hangs before rcS starts again at every power-on");
         }
-        match update::install_confirmed(&mut c, &sp, &p, &keys, &opt) {
+        match update::install_direct(&mut c, &sp, &p, &keys, &opt) {
             Ok(r) => {
                 r.lines.iter().for_each(|l| out!("{}", l));
                 if r.written && c.boot_magic().ok() == Some(*b"OOSK") {
@@ -282,11 +259,20 @@ fn install(a: &Args) {
     }
     let booted = std::fs::read(kexec::BOOTED_DT).ok();
     let running = update::running_build();
-    // another device tree can be tried with kexec-tools, from the tree the running kernel got
-    let running_tree = Path::new(kexec::TOOL).exists().then(|| std::fs::read(kexec::RUNNING_TREE).ok()).flatten();
-    let trees = kexec::BootTrees::new(booted.as_deref(), running.as_deref(), running_tree.as_deref());
+    let has_tool = Path::new(kexec::TOOL)
+        .try_exists()
+        .unwrap_or_else(|e| die(&format!("checking for kexec-tools ({}): {e}", kexec::TOOL)));
+    let running_tree = has_tool.then(|| {
+        std::fs::read(kexec::RUNNING_TREE)
+            .unwrap_or_else(|e| die(&format!("reading the running device tree ({}): {e}", kexec::RUNNING_TREE)))
+    });
+    let trees = kexec::BootTrees {
+        booted: booted.as_deref(),
+        running_build: running.as_deref(),
+        live: running_tree.as_deref(),
+    };
     match update::kexec_stage(&mut c, &sp, &p, &keys, &opt, trees) {
-        Err(e) if e.contains("device tree") => die(&format!(
+        Err(e) if e.contains("device tree") && !e.contains("--new-dt") => die(&format!(
             "{}. Try the image on a card you can take out; then --new-dt writes it directly, without the kexec trial start",
             e
         )),
@@ -406,7 +392,7 @@ fn start_kexec(sp: &Path, s: update::Staged) {
     if let Err(e) = loaded {
         undo(&e, None);
     }
-    let changed_tree = s.tree.is_some();
+    let supplied_tree = s.tree.is_some();
     drop(s);
     tell(&format!("build {short} loaded ({payload} bytes payload). Restarting into it by kexec."));
     // under the update lock: a write of the start-up watcher (a rollback, the persist arm) finishes first, then the
@@ -417,7 +403,7 @@ fn start_kexec(sp: &Path, s: update::Staged) {
     let q = quiesce();
     // the lock file is open for writing: /oos can only go read only without it
     drop(lock);
-    let jump = changed_tree.then(kexec::prepare_jump);
+    let jump = supplied_tree.then(kexec::prepare_jump);
     // the kernel does not sync or unmount on kexec
     unsafe { libc::sync() };
     if !std::process::Command::new("mount").args(["-o", "remount,ro", "/oos"]).status().is_ok_and(|x| x.success()) {
@@ -443,8 +429,9 @@ fn kexec_check(a: &Args) {
     let (k, rd, dt) = kexec::parts(img).unwrap_or_else(|e| die(&e));
     let key = keys.iter().find(|k| pkg::key_id(k) == h.manifest.key).unwrap_or_else(|| die("no key"));
     let flags = kexec::Flags::default();
-    let (source, initrd) = if kexec::announced_staged(&h.manifest) {
-        (kexec::Receive::Staged(flags), kexec::staged_initrd(rd, &p[..h.data_offset], key, dt))
+    let (source, initrd) = if kexec::use_staged(&h.manifest, key).unwrap_or_else(|e| die(&e)) {
+        let handoff = kexec::StagedInitrd { ramdisk: rd, header: &p[..h.data_offset], key, tree: dt };
+        (kexec::Receive::Staged(flags), kexec::staged_initrd(handoff))
     } else {
         (kexec::Receive::Legacy(flags), kexec::initrd(rd, &p, key, dt))
     };
@@ -597,135 +584,6 @@ fn restart() {
 #[cfg(not(target_os = "linux"))]
 fn restart() {
     tell("restart: on the unit only");
-}
-
-/// The device tree section of the image the loader started, for a later kexec start (`kexec::BOOTED_DT`): in an
-/// ordinary start `recovery` (nothing has written it yet), in a kexec start the tree the previous start passed on.
-fn keep_booted_tree(a: &Args, kexec_start: bool) {
-    let dt = if kexec_start {
-        std::fs::read(kexec::DT_FILE).ok()
-    } else {
-        // the header page and the tree only: no hashing of the whole image at every start
-        let mut c = a.open_card(false).unwrap_or_else(|e| die(&e));
-        let lba = card::Region::Recovery.lba();
-        c.read(lba, 2048).ok().and_then(|h| kexec::tree_at(&h)).and_then(|(off, len)| {
-            let first = off / card::SECTOR as usize;
-            let skip = off % card::SECTOR as usize;
-            let b = c
-                .read(lba + first as u64, (skip + len).div_ceil(card::SECTOR as usize) * card::SECTOR as usize)
-                .ok()?;
-            Some(b[skip..skip + len].to_vec())
-        })
-    };
-    match dt {
-        Some(d) => {
-            let _ = std::fs::write(kexec::BOOTED_DT, d);
-        }
-        None => tell("the device tree of this start is unknown: an update needs a power-cycle first or --new-dt"),
-    }
-}
-
-fn status(a: &Args) {
-    let mut c = a.open_card(false).unwrap_or_else(|e| die(&e));
-    let p = state_path(a);
-    let st = match State::load(&p) {
-        Ok(s) => s,
-        Err(e) => {
-            // not "no trial": the values below are defaults then
-            out!("state        UNREADABLE ({}): {}; is /oos mounted?", p.display(), e);
-            State::default()
-        }
-    };
-    match c.boot_magic() {
-        Ok(m) => out!(
-            "boot magic   {} ({})",
-            String::from_utf8_lossy(&m),
-            match &m {
-                b"OOSK" => "next power-on: OOS",
-                b"KRNL" => "next power-on: stock Android",
-                _ => "unexpected",
-            }
-        ),
-        Err(e) => out!("boot magic   unreadable: {}", e),
-    }
-    if let Err(e) = c.check_layout() {
-        out!("layout       {}", e);
-    }
-    oos_update::slot_status::show(&mut c, &st, a.flag("--quick"));
-    match st.trial {
-        Some(n) => out!("trial        on trial, {} start(s) without confirmation", n),
-        None => out!("trial        none"),
-    }
-    out!("mode         {}", if st.persist { "persist" } else { "oneshot" });
-    if !st.event.is_empty() {
-        out!("last event   {}", st.event);
-    }
-    if let Ok(b) = std::fs::read_to_string("/etc/oos-build") {
-        out!("running      {}", b.trim());
-    }
-    out!("trusted keys {}", update::trusted_keys().iter().map(|k| hex(&pkg::key_id(k))).collect::<Vec<_>>().join(", "));
-}
-
-fn boot(a: &Args) {
-    let p = state_path(a);
-    let word = kexec::receive(&kexec::running_cmdline());
-    let kx = word.filter(|source| matches!(source, kexec::Receive::Staged(_)) || Path::new(kexec::PACKAGE).exists());
-    keep_booted_tree(a, word.is_some());
-    if !p.parent().is_some_and(|d| d.exists()) {
-        if kx.is_some() {
-            notice(&messages::not_installed("/oos is not there"));
-        }
-        return; // no update state yet
-    }
-    match kx {
-        // not the trial start of anything: a failed install, or the install, whose trial begins at the next start
-        Some(source) => {
-            if oos_update::receive::finish(a, &p, source) {
-                restart_for_trial(a, &p);
-            }
-            return;
-        }
-        None if word.is_some() => {
-            let m = messages::not_installed("its package did not arrive");
-            let _ = update::kexec_clear(&p, &m);
-            notice(&m);
-            return;
-        }
-        None => {
-            // an ordinary start: the restart guard of a kexec start has done its job
-            let _ = std::fs::remove_file(restart_mark(&p));
-            match update::kexec_missed(&p, false) {
-                Ok(Some(m)) => notice(&m),
-                Ok(None) => {}
-                Err(e) => tell(&e),
-            }
-        }
-    }
-    let running = update::running_build();
-    match update::boot_started(&p, running.as_deref()) {
-        Ok(update::Boot::NoTrial) => {}
-        Ok(update::Boot::Trial(n)) => {
-            tell(&format!("build {} on trial (start {})", update::short(running.as_deref().unwrap_or("?")), n))
-        }
-        Ok(update::Boot::Dropped(m)) => tell(&m),
-        Ok(update::Boot::Rollback) => {
-            // on the panel: nothing else shows yet, and a power-cycle in this write is what must not happen
-            let _ = std::fs::write(
-                "/dev/tty1",
-                "\nUpdate not confirmed: restoring the previous build. Do not power off.\n",
-            );
-            let mut c = a.open_card(true).unwrap_or_else(|e| die(&e));
-            match update::rollback(&mut c, &p, "it started a second time without having been confirmed", true, None) {
-                Ok(r) => {
-                    r.lines.iter().for_each(|l| out!("{}", l));
-                    let st = State::load(&p).unwrap_or_default();
-                    notice(&messages::restore_result(&format!("Update {}", st.event), &r));
-                }
-                Err(e) => notice(&format!("Update on trial did not confirm, {}", messages::restore_failed(&e))),
-            }
-        }
-        Err(e) => tell(&e),
-    }
 }
 
 #[cfg(not(target_os = "linux"))]

@@ -3,7 +3,7 @@
 use super::{
     card::Region,
     hash::{hex, unhex},
-    io, lock, sd, short, Card, Entry, State, SLOT_WRITING,
+    io, lock, sd, short, Card, Entry, RecoveryTracking, State, SLOT_WRITING,
 };
 use std::path::Path;
 
@@ -38,6 +38,8 @@ impl State {
                 "current.build" => cur.0 = v.into(),
                 "current.sha256" => cur.1 = unhex(v).and_then(|b| b.try_into().ok()),
                 "current.len" => cur.2 = v.parse().unwrap_or(0),
+                "current.loader-id" => s.recovery.loader_id = unhex(v).and_then(|b| b.try_into().ok()),
+                "recovery.writing" => s.recovery.writing = v == "yes",
                 "previous.build" => prev.0 = v.into(),
                 "previous.sha256" => prev.1 = unhex(v).and_then(|b| b.try_into().ok()),
                 "previous.len" => prev.2 = v.parse().unwrap_or(0),
@@ -56,6 +58,7 @@ impl State {
                 "kexec" if !v.is_empty() => s.kexec = Some(v.into()),
                 "kexec.bytes" => s.kexec_payload = v.parse().ok(),
                 "event" => s.event = v.into(),
+                "untracked" if !v.is_empty() => s.recovery.untracked = Some(v.into()),
                 _ => {}
             }
         }
@@ -64,6 +67,10 @@ impl State {
         };
         s.current = entry(cur);
         s.previous = entry(prev);
+        // Older updates kept the retry condition in the event only.
+        if s.trial == Some(0) && s.current.as_ref().is_some_and(|e| s.event == writing_event(&e.build)) {
+            s.recovery.writing = true;
+        }
         if s.staged.is_some() {
             s.previous = None;
             s.slot_incomplete = true;
@@ -83,8 +90,14 @@ impl State {
                 t.push_str(&format!("{0}.build {1}\n{0}.sha256 {2}\n{0}.len {3}\n", n, e.build, hex(&e.sha256), e.len));
             }
         }
+        if let Some(id) = &self.recovery.loader_id {
+            t.push_str(&format!("current.loader-id {}\n", hex(id)));
+        }
+        if self.recovery.writing {
+            t.push_str("recovery.writing yes\n");
+        }
         if let Some(e) = &self.staged {
-            t.push_str(&format!("staged {} {} {}\n", e.build, hex(&e.sha256), e.len));
+            t.push_str(&format!("staged {} {} {}\n", e.build.replace('\n', " "), hex(&e.sha256), e.len));
         }
         if self.slot_incomplete {
             t.push_str("slot.incomplete yes\n");
@@ -108,7 +121,24 @@ impl State {
         if !self.event.is_empty() {
             t.push_str(&format!("event {}\n", self.event.replace('\n', " ")));
         }
+        if let Some(reason) = &self.recovery.untracked {
+            t.push_str(&format!("untracked {}\n", reason.replace('\n', " ")));
+        }
         t
+    }
+
+    /// Why the image in recovery is untracked, when the tracking was explicitly cleared.
+    pub fn untracked_reason(&self) -> Option<&str> {
+        self.recovery.untracked.as_deref()
+    }
+
+    pub(super) fn track_recovery(&mut self, entry: Entry, loader_id: [u8; 20]) {
+        self.current = Some(entry);
+        self.recovery = RecoveryTracking { loader_id: Some(loader_id), ..RecoveryTracking::default() };
+    }
+
+    pub(super) fn interrupted_recovery_write(&self) -> bool {
+        self.trial == Some(0) && self.current.is_some() && self.recovery.writing
     }
 
     pub(super) fn take_kexec_payload(&mut self) -> String {
@@ -183,6 +213,10 @@ impl State {
     }
 }
 
+pub(super) fn writing_event(build: &str) -> String {
+    format!("writing build {}", short(build))
+}
+
 fn staged_entry(text: &str) -> Option<Entry> {
     let (build_and_hash, len) = text.rsplit_once(' ')?;
     let (build, sha) = build_and_hash.rsplit_once(' ')?;
@@ -238,6 +272,7 @@ fn confirm_start(
         }
     }
     st.trial = None;
+    st.recovery.writing = false;
     st.event = format!("confirmed {}", st.current.as_ref().map_or("?", |c| short(&c.build)));
     if let Some(mode) = observed.filter(|_| st.sd_trial == Some(sd::Mode::Sdr104)) {
         st.event.push_str(" (SDR104 trial, observed ");

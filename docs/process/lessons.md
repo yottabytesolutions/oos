@@ -122,3 +122,9 @@ pull request that fixes a mistake: what happened, then the rule.
 
 - An ordinary-start notice could replace the only record of a torn slot write. Persist slot ownership
   independently of the last event so the next verified install can reuse a slot with a damaged header.
+- A failed direct read-back opened a trial that blocked its own retry. Keep the direct retry available when a
+  signed package can repair recovery, including when no rollback image was saved.
+- A receiver's pending kexec mark blocked retry after the recovery write began. Consume the mark in the same
+  state save that makes the write retryable, and keep that condition independent of the last notice.
+- A cut after rollback read-back left the previous image in recovery with the old current entry. Match the
+  verified previous image before treating a recovery replacement as untracked.

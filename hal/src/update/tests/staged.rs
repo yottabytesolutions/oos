@@ -129,8 +129,11 @@ fn staged_receive_refuses_without_a_usable_recovery_image_for_rollback() {
     let mut damaged = bootimg(1);
     damaged[3000] ^= 1;
     assert!(check_image(&damaged).unwrap_err().contains("id mismatch"));
+    let mut stock = vec![0; damaged.len()];
+    stock[..4].copy_from_slice(b"KRNL");
     for (name, recovery) in [
         ("empty-recovery", vec![0; bootimg(1).len()]),
+        ("stock-recovery", stock),
         ("damaged-recovery", damaged),
         ("identical-recovery", bootimg(2)),
     ] {
@@ -148,6 +151,16 @@ fn staged_receive_refuses_without_a_usable_recovery_image_for_rollback() {
         assert_eq!(&f.magic(), b"KRNL", "{name}");
         assert_eq!(f.st(), State { previous: None, slot_incomplete: true, ..before }, "{name}");
     }
+}
+
+#[test]
+fn staged_build_and_kexec_build_have_the_same_line_encoding() {
+    let build = "new build\ntrial 99";
+    let state = State { staged: Some(entry(2, build)), kexec: Some(build.into()), ..State::default() };
+    let after = State::parse(&state.text());
+    assert_eq!(after.staged.unwrap().build, "new build trial 99");
+    assert_eq!(after.kexec.as_deref(), Some("new build trial 99"));
+    assert_eq!(after.trial, None);
 }
 
 #[test]
@@ -223,7 +236,11 @@ fn staged_recovery_cut_keeps_stock_selected_and_can_restore_the_previous_image()
             current: Some(entry(2, NEW)),
             previous: Some(entry(1, OLD)),
             trial: Some(0),
-            kexec: Some(NEW.into()),
+            recovery: RecoveryTracking {
+                loader_id: Some(image_header(&bootimg(2)).unwrap().id),
+                writing: true,
+                ..Default::default()
+            },
             event: format!("writing build {}", short(NEW)),
             ..State::default()
         }

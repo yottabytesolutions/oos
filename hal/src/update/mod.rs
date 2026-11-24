@@ -36,6 +36,7 @@ pub mod text;
 pub use card::Card;
 use card::{check_image, Region};
 pub use kexec::receive::kexec_clear;
+pub use reconcile::{leave, reconcile_recovery};
 pub use state::{confirm, confirm_running, confirm_with_sd_mode};
 use std::path::Path;
 
@@ -65,8 +66,15 @@ impl Entry {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
+struct RecoveryTracking {
+    loader_id: Option<[u8; 20]>,
+    untracked: Option<String>,
+    writing: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct State {
-    /// The image in `recovery` (None: put there by hand, not by an update).
+    /// The tracked image in `recovery`.
     pub current: Option<Entry>,
     /// The image in the rollback slot.
     pub previous: Option<Entry>,
@@ -84,10 +92,12 @@ pub struct State {
     staged: Option<Entry>,
     // The slot may contain an incomplete write or a discarded candidate.
     slot_incomplete: bool,
+    recovery: RecoveryTracking,
     /// Last thing that happened, one line.
     pub event: String,
 }
 
+mod reconcile;
 mod state;
 
 /// Short form of a build id for messages.
@@ -141,7 +151,7 @@ pub fn running_build() -> Option<String> {
 
 mod install;
 use install::write_trial;
-pub use install::{install, install_confirmed};
+pub use install::{install, install_direct};
 pub use kexec::{kexec_missed, kexec_stage, BootTrees, Staged};
 
 fn check_slot(card: &mut Card, st: &State) -> Result<(), String> {
@@ -186,13 +196,13 @@ pub fn rollback(
             short(&prev.build)
         ));
     }
-    check_image(&b)?;
+    let id = check_image(&b)?.id;
     // the card decides, not the state: a cut write may have left something else there
     let (_, in_recovery) = card.read_image(Region::Recovery, prev.len as usize).map_err(io("reading recovery"))?;
     if in_recovery == prev.sha256 {
         r.say(format!("recovery already holds build {}", short(&prev.build)));
         if execute && (st.trial.is_some() || st.current.as_ref().map(|c| c.sha256) != Some(prev.sha256)) {
-            st.current = Some(prev.clone());
+            st.track_recovery(prev, id);
             st.trial = None;
             st.save(state_path).map_err(io("writing the update state"))?;
         }
@@ -211,9 +221,9 @@ pub fn rollback(
     card.disarm_oos()?;
     card.write_image(Region::Recovery, &b)?;
     r.written = true;
-    st.current = Some(prev.clone());
-    st.trial = None;
     st.event = format!("rolled back from {} to {}: {}", from, short(&prev.build), reason);
+    st.track_recovery(prev.clone(), id);
+    st.trial = None;
     st.save(state_path).map_err(io("writing the update state"))?;
     r.say("recovery written and read back");
     r.lines.extend(st.sd_fallback().map(str::to_string));
@@ -286,6 +296,9 @@ pub fn boot_started(state_path: &Path, running: Option<&str>) -> Result<Boot, St
     let cur = st.current.as_ref().map(|c| c.build.clone()).unwrap_or_default();
     if let Some(run) = running {
         if run.trim() != cur.trim() {
+            if st.interrupted_recovery_write() {
+                return Ok(Boot::NoTrial);
+            }
             let msg = format!(
                 "running build {} is not the one on trial ({}): trial dropped, recovery treated as hand-installed",
                 short(run),
@@ -294,6 +307,7 @@ pub fn boot_started(state_path: &Path, running: Option<&str>) -> Result<Boot, St
             st.fail_sd_trial();
             st.trial = None;
             st.current = None;
+            st.recovery = Default::default();
             st.event = msg.clone();
             st.save(state_path).map_err(io("writing the update state"))?;
             return Ok(Boot::Dropped(msg));

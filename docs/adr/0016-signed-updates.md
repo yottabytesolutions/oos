@@ -38,8 +38,9 @@ back. Automatic rollback is not yet verified on hardware; the follow-up is liste
 
 ## Amendment: stage the signed candidate in the rollback slot
 
-A package that announces `trial staged` can use the rollback slot as temporary storage while `recovery` holds
-the confirmed or hand-installed image. Refuse a new install while a trial is open. The sender records the
+A package that announces `trial staged` and its receiving build's trust in the signing key can use the rollback
+slot as temporary storage while `recovery` holds the confirmed or hand-installed image. Wait for an open trial
+to confirm before installing, with a signed direct retry available for an interrupted recovery write. The sender records the
 reservation and gives up the older rollback image before writing the signed candidate. The jump carries the
 signed header, key and tree section. The receiver verifies the header, running build and card bytes before
 installing, then puts the prior recovery image in the slot and writes the candidate to `recovery` on trial.
@@ -48,3 +49,6 @@ An interrupted or refused staged start leaves the prior recovery image available
 without a rollback image. Status and rollback report that condition. An ordinary start reports an unused
 candidate once. A subsequent install can reclaim the slot. Legacy packages keep the full-package kexec
 handoff and the watchdog payload guard.
+
+When kexec-tools is present, an unchanged tree still needs a successful merge so kexec-tools can load the initramfs above the low-memory reservations and GIC tables.
+If the merge fails, refuse the handoff because `kexec_file_load` can overlap those regions, and direct the owner to test on a removable card before using `--new-dt`.

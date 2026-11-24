@@ -52,13 +52,14 @@ reset a failed kexec start into the installed fallback. An image written to `rec
 
 1. Verify the signature, image hash, loader limits, board and model, downgrade, card layout, and device tree.
    Wait for confirmation if an update is still on trial.
-2. For a package with the signed `trial staged` line, reserve the rollback slot for the
+2. For a package with signed `trial staged` and a matching `staged-key` announcement, reserve the rollback slot for the
    candidate. Clear the previous rollback entry and save `staged <build> <sha256> <len>` before the write.
    Write the original signed image bytes, sync and read them back while the UI and watchdog supervisor keep
    running. The boot magic and `recovery` stay as they were. Record `kexec <build>` and the payload byte count
    once staging succeeds.
-3. Load the kernel and initramfs with `kexec_file_load`, or use kexec-tools (`kexec_load`) when supplying a
-   changed tree. The initramfs gets a small archive with the signed header through its terminating empty line
+3. Load the kernel and initramfs above low memory using kexec-tools (`kexec_load`) for both tree cases.
+   Builds without kexec-tools can use `kexec_file_load` with the same tree. The staged initramfs gets a
+   small archive with the signed header through its terminating empty line
    (`/oos-kexec.hdr`), the verifying key (`/oos-kexec.key`) and the booted tree section (`/oos-kexec.dt`).
    The command line gets `oos.kexec=install,staged` and `initramfs_async=0`. The archive unpacks before driver
    probes. Under the update lock the watcher and oos-ui stop, the network links go down and the display unbinds
@@ -81,16 +82,26 @@ they were at rcS and reports the reason. In **one-shot** mode the next power-on 
 `oos-oneshot` selected `KRNL`. In **persist** mode the watcher re-arms `OOSK` for a valid recovery image with
 no open trial, so the next power-on then starts that image. Until the re-arm succeeds, the next power-on starts
 stock Android. If the install fails after it begins writing `recovery`, it attempts to restore the previous
-image from the slot.
+image from the slot. Once stock is selected and the pending recovery write is recorded, the kexec handoff mark
+is cleared in the same state save. If the write and automatic restore fail, a signed direct retry remains available.
 
 A package with `trial kexec` alone uses the legacy kexec path. Its full signed package rides in
 `/oos-kexec.oosupd` in place of the header, and its command line gets `oos.kexec=install`. Both senders use the
 same watchdog payload guard. The legacy receiver still reads the passed key and can leave a refused package in
 RAM for inspection until restart. Older senders, including the bridge, use this path even for staged-capable
-packages. The staged receiver trusts only the release keys compiled into the receiving build and ignores the
-carried key. Ship a release that replaces the old key once over legacy kexec, signed with the old key and
-announcing only `trial kexec`. Later releases can use staged kexec with the new key. A package with neither
-capability takes the direct install path.
+packages. The staged receiver verifies with the keys compiled into the receiving build. The sender requires a
+single signed `staged-key <64 hex digits>` matching the key that verified the package before it reuses the
+rollback slot. `pack` adds both staged lines only when the image's `/etc/oos-staged-keys` lists that public key.
+The image builder copies that list from the same source used to compile the receiver. Packages missing a matching
+announcement use `trial kexec` when present. A staged-only package with a missing or mismatched key is refused.
+For a rotation that drops the old key, sign the first new build with the old key so the current build can verify it
+and use legacy kexec. The next package can use staged kexec with the new key.
+
+Packages without a trial capability and installs requested with `--no-kexec` or `--new-dt` write to
+`recovery` immediately. A failed read-back leaves stock selected until a verified write and arm succeed. From
+OOS, retry with `oos-update install FILE --no-kexec --execute` while the saved state records an interrupted
+recovery write and zero starts of the trial build. The retry keeps any existing rollback entry and applies the
+normal downgrade check against the recorded attempted build. An open kexec handoff must finish or clear first.
 
 What it does not cover:
 
@@ -109,9 +120,8 @@ What it does not cover:
 
 ### Another device tree
 
-`kexec_file_load` gives the new kernel the running tree, so it cannot try an image with another one. From 0.1.7 the
-image has kexec-tools (`rootfs/build-kexec.sh`, static), and `oos-update` loads such an image with `kexec_load`, which
-takes a tree. Not the image's tree as it is: the stock loader adds to it at every power-on (reserved memory for the
+From 0.1.7 the image has kexec-tools (`rootfs/build-kexec.sh`, static). It takes an explicit tree via
+`kexec_load`. The stock loader adds to the image's tree at every power-on (reserved memory for the
 ramdisk and the boot logo, `bootargs`, the display mode it set up for the logo, the logo's memory). The new tree gets
 those changes: the difference between the tree in the image that started (`/tmp/oos-booted.dt`) and the tree the
 kernel got (`/sys/firmware/fdt`), applied by node path (`hal/src/update/fdt.rs`). So the kexec start runs with the
@@ -121,6 +131,17 @@ them anew in every tree) or to a node the new tree does not have refuses the kex
 kexec-tools names the new one, and the kernel drops a ramdisk that lies in reserved memory (seen on the unit: the
 55 MB of the kexec start fell into the 13 MB the loader had reserved for its own, and the kernel found no root; the
 power-cycle brought the running build back, as it should). On the unit 33 changes of the loader carry over.
+
+For an unchanged tree the same merge preserves the loader additions and removes the old initramfs reservation.
+The upstream same-tree failure (PR 203) applies here: `kexec_file_load` places the initramfs low behind the new kernel.
+A large legacy handoff overlapped low-memory reservations or GIC tables and the new kernel panicked with
+`unknown-block(0,0)`. Using kexec-tools with the existing address floor avoids that placement for both handoff
+formats. If the tool is installed but the live tree cannot be read or merged, preparation stops before staging.
+Test on a card you can take out before using `--new-dt` to install directly.
+
+An existing `/chosen/kaslr-seed` from the loader or the candidate is zeroed in the merged tree. kexec-tools rejects
+a nonzero seed and fills a zero seed with fresh randomness (upstream PR 240). The seed handling and the same-tree
+kexec-tools selection are host-tested and still to verify on the unit.
 
 Where the segments go: above 1 GiB (`kexec --mem-min`), and above every GIC table the running kernel's log names. The
 GICv3 keeps its LPI and ITS tables across kexec (it cannot be given new ones); the started kernel takes them over and
@@ -154,7 +175,7 @@ Payload: kernel 27,159,040 bytes, staged initrd 57,611,256 bytes, merged DTB 94,
 
 The measured legacy payload carries the compressed initramfs and the whole package. The kernel and initramfs
 count twice on this path. The slot-based path carries the kernel and ramdisk once plus the small handoff
-archive. The image regions limit its image size. A changed-tree start also supplies the merged DTB. Both paths
+archive. The image regions limit its image size. A kexec-tools start also supplies the merged DTB. Both handoffs
 keep the ceiling in `hal/src/update/kexec/budget.rs` and log each start's payload size.
 
 Ceiling history:
@@ -199,7 +220,7 @@ its acknowledgement, resets backoff and resumes. These task 0067 changes are hos
 on the unit.
 The supervisor publishes its pid; an exclusive handoff request recording the updater pid plus USR1 makes it kill
 and reap only its own BusyBox kicker with SIGKILL, avoiding magic close, then pause until the request is removed.
-The updater waits at most 2 s for acknowledgement and the device, keeps its handle open, writes the immediate jump timestamp for a changed tree,
+The updater waits at most 2 s for acknowledgement and the device, keeps its handle open, writes the immediate jump timestamp for kexec-tools,
 performs a final `sync()` and writes a non-`V` byte to ping hardware immediately before `reboot(KEXEC)`.
 No sync, remount, logging or process launch comes between that ping and the syscall. This makes the final
 userspace ping less than about 1 s before the syscall in normal scheduling. The syscall's shutdown-to-jump delay still needs unit measurement;
@@ -402,16 +423,33 @@ capability, `--no-kexec` and `--new-dt` write the image directly. Power-cycle to
 
 | command | |
 |---|---|
-| `oos-update status` | boot magic, recovery and slot (build, SHA-256, loader id), trial, mode, last event |
+| `oos-update status` | boot magic, recovery and slot (build, SHA-256, loader id), tracking reason, trial, mode, last event |
 | `oos-update install FILE [--execute] [--downgrade] [--force] [--any-model] [--no-kexec \| --new-dt]` | see above |
-| `oos-update kexec-check FILE` | load and unload the package's kernel for a kexec start; nothing written |
+| `oos-update kexec-check FILE` | probe kernel loading with `kexec_file_load` and unload immediately; nothing written to the card |
 | `oos-update rollback [--execute]` | slot -> recovery (checked against its SHA-256 first), arm OOS |
 | `oos-update confirm` | end a trial by hand (after stopping oos-ui for development, `/tmp/oos-ui.off`) |
+| `oos-update leave` | clear update tracking before switching firmware and explain the next boot in both modes |
 | `oos-update mode persist` / `oneshot` | persist: OOS arms itself again after each confirmed start, and is selected for the next power-on at once; oneshot: stock is selected at once. The GUI has this as System > Boot mode |
 | `oos-update verify FILE` | signature and image check, anywhere (`--keys` only here and for card-file tests) |
 | `oos-update pack ...`, `keygen` | host side |
 
 Logs: `/tmp/oos-update.log` (start count, watcher), `/tmp/oos-update.job` (GUI / web job), state `/oos/update/state`.
+
+## Reconcile an external install
+
+At an ordinary start with no open trial or staged candidate, `oos-update boot` compares the recovery header's
+length and loader ID with the saved values. It reads and hashes the full image when needed to match an older
+state file or identify the previous image. For an interrupted rollback it checks the full hash even when the
+loader ID matches current, since the loader ID omits padding. When recovery matches the previous image it
+completes rollback tracking, preserving the rollback slot and using the restored build for downgrade checks.
+A partial rollback retains its entries so the rollback can be repeated. An external replacement clears current
+and previous tracking, so the next verified install has no prior build stamp to compare. A card read error leaves
+tracking in place and is logged. Reconciliation only writes update state.
+
+`oos-update leave` clears the same entries explicitly. It requires any pending update to finish first and changes
+only the update state. The immediate power-on follows the existing boot magic. After the next healthy OOS start,
+persist re-arms a valid recovery image, and one-shot leaves stock selected. See [Switching firmware](switching.md).
+Reconciliation and `leave` are host-tested and to verify on the unit.
 
 ## Trial rules (`oos_hal::update::judge`)
 
@@ -436,6 +474,10 @@ Logs: `/tmp/oos-update.log` (start count, watcher), `/tmp/oos-update.job` (GUI /
 - The watcher writes `/tmp/oos-update.judged` after applying its verdict and completing any persist arm. A confirmed
   SDR104 trial records the negotiated mode from the startup check in the update event. Confirmation still follows
   the software-health rule when the card is slow.
+- An update whose new image never reports back, including one cut by a power loss during the handoff, counts as
+  a failed SDR104 trial: `oos-update status` says "SDR104 was not confirmed: falling back to hs". The running
+  image keeps its mode. The next install selects HS until `sd.mode` is set to `hs` and restaged once with
+  `oos-update sd-mode --execute`, and then set to `sdr104` and restaged again.
 - If the watcher cannot open the card for a persist arm, it logs the failure and publishes completion with boot
   selection unverified. If it cannot open the card for a failed trial's rollback, it issues the same rollback-failed
   notice as a restore error. A failed open leaves boot selection and trial state as they were before the attempt.
@@ -443,7 +485,8 @@ Logs: `/tmp/oos-update.log` (start count, watcher), `/tmp/oos-update.job` (GUI /
   190 seconds after the UI starts, with a warning that the stock system may start. The active-update lock still
   gates the action. The watcher completes the power gate after any kexec persist arm and skips the trial verdict.
 
-Install requests wait for the current trial to be confirmed. The receiver keeps the confirmed or hand-installed
+Install requests wait for the current trial to be confirmed, with a direct retry available after an interrupted
+recovery write. The receiver keeps the confirmed or hand-installed
 image in `recovery` as the rollback image (`untracked-<sha>` for a hand-installed image). Slot staging needs a
 different, valid image in `recovery` to keep for rollback. A forced rewrite of identical recovery bytes is
 available through direct install and keeps the existing rollback image.
@@ -460,8 +503,8 @@ next power-on boots stock: a boot counter with one try, without an own U-Boot.
 - Updating the stock loader, `trust`, the FPGA flash or the partition table: never part of an update.
 - A power cut during the slot write before `recovery` is written leaves the old image in `recovery`: harmless, run
   the install again.
-- The downgrade check only knows the state's `current`: with no state, an untracked image or after a rollback, any signed
-  build can be installed from the LAN without authentication. It still runs on trial.
+- The downgrade check uses the state's `current`, including the restored build after rollback. With no tracked build,
+  any signed build can be installed from the LAN without authentication. It still runs on trial.
 - **`--new-dt` has no safety net**, and neither has a direct install (`--no-kexec`, packages without `trial kexec`, the
   USB stick): a kernel that panics, hangs or cannot reach the SD card before rcS starts again with OOS selected on
   every power-on, and the card has to come out. Test such a change on a card you can take out first.

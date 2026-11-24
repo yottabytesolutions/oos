@@ -85,17 +85,32 @@ fn test_key() -> [u8; 32] {
 }
 
 #[test]
-fn pack_signs_the_staged_capability_and_still_offers_a_legacy_trial() {
+fn pack_announces_staging_only_when_the_image_declares_the_signer() {
     let f = Fixture::new();
+    for image in [
+        image(),
+        unit_identity::image_initramfs(&[(kexec::STAGED_KEYS_FILE, 0o100644, hash::hex(&[3; 32]).as_bytes())]),
+    ] {
+        std::fs::write(f.path("image"), image).expect("test setup");
+        success(&f.test_pack().output().expect("test setup"));
+        let bytes = std::fs::read(f.path("package")).expect("test setup");
+        let header = pkg::verify_header(&bytes, &[test_key()]).expect("test setup");
+        assert!(kexec::announced(&header.manifest));
+        assert!(!kexec::announced_staged(&header.manifest));
+    }
+    let signing_key = hash::hex(&test_key());
+    let image = unit_identity::image_initramfs(&[(kexec::STAGED_KEYS_FILE, 0o100644, signing_key.as_bytes())]);
+    std::fs::write(f.path("image"), &image).expect("test setup");
     success(&f.test_pack().output().expect("test setup"));
     let mut bytes = std::fs::read(f.path("package")).expect("test setup");
     let (header, payload) = pkg::verify(&bytes, &[test_key()]).expect("older parser accepts extra signed lines");
-    assert_eq!(payload, image());
+    assert_eq!(payload, image);
     // The pre-bridge sender tests only the legacy capability. The parser preserves other signed lines.
     assert!(header.manifest.extra.iter().any(|(key, value)| key == kexec::LINE.0 && value == kexec::LINE.1));
-    let line = b"\ntrial staged\n";
-    let at = bytes[..header.data_offset].windows(line.len()).position(|part| part == line).expect("staged line");
-    bytes[at + line.len() - 2] = b'D';
+    assert!(kexec::use_staged(&header.manifest, &test_key()).expect("staged receiver trusts this key"));
+    let line = b"\nstaged-key ";
+    let at = bytes[..header.data_offset].windows(line.len()).position(|part| part == line).expect("staged key");
+    bytes[at + line.len()] ^= 1;
     assert!(pkg::verify(&bytes, &[test_key()]).unwrap_err().contains("SIGNATURE INVALID"));
 }
 

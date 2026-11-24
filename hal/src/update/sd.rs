@@ -176,20 +176,34 @@ pub(super) fn trial_tree(
     running: Option<&[u8]>,
     report: &mut Report,
 ) -> Result<Option<Vec<u8>>, String> {
-    let tree = if booted == dt {
-        report.say("device tree: the same as the running one");
-        None
-    } else {
-        let Some(run) = running else {
+    let same = booted == dt;
+    let Some(run) = running else {
+        if !same {
             return Err("the image brings another device tree than the one this scope started with, and this build cannot start a kernel with another tree".into());
-        };
-        let new_dt = fdt::rsce_file(dt, fdt::TREE).map_err(|e| format!("the new image's device tree: {}", e))?;
-        let old_dt =
-            fdt::rsce_file(booted, fdt::TREE).map_err(|e| format!("the running image's device tree: {}", e))?;
-        let (t, n) =
-            fdt::with_loader_changes(new_dt, old_dt, run).map_err(|e| format!("the new device tree: {}", e))?;
-        report.say(format!("device tree: another one; the kexec start tries it, with the {} changes the loader made to the running one", n));
-        Some(t)
+        }
+        report.say("device tree: the same as the running one; kexec-tools is unavailable, using kexec_file_load");
+        return Ok(None);
     };
-    Ok(tree)
+    let merge_error = |error: String| {
+        if same {
+            format!("the unchanged device tree cannot be merged ({error}); kexec_file_load can place the initramfs over low-memory reservations. Try the image on a card you can take out, then use --new-dt for a direct install")
+        } else {
+            error
+        }
+    };
+    let old_dt =
+        fdt::rsce_file(booted, fdt::TREE).map_err(|e| merge_error(format!("the running image's device tree: {e}")))?;
+    let new_dt = if same {
+        old_dt
+    } else {
+        fdt::rsce_file(dt, fdt::TREE).map_err(|e| format!("the new image's device tree: {e}"))?
+    };
+    let (tree, n) =
+        fdt::with_loader_changes(new_dt, old_dt, run).map_err(|e| merge_error(format!("the new device tree: {e}")))?;
+    if same {
+        report.say("device tree: the same as the running one; kexec-tools will load it above low memory");
+    } else {
+        report.say(format!("device tree: another one; the kexec start tries it, with the {} changes the loader made to the running one", n));
+    }
+    Ok(Some(tree))
 }

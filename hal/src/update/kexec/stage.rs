@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::{announced, announced_staged, initrd, parts, staged_initrd, Flags, Receive, BOOTED_DT};
+use super::{
+    announced, announced_staged, initrd, parts, staged_initrd, use_staged, Flags, Receive, StagedInitrd, BOOTED_DT,
+};
 use crate::update::{
     install::{check_can_start, prepare, validate_image},
     io, lock, models, pkg, sd, short, Card, Entry, InstallOpt, Region, Report, State,
@@ -30,18 +32,12 @@ impl Staged {
 }
 
 /// Tree context for a kexec start. The installed tree can identify the booted tree only
-/// when the running build matches recovery. A changed-tree start also needs the live tree.
+/// when the running build matches recovery. Supply the live tree whenever kexec-tools is present.
 #[derive(Debug)]
 pub struct BootTrees<'a> {
-    booted: Option<&'a [u8]>,
-    running_build: Option<&'a str>,
-    live: Option<&'a [u8]>,
-}
-
-impl<'a> BootTrees<'a> {
-    pub fn new(booted: Option<&'a [u8]>, running_build: Option<&'a str>, live: Option<&'a [u8]>) -> Self {
-        Self { booted, running_build, live }
-    }
+    pub booted: Option<&'a [u8]>,
+    pub running_build: Option<&'a str>,
+    pub live: Option<&'a [u8]>,
 }
 
 /// Verify the install, prepare the boot payload and record the pending kexec start.
@@ -58,7 +54,7 @@ pub fn kexec_stage(
     let (header, signed_image, mut report) = models::checked_package(package, keys, opt)?;
     validate_image(card, signed_image, &mut report)?;
     let manifest = &header.manifest;
-    let to_slot = announced_staged(manifest);
+    let (key, to_slot) = select_handoff(manifest, keys, &mut report)?;
     let _lock = if opt.execute { Some(lock(state_path)?) } else { None };
     let mut state = State::load(state_path).map_err(io("reading the update state"))?;
     check_can_start(&state)?;
@@ -88,10 +84,10 @@ pub fn kexec_stage(
         report.say(format!("start build {build} by kexec; it installs itself once it runs (dry run: --execute)"));
         return Ok((report, None));
     }
-    let key = keys.iter().find(|k| pkg::key_id(k) == manifest.key).ok_or("no key for the package")?;
     let flags = Flags { downgrade: opt.downgrade, force: opt.force, any_model: opt.any_model };
     let (source, initrd) = if to_slot {
-        (Receive::Staged(flags), staged_initrd(ramdisk, &package[..header.data_offset], key, dt))
+        let handoff = StagedInitrd { ramdisk, header: &package[..header.data_offset], key, tree: dt };
+        (Receive::Staged(flags), staged_initrd(handoff))
     } else {
         (Receive::Legacy(flags), initrd(ramdisk, package, key, dt))
     };
@@ -106,6 +102,19 @@ pub fn kexec_stage(
     record_start(state_path, &mut state, &start, mode)?;
     report.say(&state.event);
     Ok((report, Some(start)))
+}
+
+fn select_handoff<'a>(
+    manifest: &pkg::Manifest,
+    keys: &'a [[u8; 32]],
+    report: &mut Report,
+) -> Result<(&'a [u8; 32], bool), String> {
+    let key = keys.iter().find(|k| pkg::key_id(k) == manifest.key).ok_or("no key for the package")?;
+    let to_slot = use_staged(manifest, key)?;
+    if announced_staged(manifest) && !to_slot {
+        report.say("the receiver does not announce trust in the signing key: using the legacy kexec handoff");
+    }
+    Ok((key, to_slot))
 }
 
 fn booted_tree(

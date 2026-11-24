@@ -12,6 +12,7 @@
 - [[Install on a second card]]
 - [[Install without opening the scope]]
 - [[First start and choosing how OOS starts]]
+- [[Switching between OOS versions]]
 
 **Use**
 

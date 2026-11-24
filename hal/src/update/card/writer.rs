@@ -56,7 +56,14 @@ impl Storage {
         std::io::Read::read_exact(&mut self.file, bytes)
     }
 
-    fn write(&mut self, area: &str, offset: u64, data: &[u8], cut: bool) -> Result<(), String> {
+    fn write(
+        &mut self,
+        area: &str,
+        offset: u64,
+        data: &[u8],
+        cut: bool,
+        #[cfg(test)] fault: Option<super::WriteFault>,
+    ) -> Result<(), String> {
         check_range(area, offset, data.len())?;
         if !self.writable {
             return Err("card opened read only".into());
@@ -67,7 +74,18 @@ impl Storage {
             self.file.write_all(&data[..data.len() / 2]).map_err(io)?;
             return Err("power cut".into());
         }
+        #[cfg(test)]
+        if matches!(fault, Some(super::WriteFault::PowerCut)) {
+            self.file.write_all(&[0]).map_err(io)?;
+            self.file.write_all(&data[1..data.len().div_ceil(2)]).map_err(io)?;
+            std::panic::panic_any("simulated power cut");
+        }
         self.file.write_all(data).map_err(io)?;
+        #[cfg(test)]
+        if matches!(fault, Some(super::WriteFault::ReadBackMismatch)) {
+            self.file.seek(SeekFrom::Start(offset)).map_err(io)?;
+            self.file.write_all(&[!data[0]]).map_err(io)?;
+        }
         self.file.sync_all().map_err(io)?;
         self.drop_cache(offset, data.len());
         if self.read(offset, data.len()).map_err(io)? != data {
@@ -109,7 +127,16 @@ impl Card {
         }
         #[cfg(not(test))]
         let cut = false;
-        self.storage.write(area, offset, data, cut)
+        #[cfg(test)]
+        let fault = self.write_fault.take_if(|(region, _)| region.lba() * SECTOR == offset).map(|(_, fault)| fault);
+        self.storage.write(
+            area,
+            offset,
+            data,
+            cut,
+            #[cfg(test)]
+            fault,
+        )
     }
 }
 

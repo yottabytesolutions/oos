@@ -280,7 +280,7 @@ fn obsolete_unit_override_cannot_consume_the_execute_flag() {
 }
 
 #[test]
-fn direct_cli_text_distinguishes_dry_run_installed_and_unchanged() {
+fn direct_cli_distinguishes_dry_run_installed_open_trial_and_unchanged() {
     let f = Fixture::new();
     simulated_card(&f);
     success(&f.test_pack().output().expect("test setup"));
@@ -309,6 +309,9 @@ fn direct_cli_text_distinguishes_dry_run_installed_and_unchanged() {
         installed.contains("The trial confirms automatically after the UI runs 20 s continuously and startup finishes")
     );
     assert!(installed.contains("No automatic restart: power-cycle the scope to start the installed build on trial."));
+    let on_trial = install().arg("--execute").output().expect("open trial");
+    refused(&on_trial, "wait for confirmation");
+    assert!(oos_hal::update::confirm(&f.path("state"), None).expect("confirm simulated trial"));
     let unchanged = install().arg("--execute").output().expect("unchanged");
     success(&unchanged);
     let unchanged = String::from_utf8(unchanged.stdout).unwrap();

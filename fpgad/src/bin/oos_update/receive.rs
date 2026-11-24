@@ -3,7 +3,7 @@
 //! Receive a kexec install in rcS, then let the ordinary updater install the image.
 
 use crate::{die, notice, put, read_file, tell, Args, NOTICE, STDOUT_CLOSED};
-use oos_hal::update::{self, kexec, Card, InstallOpt, State};
+use oos_hal::update::{self, kexec, Card, Report, State};
 use std::path::Path;
 
 use super::messages;
@@ -19,21 +19,27 @@ pub(crate) fn finish(a: &Args, path: &Path, source: kexec::Receive) -> bool {
 }
 
 fn staged(a: &Args, path: &Path, flags: kexec::Flags) -> Result<bool, String> {
+    let model = staged_model(a.val("--model"))?;
     let build = std::fs::read_to_string("/etc/oos-build").map_err(|e| format!("reading the running build: {e}"))?;
     let keys = update::trusted_keys();
     let mut card = a.open_card(true)?;
-    let package = kexec::staged_package(&mut card, Path::new(kexec::HEADER_FILE), &build, &keys)?;
-    // The staged candidate already occupies the slot that an active trial would need for rollback.
-    if State::load(path).map_err(|e| format!("reading the update state: {e}"))?.trial.is_some() {
-        return Err("the image in recovery is still on trial".into());
-    }
-    if a.val("--model").is_some() {
-        return Err("boot detects the running model from hardware".into());
-    }
-    let model = update::models::running()?;
     let opt = Args::kexec_opt(flags, &model);
     installing(&build);
-    Ok(finish_install(&mut card, path, &package, &keys, &opt, build.trim(), true))
+    match kexec::install_staged(&mut card, path, Path::new(kexec::HEADER_FILE), &build, &keys, &opt) {
+        Ok(report) => Ok(finish_report(path, &report, &build)),
+        Err(kexec::StagedError::Refused(error)) => Err(error),
+        Err(kexec::StagedError::WriteFailed(error)) => {
+            install_failed(&mut card, path, &build, &error, true);
+            Ok(false)
+        }
+    }
+}
+
+fn staged_model(override_model: Option<&str>) -> Result<String, String> {
+    if override_model.is_some() {
+        return Err("boot detects the running model from hardware".into());
+    }
+    update::models::running()
 }
 
 fn refused(path: &Path, error: &str) {
@@ -76,7 +82,16 @@ fn legacy(a: &Args, path: &Path, flags: kexec::Flags) -> bool {
     let mut card = a.open_card(true).unwrap_or_else(|e| die(&e));
     let model = a.running_model(false);
     let opt = Args::kexec_opt(flags, &model);
-    finish_install(&mut card, path, &package, &keys, &opt, &build, false)
+    let report = match update::install(&mut card, path, &package, &keys, &opt) {
+        Ok(report) => report,
+        Err(error) => {
+            install_failed(&mut card, path, &build, &error, false);
+            return false;
+        }
+    };
+    let written = finish_report(path, &report, &build);
+    let _ = std::fs::remove_file(kexec::PACKAGE);
+    written
 }
 
 fn installing(build: &str) {
@@ -88,38 +103,21 @@ fn installing(build: &str) {
     tell(&format!("build {} started by kexec: kernel, card and /oos work; installing it", short));
 }
 
-fn finish_install(
-    card: &mut Card,
-    path: &Path,
-    package: &[u8],
-    keys: &[[u8; 32]],
-    opt: &InstallOpt,
-    build: &str,
-    staged: bool,
-) -> bool {
+fn finish_report(path: &Path, report: &Report, build: &str) -> bool {
     let short = update::short(build);
-    let report = match update::install(card, path, package, keys, opt) {
-        Ok(report) => report,
-        Err(error) => {
-            install_failed(card, path, build, &error, staged);
-            return false;
-        }
-    };
     report.lines.iter().for_each(|line| out!("{}", line));
     if report.written {
         notice(&messages::installed(short));
     } else {
-        let result = update::kexec_clear(path, &format!("started build {} by kexec: nothing to install", short));
-        if staged {
-            if let Err(error) = result {
-                tell(&format!("clearing the staged update state: {error}"));
-            }
-        }
-    }
-    if !staged {
-        let _ = std::fs::remove_file(kexec::PACKAGE);
+        clear_kexec(path, &format!("started build {} by kexec: nothing to install", short));
     }
     report.written
+}
+
+fn clear_kexec(path: &Path, event: &str) {
+    if let Err(error) = update::kexec_clear(path, event) {
+        tell(&format!("clearing the kexec update state: {error}"));
+    }
 }
 
 fn install_failed(card: &mut Card, path: &Path, build: &str, error: &str, staged: bool) {
@@ -156,8 +154,18 @@ fn install_failed(card: &mut Card, path: &Path, build: &str, error: &str, staged
     if staged {
         staged_failure(path, &m);
     } else {
-        let _ = update::kexec_clear(path, &m);
+        clear_kexec(path, &m);
         notice(&m);
         tell(&format!("the package stays at {} until the next start", kexec::PACKAGE));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn staged_boot_refuses_a_model_override() {
+        assert_eq!(staged_model(Some("DHO804")).unwrap_err(), "boot detects the running model from hardware");
     }
 }

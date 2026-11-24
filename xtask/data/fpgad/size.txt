@@ -1,6 +1,5 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
-674 file fpgad/src/bin/oos-update.rs
+643 file fpgad/src/bin/oos-update.rs
 76 fn fpgad/src/bin/oos-update.rs main
-77 fn fpgad/src/bin/oos-update.rs status
 227 fn fpgad/src/cmd/selfcal.rs run

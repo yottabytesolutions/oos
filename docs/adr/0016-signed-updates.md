@@ -35,3 +35,16 @@ trying the candidate: rejected because failure before rcS cannot be counted by a
 
 A lost signing secret requires hand installation on each unit. A panic before rcS in a confirmed image does not roll
 back. Automatic rollback is not yet verified on hardware; the follow-up is listed in migration.md.
+
+## Amendment: stage the signed candidate in the rollback slot
+
+A package that announces `trial staged` can use the rollback slot as temporary storage while `recovery` holds
+the confirmed or hand-installed image. Refuse a new install while a trial is open. The sender records the
+reservation and gives up the older rollback image before writing the signed candidate. The jump carries the
+signed header, key and tree section. The receiver verifies the header, running build and card bytes before
+installing, then puts the prior recovery image in the slot and writes the candidate to `recovery` on trial.
+
+An interrupted or refused staged start leaves the prior recovery image available and can leave the slot
+without a rollback image. Status and rollback report that condition. An ordinary start reports an unused
+candidate once. A subsequent install can reclaim the slot. Legacy packages keep the full-package kexec
+handoff and the watchdog payload guard.

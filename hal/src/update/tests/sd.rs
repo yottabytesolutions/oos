@@ -159,9 +159,7 @@ fn install_and_kexec_use_the_same_selected_tree_after_signature_checks() {
         &package,
         &[pk()],
         &RUN,
-        Some(&second),
-        Some(KX_BUILD),
-        Some(&base_tree()),
+        BootTrees::new(Some(&second), Some(KX_BUILD), Some(&base_tree())),
     )
     .unwrap();
     let staged = staged.unwrap();
@@ -226,4 +224,38 @@ fn restaging_refuses_unknown_slot_contents_before_any_write() {
     assert!(error.contains("holds data that is not an OOS image"));
     assert_eq!(card_bytes(&f), before);
     assert!(f.st().trial.is_none());
+}
+
+#[test]
+fn a_staged_sdr104_start_keeps_the_signed_slot_bytes_and_uses_the_selected_tree() {
+    let f = active("sd-slot-staging");
+    let hs = f.region(Region::Recovery);
+    let candidate = bootimg_second(2, rsce(&base_tree()));
+    set_mode(&f, "sdr104");
+    let build = "20261109-090000";
+    let package = pkg::build_with(&SEED, build, "test", &candidate, &[kexec::LINE, kexec::STAGED_LINE]).unwrap();
+    let (_, _, booted) = kexec::parts(&hs).unwrap();
+    let (_, start) = kexec_stage(
+        &mut f.card(),
+        &f.state(),
+        &package,
+        &[pk()],
+        &RUN,
+        BootTrees::new(Some(booted), Some(KX_BUILD), Some(&base_tree())),
+    )
+    .unwrap();
+    let start = start.unwrap();
+    let tree = start.tree.as_ref().unwrap();
+    assert_eq!(tree, &sd::patch_tree(&base_tree(), Mode::Sdr104).unwrap());
+    assert_eq!(start.payload_size(), start.kernel.len() + start.initrd.len() + tree.len());
+    assert_eq!(f.region(Region::Slot), candidate);
+    assert_eq!(f.region(Region::Recovery), hs);
+
+    let header = f.dir.join("header");
+    let (_, ramdisk, _) = kexec::parts(&candidate).unwrap();
+    let archive = start.initrd.strip_prefix(ramdisk).unwrap();
+    std::fs::write(&header, inflate::cpio_file(archive, "oos-kexec.hdr").unwrap()).unwrap();
+    assert!(kexec::install_staged(&mut f.card(), &f.state(), &header, build, &[pk()], &RUN).unwrap().written);
+    assert_eq!(f.region(Region::Slot), hs);
+    assert_eq!(f.region(Region::Recovery), sd::image(&candidate, Mode::Sdr104).unwrap());
 }

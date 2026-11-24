@@ -117,3 +117,8 @@ pull request that fixes a mistake: what happened, then the rule.
   that run the gate set `PATH` explicitly.
 - Runners were restarted while busy because a shell check compared a newline-separated list. Check each worker's
   own job file, never a joined list.
+
+## Update state
+
+- An ordinary-start notice could replace the only record of a torn slot write. Persist slot ownership
+  independently of the last event so the next verified install can reuse a slot with a damaged header.

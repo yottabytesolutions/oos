@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::card::*;
+use super::hash::hex;
 use super::*;
 use std::path::PathBuf;
 
@@ -279,6 +280,9 @@ fn state_text_round_trip() {
         trial: Some(1),
         persist: true,
         kexec: Some("20261108-090000".into()),
+        kexec_payload: Some(45000000),
+        staged: None,
+        slot_incomplete: false,
         event: "installed 20261105-170000".into(),
         sd_failed: false,
         sd_trial: None,
@@ -862,7 +866,7 @@ fn tree(dt: u8) -> Vec<u8> {
 }
 
 fn stage(f: &Fake, p: &[u8], booted: Option<&[u8]>, running: Option<&str>) -> Result<(Report, Option<Staged>), String> {
-    kexec_stage(&mut f.card(), &f.state(), p, &[pk()], &RUN, booted, running, None)
+    kexec_stage(&mut f.card(), &f.state(), p, &[pk()], &RUN, BootTrees::new(booted, running, None))
 }
 
 #[test]
@@ -874,12 +878,16 @@ fn kexec_stage_writes_nothing_to_the_card() {
     let p = kexec_package(2, 7);
     let (r, staged) = stage(&f, &p, Some(&tree(7)), None).unwrap();
     let staged = staged.expect("a kexec start");
+    assert_eq!(staged.cmdline("quiet"), "quiet initramfs_async=0 panic=0 oos.kexec=install");
+    assert!(f.st().staged.is_none());
     assert!(r.lines.iter().any(|l| l.contains("device tree: the same")), "{:?}", r.lines);
     let img = bootimg_dt(2, 7);
     let (k, rd, _) = kexec::parts(&img).unwrap();
     assert_eq!(staged.kernel, k);
     assert_eq!(&staged.initrd[..rd.len()], rd);
-    assert!(staged.initrd.windows(64).any(|w| w == &p[..64]), "the package rides along");
+    let archive = &staged.initrd[rd.len()..];
+    assert_eq!(inflate::cpio_file(archive, "oos-kexec.oosupd"), Some(p.as_slice()));
+    assert_eq!(inflate::cpio_file(archive, "oos-kexec.hdr"), None);
     let key = hex(&pk());
     assert!(staged.initrd.windows(key.len()).any(|w| w == key.as_bytes()), "and its key");
     // the card as it was, OOS still selected: a hang of the new kernel ends in the running build again
@@ -949,7 +957,8 @@ fn a_kexec_start_that_did_not_finish_is_reported_once() {
     stage(&f, &kexec_package(2, 7), Some(&tree(7)), None).unwrap();
     kexec_clear(&f.state(), "kexec load failed").unwrap();
     assert_eq!(f.st().kexec, None);
-    assert_eq!(f.st().event, "kexec load failed");
+    assert!(f.st().event.starts_with("kexec load failed ("));
+    assert!(f.st().event.ends_with(" bytes kexec payload)"));
     // an install in the kexec start cut by a power loss keeps the mark for the next start
     stage(&f, &kexec_package(2, 7), Some(&tree(7)), None).unwrap();
     let mut c = f.card();
@@ -995,10 +1004,12 @@ fn kexec_stage_tries_another_device_tree_with_the_loaders_changes() {
     let p = pkg::build_with(&SEED, KX_BUILD, "6.12.115+", &bootimg_second(2, new.clone()), &[kexec::LINE]).unwrap();
     let running = dtb(&[("model", b"DHO\0")], vec![chosen(b"a loader\0")]);
     // a build without kexec-tools (no running tree given): refused as before
-    let e = kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, Some(&old), None, None).unwrap_err();
+    let e =
+        kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, BootTrees::new(Some(&old), None, None)).unwrap_err();
     assert!(e.contains("device tree"), "{}", e);
     let (r, staged) =
-        kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, Some(&old), None, Some(&running)).unwrap();
+        kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, BootTrees::new(Some(&old), None, Some(&running)))
+            .unwrap();
     let staged = staged.expect("a kexec start");
     assert!(r.lines.iter().any(|l| l.contains("another one")), "{:?}", r.lines);
     let t = fdt::Fdt::parse(staged.tree.as_deref().expect("the tree to start with")).unwrap();
@@ -1010,7 +1021,8 @@ fn kexec_stage_tries_another_device_tree_with_the_loaders_changes() {
     let f = Fake::new("kexec-newdt-refused", None);
     f.poke(RECOVERY_LBA, &bootimg_second(1, old.clone()));
     let odd = dtb(&[("model", b"DHO\0"), ("phandle", &[0, 0, 0, 9])], vec![chosen(b"a\0")]);
-    let e = kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, Some(&old), None, Some(&odd)).unwrap_err();
+    let e = kexec_stage(&mut f.card(), &f.state(), &p, &[pk()], &RUN, BootTrees::new(Some(&old), None, Some(&odd)))
+        .unwrap_err();
     assert!(e.contains("device tree"), "{}", e);
     assert_eq!(f.st().kexec, None);
 }

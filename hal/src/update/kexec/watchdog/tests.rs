@@ -166,6 +166,26 @@ fn device() -> (Device<Fake>, Rc<RefCell<State>>) {
     (Device::new(Fake { state: state.clone(), start: Instant::now() }), state)
 }
 
+pub(in crate::update) fn simulate_reset(at_jump: impl FnOnce()) {
+    let (mut device, state) = device();
+    let result = super::jump(
+        &mut device,
+        || {},
+        |watchdog| {
+            super::reboot(
+                watchdog,
+                || {},
+                || {
+                    at_jump();
+                    "simulated watchdog reset".into()
+                },
+            )
+        },
+    );
+    assert_eq!(result, "simulated watchdog reset");
+    assert_eq!(state.borrow().calls, ["request", "signal", "open", "ping", "close", "remove"]);
+}
+
 #[test]
 fn preflight_checks_pid_and_exact_cmdline_without_changing_anything() {
     let (d, s) = device();

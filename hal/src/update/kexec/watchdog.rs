@@ -27,6 +27,8 @@ mod device;
 mod native;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(in crate::update) use tests::simulate_reset;
 
 #[cfg(target_os = "linux")]
 pub(super) fn preflight() -> Result<(), String> {

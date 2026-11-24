@@ -5,6 +5,7 @@ pub(crate) mod card_check;
 pub(crate) mod messages;
 pub(crate) mod receive;
 pub(crate) mod sign;
+pub(crate) mod slot_status;
 pub(crate) mod storage;
 #[cfg(test)]
 pub(super) mod test_support;

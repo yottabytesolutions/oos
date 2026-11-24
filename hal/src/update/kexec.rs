@@ -19,26 +19,32 @@
 //! only fails from a cold start passes.
 //!
 //! Only an image that knows how to finish such a start can take it: its package says so with the signed line
-//! `trial kexec` (`LINE`), which `oos-update pack` writes. Older packages install the direct way.
+//! `trial kexec` or `trial staged`, which `oos-update pack` writes together. Older packages install the direct way.
 
 use super::card::check_image;
 
 #[cfg(any(target_os = "linux", test))]
 mod arguments;
-#[cfg(any(target_os = "linux", test))]
 mod budget;
 #[cfg(any(target_os = "linux", test))]
 mod evidence;
 #[cfg(target_os = "linux")]
 mod legacy;
 pub(super) mod receive;
+mod stage;
 #[cfg(any(target_os = "linux", test))]
 pub mod undo;
 #[cfg(any(target_os = "linux", test))]
 mod watchdog;
 #[cfg(target_os = "linux")]
 pub use legacy::prepare_jump;
-pub use receive::{flags, receive, record_staged_refusal, staged_package, Receive, HEADER_FILE, STAGED_LINE};
+pub use receive::{
+    announced_staged, flags, install_staged, receive, record_staged_refusal, Receive, StagedError, HEADER_FILE,
+    STAGED_LINE,
+};
+pub use stage::{kexec_missed, kexec_stage, BootTrees, Staged};
+#[cfg(test)]
+pub(super) use {stage::stage_image, watchdog::simulate_reset};
 #[cfg(target_os = "linux")]
 /// Validate watchdog handoff before stopping services; recover only requests whose recorded requester is dead.
 pub fn preflight_watchdog() -> Result<(), String> {
@@ -91,12 +97,12 @@ pub fn segments_from(log: &str) -> u64 {
 
 /// The tree the running kernel got from the loader (or from the kexec start before).
 pub const RUNNING_TREE: &str = "/sys/firmware/fdt";
-/// Kernel command line word of a kexec start: `oos.kexec=install[,downgrade][,force]`.
+/// Kernel command line word of a kexec start: `oos.kexec=install[,staged][,downgrade][,force][,any-model]`.
 pub const KEY: &str = "oos.kexec=";
 
 /// Does this package's image finish a kexec start?
 pub fn announced(m: &super::pkg::Manifest) -> bool {
-    m.extra.iter().any(|(k, v)| k == LINE.0 && v == LINE.1)
+    announced_staged(m) || m.extra.iter().any(|(k, v)| k == LINE.0 && v == LINE.1)
 }
 
 /// The sections of a checked image: kernel, ramdisk, second.
@@ -153,12 +159,21 @@ pub fn newc(files: &[(&str, u32, &[u8])]) -> Vec<u8> {
 /// the running device tree. The kernel unpacks archives one after the other; the second must start at a multiple of 4
 /// (the ramdisk length already is one).
 pub fn initrd(ramdisk: &[u8], package: &[u8], key: &[u8; 32], dt: &[u8]) -> Vec<u8> {
+    initrd_with(ramdisk, PACKAGE, package, key, dt)
+}
+
+/// The initramfs of a slot-based start, carrying the signed header through its terminating empty line.
+pub fn staged_initrd(ramdisk: &[u8], header: &[u8], key: &[u8; 32], dt: &[u8]) -> Vec<u8> {
+    initrd_with(ramdisk, HEADER_FILE, header, key, dt)
+}
+
+fn initrd_with(ramdisk: &[u8], name: &str, payload: &[u8], key: &[u8; 32], dt: &[u8]) -> Vec<u8> {
     let mut b = ramdisk.to_vec();
     b.resize(ramdisk.len().div_ceil(4) * 4, 0);
     let k = format!("{}\n", super::hash::hex(key));
     let n = |p: &'static str| p.trim_start_matches('/');
     b.extend_from_slice(&newc(&[
-        (n(PACKAGE), 0o100600, package),
+        (name.trim_start_matches('/'), 0o100600, payload),
         (n(KEY_FILE), 0o100600, k.as_bytes()),
         (n(DT_FILE), 0o100600, dt),
     ]));
@@ -176,7 +191,22 @@ pub struct Flags {
 /// The command line of the kexec start: the running one (the loader built it from the same device tree) with the word
 /// for the install.
 pub fn cmdline(running: &str, f: Flags) -> String {
-    // initramfs_async=0: the package is unpacked before any driver probes, not alongside them
+    Receive::Legacy(f).cmdline(running)
+}
+
+impl Receive {
+    /// Build the kernel command line for the matching handoff format.
+    pub fn cmdline(self, running: &str) -> String {
+        let (f, staged) = match self {
+            Self::Legacy(flags) => (flags, false),
+            Self::Staged(flags) => (flags, true),
+        };
+        cmdline_for(running, f, staged)
+    }
+}
+
+fn cmdline_for(running: &str, f: Flags, staged: bool) -> String {
+    // Unpack the initramfs before driver probes.
     let mut w: Vec<&str> = running
         .split_whitespace()
         .filter(|w| !w.starts_with(KEY) && !w.starts_with("initramfs_async=") && !w.starts_with("panic="))
@@ -184,6 +214,9 @@ pub fn cmdline(running: &str, f: Flags) -> String {
     w.extend(["initramfs_async=0", "panic=0"]);
     let mut v = String::from(KEY);
     v.push_str("install");
+    if staged {
+        v.push_str(",staged");
+    }
     if f.downgrade {
         v.push_str(",downgrade");
     }

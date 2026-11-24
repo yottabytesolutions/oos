@@ -16,10 +16,13 @@ pub(super) fn write_slot(
 ) -> Result<(), String> {
     // While the slot is being written it holds no valid image.
     state.previous = None;
+    state.staged = None;
+    state.slot_incomplete = true;
     state.event = SLOT_WRITING.into();
     state.save(state_path).map_err(io("writing the update state"))?;
     card.write_image(Region::Slot, image)?;
     state.previous = Some(entry);
+    state.slot_incomplete = false;
     state.save(state_path).map_err(io("writing the update state"))
 }
 
@@ -48,7 +51,10 @@ impl State {
                     }
                 }
                 "mode" => s.persist = v == "persist",
+                "staged" => s.staged = staged_entry(v),
+                "slot.incomplete" => s.slot_incomplete = v == "yes",
                 "kexec" if !v.is_empty() => s.kexec = Some(v.into()),
+                "kexec.bytes" => s.kexec_payload = v.parse().ok(),
                 "event" => s.event = v.into(),
                 _ => {}
             }
@@ -58,6 +64,15 @@ impl State {
         };
         s.current = entry(cur);
         s.previous = entry(prev);
+        if s.staged.is_some() {
+            s.previous = None;
+            s.slot_incomplete = true;
+        }
+        if s.kexec.is_none() {
+            s.kexec_payload = None;
+        }
+        // Older updates recorded an interrupted slot write only in the event.
+        s.slot_incomplete |= s.previous.is_none() && s.event == SLOT_WRITING;
         s
     }
 
@@ -67,6 +82,12 @@ impl State {
             if let Some(e) = e {
                 t.push_str(&format!("{0}.build {1}\n{0}.sha256 {2}\n{0}.len {3}\n", n, e.build, hex(&e.sha256), e.len));
             }
+        }
+        if let Some(e) = &self.staged {
+            t.push_str(&format!("staged {} {} {}\n", e.build, hex(&e.sha256), e.len));
+        }
+        if self.slot_incomplete {
+            t.push_str("slot.incomplete yes\n");
         }
         if let Some(n) = self.trial {
             t.push_str(&format!("trial {}\n", n));
@@ -80,11 +101,38 @@ impl State {
         t.push_str(if self.persist { "mode persist\n" } else { "mode oneshot\n" });
         if let Some(b) = &self.kexec {
             t.push_str(&format!("kexec {}\n", b.replace('\n', " ")));
+            if let Some(bytes) = self.kexec_payload {
+                t.push_str(&format!("kexec.bytes {bytes}\n"));
+            }
         }
         if !self.event.is_empty() {
             t.push_str(&format!("event {}\n", self.event.replace('\n', " ")));
         }
         t
+    }
+
+    pub(super) fn take_kexec_payload(&mut self) -> String {
+        self.kexec_payload.take().map_or_else(String::new, |bytes| format!(" ({bytes} bytes kexec payload)"))
+    }
+
+    /// Text explaining why the slot cannot supply a rollback image, when one is unavailable.
+    pub fn rollback_slot_status(&self) -> Option<String> {
+        self.previous.is_none().then(|| self.missing_rollback())
+    }
+
+    pub(super) fn missing_rollback(&self) -> String {
+        if let Some(candidate) = &self.staged {
+            let build = short(&candidate.build);
+            if self.kexec.is_some() {
+                format!("slot holds a staged candidate for build {build}, no rollback image")
+            } else {
+                format!("slot reserved for staged candidate {build}, no rollback image")
+            }
+        } else if self.slot_incomplete {
+            "no rollback image (the slot was used for an update)".into()
+        } else {
+            "no rollback image (nothing was kept by an update)".into()
+        }
     }
 
     pub fn load(path: &Path) -> std::io::Result<State> {
@@ -133,6 +181,14 @@ impl State {
             ""
         }
     }
+}
+
+fn staged_entry(text: &str) -> Option<Entry> {
+    let (build_and_hash, len) = text.rsplit_once(' ')?;
+    let (build, sha) = build_and_hash.rsplit_once(' ')?;
+    let len = len.parse().ok()?;
+    let sha256 = unhex(sha)?.try_into().ok()?;
+    (!build.is_empty() && len > 0).then(|| Entry { build: build.into(), sha256, len })
 }
 
 /// The image passed its trial. Returns true when it was on trial. `expect`: only when the state still names this

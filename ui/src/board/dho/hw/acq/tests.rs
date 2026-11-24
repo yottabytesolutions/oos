@@ -14,6 +14,7 @@ mod calibration_hold;
 mod deposit;
 mod picture;
 mod raw;
+mod record_selection;
 mod ring_validity;
 mod side_service;
 mod sim;

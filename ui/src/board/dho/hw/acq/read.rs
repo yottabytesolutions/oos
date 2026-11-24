@@ -1,0 +1,272 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+
+use super::super::{
+    batch, batch_timing, la_record, lifecycle, plan::raw_newest, raw, stop, window::deep_raw_settings, Settings,
+};
+use super::{status, BatchState, Io, Request};
+use crate::{
+    board::{HwShared, MaskRead, Shared, ZoneRead},
+    drawpipe::{clock::StageClock, TapReservation},
+    perfguard::deep::acq_lock as lock,
+};
+use oos_hal::dho::{
+    bus::{Bar1, Bus},
+    hz, mask, seq, zone,
+};
+use std::{fs::File, time::Instant};
+
+/// Disjoint hardware borrows while a batch's register-settling policy is active.
+pub(super) struct ReadIo<'a, B> {
+    pub(super) bar: B,
+    pub(super) c2h: &'a mut File,
+    pub(super) state: &'a mut seq::State,
+}
+
+impl<'a> ReadIo<'a, Bar1> {
+    pub(super) fn new(io: &'a mut Io) -> ReadIo<'a, impl Bus + 'a> {
+        ReadIo { bar: io.bar.batch(), c2h: &mut io.c2h, state: &mut io.state }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct Capture<'a> {
+    pub(super) settings: &'a Settings,
+    pub(super) params: &'a hz::Params,
+    pub(super) request: &'a Request,
+    pub(super) uncapped: u32,
+    pub(super) first: u32,
+}
+
+pub(super) struct Completed {
+    pub(super) count: u32,
+    pub(super) batch_ms: f32,
+    pub(super) clock: StageClock,
+}
+
+pub(super) struct Readout {
+    pub(super) readings: Readings,
+    pub(super) raw_frame: Option<batch::DecodedRecord>,
+    pub(super) la: Option<crate::ui::la::LaRec>,
+}
+
+pub(super) struct Readings {
+    mask: Option<MaskRead>,
+    zone: Option<ZoneRead>,
+    fired: Option<bool>,
+    deep_ok: bool,
+}
+
+impl Readings {
+    pub(super) fn publish(self, g: &mut Shared, cols: Option<&[mask::Column]>, stats: Option<(u32, usize)>) {
+        g.trig_fired = Some((g.trig_fired.map_or(1, |old| old.0 + 1), self.fired));
+        g.deep_ok = self.deep_ok;
+        let cols = cols.filter(|_| self.mask.is_some());
+        g.mask = self.mask.map(|mut next| {
+            next.n = g.mask.map_or(1, |old| old.n + 1);
+            next
+        });
+        g.zone = self.zone.map(|mut next| {
+            next.n = g.zone.map_or(1, |old| old.n + 1);
+            next
+        });
+        match (cols, g.mask_table.as_ref()) {
+            (Some(cols), Some(table)) if mask_entries(cols).eq(table.iter().copied()) => {}
+            (Some(cols), _) => g.mask_table = Some(std::sync::Arc::new(mask_entries(cols).collect())),
+            (None, _) => g.mask_table = None,
+        }
+        if let Some((decoded, skipped)) = stats {
+            g.decoded += u64::from(decoded);
+            g.dropped += skipped as u64;
+        }
+    }
+}
+
+impl BatchState {
+    pub(super) fn fill(
+        &mut self,
+        io: &mut ReadIo<'_, impl Bus>,
+        capture: &Capture<'_>,
+        (ahead, mut timing): (bool, batch_timing::SourceTiming),
+        (out, reserved, prearm): (&HwShared, bool, bool),
+        plan: &super::super::dma_source::ArmPlan<'_>,
+    ) -> Result<Completed, String> {
+        let (b, p, request) = (capture.settings, capture.params, capture.request);
+        let asked = (request.want.as_ref(), request.mode);
+        let wait = stop::FirstWait::default();
+        let changed = || wait.canceled(&lock(out), plan, asked, (b.auto, reserved), Instant::now());
+        let started = Instant::now();
+        let fill_ms = self.fill.plan(started, crate::pacing::next_step_after, crate::pacing::ready_ms());
+        let allowed = |count| capture_read_allowed(plan, out, &mut self.record_wait, asked, count);
+        // The HAL owns the fill, ring readout and C2H sequence as one cancellation-aware operation.
+        let count = lifecycle::batch(b.single, ahead, || {
+            seq::time::acquire_batch_observed(
+                io.state,
+                b,
+                p,
+                &mut io.bar,
+                io.c2h,
+                self.dma.destination(),
+                ahead,
+                (timing.wait(fill_ms).from_frame(capture.first), &seq::time::Real),
+                |_| {},
+                changed,
+                (|| plan.serial() && plan.capture_changed(&lock(out), asked), allowed),
+                |phase| timing.observe(phase),
+            )
+        })
+        .inspect_err(|error| {
+            let disarm = stop::disarm_after(error, &lock(out), plan.serial());
+            if disarm {
+                disarm_capture(io, self.dma.destination(), out);
+            }
+        })?;
+        let read_at = Instant::now();
+        let batch_ms = (read_at - started).as_secs_f32() * 1e3;
+        let read_ms = timing.read_ms();
+        crate::pacing::batch(batch_ms, count, seq::frames(b, p), fill_ms, read_ms);
+        let pre_ms = timing.pre_ms(started);
+        self.fill.done(pre_ms + read_ms);
+        self.cap.done(
+            count,
+            read_ms,
+            pre_ms,
+            capture.uncapped,
+            prearm && super::super::window::prearm_keeps_replay(b, p, None),
+        );
+        Ok(Completed { count, batch_ms, clock: timing.complete(request.identity, read_at, count) })
+    }
+
+    pub(super) fn read(
+        &mut self,
+        io: &mut ReadIo<'_, impl Bus>,
+        capture: &Capture<'_>,
+        completed: &Completed,
+        (out, probe): (&HwShared, crate::board::dho::switches::HeaderProbe),
+        tap: Option<&std::sync::Arc<TapReservation>>,
+    ) -> Readout {
+        let (b, p) = (capture.settings, capture.params);
+        let count = completed.count;
+        let live = raw_newest(b, p);
+        crate::compress::note_batch_k(if live { b.compress } else { 1 });
+        let la = batch::read_la(io.state, (b, p), (&mut io.bar, io.c2h), &mut self.la_fails, |message| {
+            status(out, message);
+        })
+        .map(|words| la_record(words, b, p));
+        let raw_frame = raw::replay_due(count, live, &mut self.raw.live)
+            .then(|| seq::raw_settings(b))
+            .and_then(|settings| self.read_raw(io, capture, (&settings, count), (out, probe), (tap, false)));
+        let deep_settings = deep_raw_settings(b, p);
+        let deep_ok = deep_settings.is_some();
+        let raw_frame = raw_frame.or_else(|| {
+            let want = capture.request.run.deep.filter(|_| count > 0)?;
+            let settings = deep_settings
+                .filter(|ds| crate::deepmeas::due(want, self.raw.deep, Instant::now(), seq::frame_bytes(ds, p)))?;
+            self.raw.deep = Some(Instant::now());
+            self.read_raw(io, capture, (&settings, count), (out, probe), (tap, true))
+        });
+        let fired = batch::read_trigger(&mut io.bar);
+        let mask = mask_read(io, b, p);
+        let zone = zone_read(io, b, (count, completed.batch_ms));
+        Readout { readings: Readings { mask, zone, fired, deep_ok }, raw_frame, la }
+    }
+
+    pub(super) fn read_raw(
+        &mut self,
+        io: &mut ReadIo<'_, impl Bus>,
+        capture: &Capture<'_>,
+        (b, count): (&Settings, u32),
+        (out, probe): (&HwShared, crate::board::dho::switches::HeaderProbe),
+        (tap, deep): (Option<&std::sync::Arc<TapReservation>>, bool),
+    ) -> Option<batch::DecodedRecord> {
+        let p = capture.params;
+        let started = deep.then(Instant::now);
+        let index = capture.first + count - 1;
+        let read = seq::read_raw_again(io.state, b, p, &mut io.bar, io.c2h, &mut self.raw.dma, index, |_| {});
+        if let Err(e) = read {
+            let what = if deep { "deep window" } else { "newest frame" };
+            status(out, format!("raw read of the {}: {}", what, e));
+            return None;
+        }
+        let decoded_at = started.map(|_| Instant::now());
+        let cores = capture.request.run.cores.then_some(&mut self.raw.cores);
+        let frame = raw::decode_raw(self.raw.dma.data(), (b, p), probe, cores, tap);
+        if let Some((started, at)) = started.zip(decoded_at) {
+            use crate::deepmeas::cost;
+            cost::set(&cost::DMA_US, at - started);
+            cost::set(&cost::DECODE_US, at.elapsed());
+            cost::READS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        frame
+    }
+}
+
+fn capture_read_allowed(
+    plan: &super::super::dma_source::ArmPlan<'_>,
+    out: &HwShared,
+    record_wait: &mut super::publication::RecordWait,
+    asked: stop::Asked<'_>,
+    count: u32,
+) -> bool {
+    let interrupted = || stop::admission_interrupted(&lock(out), plan, asked);
+    if plan.read_ahead() && plan.uses_record_queue() {
+        while record_wait.poll(out, None, interrupted, |message| status(out, message)) {
+            if interrupted() {
+                break;
+            }
+        }
+    }
+    let allowed = plan.read_allowed(interrupted, || stop::read_obsolete(&lock(out), plan, asked));
+    if !allowed {
+        crate::drawpipe::counters().metrics.source_capture_discarded(count);
+    }
+    allowed
+}
+
+fn disarm_capture(io: &mut ReadIo<'_, impl Bus>, dma: &mut oos_hal::dho::bus::DmaBuf, out: &HwShared) {
+    let result = lifecycle::disarm(|| seq::execute_bus(&io.state.disarm_steps(), &mut io.bar, io.c2h, dma, |_| {}));
+    if let Err(error) = result {
+        status(out, format!("disarm: {error}"));
+    }
+}
+
+fn mask_entries(cols: &[mask::Column]) -> impl Iterator<Item = [u8; 4]> + '_ {
+    cols.iter().map(|col| [col.lo, col.hi, col.lo_en as u8, col.hi_en as u8])
+}
+
+fn mask_read(io: &mut ReadIo<'_, impl Bus>, b: &Settings, p: &hz::Params) -> Option<MaskRead> {
+    let ((ctrl, m), run) = io.state.mask_ctrl().zip(b.hwmask.as_ref()).zip(io.state.mask_run)?;
+    let raw = mask::read(&mut io.bar, ctrl);
+    Some(MaskRead {
+        ch: m.ch,
+        slot: run.0,
+        ctrl,
+        raw: [raw.frames_lo, raw.frames_hi, raw.fails_lo, raw.fails_hi],
+        frames: raw.frames(),
+        fails: raw.fails(),
+        n: 0,
+        scale: b.ch[m.ch].scale,
+        offset: b.ch[m.ch].offset,
+        gain: io.state.gain[m.ch],
+        points: p.memsel,
+        chans: b.mask,
+    })
+}
+
+fn zone_read(io: &mut ReadIo<'_, impl Bus>, b: &Settings, (count, batch_ms): (u32, f32)) -> Option<ZoneRead> {
+    let ((ctrl, z), run) = io.state.zone_ctrl().zip(b.hwzone.as_ref()).zip(io.state.zone_run)?;
+    let r = zone::read(&mut io.bar, ctrl);
+    let c = r.counters;
+    Some(ZoneRead {
+        ch: z.ch,
+        slot: run.0,
+        ctrl,
+        raw: [r.s4030, r.s4038, c.frames_lo, c.frames_hi, c.fails_lo, c.fails_hi],
+        frames: c.frames(),
+        armed: r.armed(),
+        pass: r.pass(),
+        in_cycle: r.in_cycle(),
+        state: r.state(),
+        n: 0,
+        batch: (count, b.frames, batch_ms),
+    })
+}

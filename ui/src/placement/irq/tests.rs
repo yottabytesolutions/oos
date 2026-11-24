@@ -59,3 +59,10 @@ fn applied_irq_pairs_and_empty_plan_are_logged() {
     assert_eq!(text.matches("irq_placement irq=31 cpu=2").count(), 1);
     assert_eq!(text.matches("irq_placement empty_plan").count(), 1);
 }
+
+#[test]
+fn irq_startup_uses_all_little_cores() {
+    let cores = Cores { big: 0x30, little: 0x0f };
+    let switches = crate::sysconf::Switches::parse(&|_| None, "", "", cores);
+    assert_eq!(startup_plan(&switches, INTERRUPTS), [Assignment { irq: 78, cpu: 3 }, Assignment { irq: 31, cpu: 2 }]);
+}

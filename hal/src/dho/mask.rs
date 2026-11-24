@@ -445,9 +445,7 @@ impl Raw {
 /// Latch (0, 1, 0 on bit 28 of the control shadow) and read both counters.
 pub fn read(bus: &mut impl Bus, s1190: u32) -> Raw {
     let base = s1190 & !ctrl::LATCH;
-    bus.wr(CTRL, base);
-    bus.wr(CTRL, base | ctrl::LATCH);
-    bus.wr(CTRL, base);
+    bus.apply(&[(CTRL, base), (CTRL, base | ctrl::LATCH), (CTRL, base)]);
     Raw {
         frames_lo: bus.rd(FRAMES_LO),
         frames_hi: bus.rd(FRAMES_HI),

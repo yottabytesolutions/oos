@@ -10,11 +10,7 @@ impl Scpi {
     pub fn disconnected() -> Self {
         Self {
             transport: Default::default(),
-            wav_src: WaveId::Ch(0),
-            wav_fmt: 0,
-            wav_mode: 0,
-            wav_start: 1,
-            wav_stop: 0,
+            waveform: Default::default(),
             err: Vec::new(),
             event_status: 0,
             error_serial: 0,

@@ -78,6 +78,23 @@ fn settings(scpi: &mut Scpi, ui: &mut Ui, nodes: &[&str], query: bool, arg: &str
         if let Some(raw) = &scpi.transport.endpoint.io {
             text.push_str(&raw.ports().enqueue().text());
         }
+        use std::fmt::Write;
+        let on_off = |on| if on { "on" } else { "off" };
+        let switches = ui.switches();
+        let _ = write!(
+            text,
+            " acq.dump={} acq.frame_header={} acq.stop_slot={} gpu.cpu={} gpu.pinned_cpu={}",
+            on_off(switches.board.batch_dump.on()),
+            on_off(switches.board.header_probe.on()),
+            switches.source.stop_slot().as_str(),
+            switches.perf.gpu_cpu.as_str(),
+            ui.gpu_pinned_cpu().map_or_else(|| "none".into(), |cpu| cpu.to_string()),
+        );
+        text.push_str(&board().capture_state(&ui.src));
+        text.push_str(
+            &crate::drawpipe::counters()
+                .pipeline_text(ui.switches().source.work_budget(), crate::pacing::step_missed()),
+        );
         return Some(text_reply(&text));
     }
     // Acquire > Draw path: FRAMes (Standard) or BATCh (default); the `pipe` part of
@@ -201,4 +218,63 @@ fn dvm_lane(scpi: &mut Scpi, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<
         },
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn state_reports_startup_diagnostics_switches() {
+        let _scope = crate::drawpipe::test_scope::Scope::new();
+        let mut scpi = Scpi::open(0u16, false);
+        let canvas = Canvas::new(1, 1);
+        for (value, slot, reported) in [("off", "", "zero"), ("on", "acq.stop_slot = alternate", "alternate")] {
+            let conf = format!("acq.dump = {value}\nacq.frame_header = {value}\n{slot}");
+            let switches = crate::sysconf::Switches::parse(&|_| None, &conf, "", Default::default());
+            let host = crate::ui::host::Host::headless().with_switches(switches);
+            let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 }, host);
+            let reply = scpi.exec_line(&mut ui, &canvas, ":SYSTem:STATe?");
+            let state = String::from_utf8(reply).unwrap();
+            assert!(state.contains(&format!("acq.dump={value} acq.frame_header={value}")), "{state}");
+            assert!(state.split_whitespace().any(|word| word == format!("acq.stop_slot={reported}")), "{state}");
+        }
+    }
+
+    #[test]
+    fn state_reports_capture_only_after_the_current_hardware_frame() {
+        let _scope = crate::drawpipe::test_scope::Scope::new();
+        let shared = crate::board::HwShared::default();
+        let mut scpi = Scpi::disconnected();
+        let canvas = Canvas::new(1, 1);
+        let switches = crate::sysconf::Switches::parse(
+            &|_| None,
+            "acq.capture = peak:4\nacq.capture.inferred = on",
+            "",
+            Default::default(),
+        );
+        let host = crate::ui::host::Host::headless().with_switches(switches);
+        let mut ui = Ui::new(crate::wave::Source::Hw { shared: shared.clone(), seen: 0 }, host);
+        let state =
+            |scpi: &mut Scpi, ui: &mut Ui| String::from_utf8(scpi.exec_line(ui, &canvas, ":SYSTem:STATe?")).unwrap();
+        assert!(state(&mut scpi, &mut ui).contains("acq.capture=pending acq.capture.stored_points=0"));
+        {
+            let mut g = crate::perfguard::deep::acq_lock(&shared);
+            let mut want = crate::board::Want { tdiv: 1e-6, depth: 14_064, window: None, ..Default::default() };
+            let p = want.reduce_capture(true, 4, true).unwrap();
+            let id = g.acquisition.identity();
+            g.want = Some(want);
+            g.frame = std::sync::Arc::new(crate::board::Frame {
+                seq: 1,
+                cfg: id.gen(),
+                stamp: id.epoch(),
+                acq: (p.rate as f64, p.memsel as usize),
+                ..Default::default()
+            });
+        }
+        let active = state(&mut scpi, &mut ui);
+        assert!(active.contains("acq.capture.requested=peak:4 acq.capture.inferred=on"));
+        assert!(active.contains("acq.capture=peak:4 acq.capture.stored_points=3512"));
+        assert!(active.contains(" bytes=0/0 "));
+    }
 }

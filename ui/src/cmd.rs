@@ -149,12 +149,19 @@ pub fn stat_text(ui: &Ui) -> String {
     let (acq, used, dropped) = crate::drawpipe::counters().read();
     let measured = crate::drawpipe::counters().measured.load(std::sync::atomic::Ordering::Relaxed);
     let (pipeline, route) = crate::ui::draw_status(ui);
+    let perf = ui.switches().perf;
+    let period = crate::pacing::picture_period();
     let gpu = format!(
-        "{} pipeline {:?} route={} interp {:?} acquired {} used {} dropped {} measured {} compress k {}{}",
+        "{} pipeline {:?} route={} interp {:?} {} pacing.clock={} pacing.flip_divisor={} pacing.period_us={} pacing.pipeline_budget_us={} acquired {} used {} dropped {} measured {} compress k {}{}",
         gpu,
         pipeline,
         route,
         ui.switches().interp,
+        ui.switches().source,
+        perf.pacing_clock.as_str(),
+        perf.flip_divisor as u32,
+        period.as_micros(),
+        crate::drawpipe::budget::pipeline_budget(period).as_micros(),
         acq,
         used,
         dropped,
@@ -164,7 +171,7 @@ pub fn stat_text(ui: &Ui) -> String {
     );
     // the graphics chosen (the GPU part above only while the GPU really draws) and the monitor
     let hdmi = ui.hdmi_out.map_or(" hdmi off".to_string(), |(w, h)| format!(" hdmi {}x{} {:?}", w, h, ui.m.hdmi));
-    // the GPU's time per frame of each screen: a monitor frame comes every second frame, the pair has 2/30 s
+    // A monitor frame comes every second panel picture.
     let screens = ui.t_gpu_screens.map_or(String::new(), |(p, m)| {
         format!(" gpu panel {:.1}{} ms", p, m.map_or(String::new(), |m| format!(" monitor {:.1}", m)))
     });
@@ -181,8 +188,8 @@ pub fn stat_text(ui: &Ui) -> String {
     // the hardware's frames: decoded, and dropped unseen when the screen fell behind
     let gpu = match ui.src.hw_frames() {
         Some((d, x)) => format!(
-            "{} hw frames {} dropped {} fast {:.1} ms (place {:.1} draw {:.1} of it fold {:.1}, {:.0} frames a call) take {} map {}x{}",
-            gpu, d, x, ui.t_fast, ui.t_fast_ab.0, ui.t_fast_ab.1, ui.t_fast_fold, ui.fast_n, ui.fast_take as usize, ui.ph.w, ui.ph.h
+            "{} hw frames {} dropped {} fast {:.1} ms (place {:.1} draw {:.1} of it fold {:.1}, {:.0} frames a call) map {}x{}",
+            gpu, d, x, ui.t_fast, ui.t_fast_ab.0, ui.t_fast_ab.1, ui.t_fast_fold, ui.fast_n, ui.ph.w, ui.ph.h
         ),
         None => gpu,
     };

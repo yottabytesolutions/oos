@@ -1,6 +1,6 @@
 # Statics with interior mutability that are not metrics: 1 static <file> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
-1 static ui/src/board/dho/hw.rs mask_map_cell::MAP
+1 static ui/src/board/dho/hw/comparator.rs mask_map_cell::MAP
 1 static ui/src/board/dho/hw/header.rs log::LINES
 1 static ui/src/compress.rs LAST_K
 1 static ui/src/drawpipe.rs pipe::P

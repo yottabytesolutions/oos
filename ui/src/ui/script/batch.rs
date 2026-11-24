@@ -32,6 +32,7 @@ struct Pending {
 pub struct BatchScript {
     source: ScriptedBatchSource,
     record_only: bool,
+    zoom_records: bool,
     spare: Option<ScriptBytes>,
     id: usize,
     pending: Option<Pending>,
@@ -49,12 +50,18 @@ impl BatchScript {
         Self {
             source: scripted::source(kind, 0x9e3779b97f4a7c15),
             record_only: matches!(kind, BatchKind::Roll | BatchKind::Scan | BatchKind::HardwareAverage),
+            zoom_records: false,
             spare: None,
             id: 0,
             pending: None,
             decoded_records: Arc::default(),
             counts: Counts::default(),
         }
+    }
+
+    pub(super) fn with_zoom_records(mut self, enabled: bool) -> Self {
+        self.zoom_records = enabled;
+        self
     }
 
     pub fn feed_step(&mut self, ui: &mut Ui) -> Result<(), String> {
@@ -64,7 +71,8 @@ impl BatchScript {
         if self.pending.is_some() {
             return Err(format!("batch {} still in flight", self.id));
         }
-        let Some(identity) = running_identity(ui, self.record_only) else { return Ok(()) };
+        let records = self.record_only || (self.zoom_records && ui.m.zoom);
+        let Some(identity) = running_identity(ui, records) else { return Ok(()) };
         let Source::Hw { shared, .. } = &ui.src else { return Err("scripted source replaced".into()) };
         if !lock(shared).queue.is_empty() {
             return Err(format!("batch {} left queued frames", self.id));

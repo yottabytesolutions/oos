@@ -9,10 +9,16 @@ pub(super) struct BatchPicture {
     pub(super) frames: u32,
     pub(super) tap_statistics: Option<deep_draw::TapStatistics>,
     window: crate::picture::DepositWindow,
+    owner: crate::drawpipe::stage::owner::Owner,
+    capture: capture::CaptureStatus,
 }
 
 pub(super) fn release_window(ui: &mut Ui) {
+    let wake = ui.batch_picture.owner.take_wake();
     ui.batch_picture = BatchPicture::default();
+    if let Some(wake) = wake {
+        ui.batch_picture.owner.set_wake(wake);
+    }
 }
 
 pub(super) fn reset_window(ui: &mut Ui) {
@@ -21,29 +27,40 @@ pub(super) fn reset_window(ui: &mut Ui) {
     }
 }
 
-pub(super) fn window_time(ui: &mut Ui, before: f64) -> Option<Instant> {
-    if PERSIST[ui.m.persist].1 == 0.0
-        && ui.m.run == RunState::Run
-        && !ui.record_mode()
-        && ui.m.draw_batch
-        && ui.fast_ok()
-    {
-        Some(ui.host.picture_time(before))
-    } else {
-        reset_window(ui);
-        None
-    }
+pub(super) fn zoom_view(ui: &Ui) -> drawpipe::route::ZoomView {
+    drawpipe::route::ZoomView::new((ui.phz.w, ui.phz.h), ui.zoom_vfactor, ui.zoom_vcenter)
 }
 
-fn merge(ui: &mut Ui, pipe: &Pipe, clear: &mut bool, now: Option<Instant>) -> Accepted {
-    let window = now.map(|now| (&mut ui.batch_picture.window, now));
+pub(super) fn prepare_window(ui: &mut Ui) -> bool {
+    let active = owner::render_owner_active(ui);
+    if !active {
+        ui.batch_picture.owner.clear();
+        reset_window(ui);
+    }
+    active
+}
+
+fn merge(ui: &mut Ui, pipe: &Pipe, clear: &mut bool, keep_window: bool) -> Accepted {
+    let window = keep_window.then_some(&mut ui.batch_picture.window);
     let stats = Stats { edges: &mut ui.fast_edges, off: &mut ui.fast_off };
-    pipe.accept_into(&mut ui.ph, clear, stats, window)
+    let picture = crate::picture::PerMap::new(&mut ui.ph, ui.m.zoom.then_some(&mut ui.phz));
+    ui.batch_picture.owner.compose_picture(pipe, picture, clear, stats, window)
 }
 
 fn accept(ui: &mut Ui, d: Accepted, composition: &mut Composition) {
     if d.triggered > 0 {
         ui.m.status = TrigStatus::Triggered;
+    }
+    #[cfg(feature = "private-picture-counts")]
+    if d.frames > 0 {
+        composition.oldest = if composition.merged == 0 {
+            d.oldest
+        } else {
+            match (composition.oldest, d.oldest) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                _ => None,
+            }
+        };
     }
     composition.merged += d.frames;
     (composition.deposit, composition.newest) = (composition.deposit + d.frames as usize, d.newest);
@@ -59,19 +76,80 @@ pub(super) struct Fast {
     pub(super) ms: f32,
 }
 
+pub(super) fn intake_count(ui: &Ui, fast: bool, taps: usize) -> usize {
+    match ui.m.trig_type {
+        // Peak read-outs that reach the legacy queue are still consumed in FIFO order.
+        _ if fast && (ui.m.acq == AcqMode::Peak || ui.m.zoom) => taps.max(crate::board::RECORDS_PER_STEP),
+        _ if fast => taps.max(1),
+        _ if ui.src.is_hw() => crate::board::RECORDS_PER_STEP,
+        TrigType::Edge | TrigType::Pattern => 6,
+        TrigType::Video => 1,
+        _ => 2,
+    }
+}
+
+pub(super) struct RecordDraw {
+    pub(super) records: u64,
+    pub(super) elapsed: Duration,
+}
+
+impl RecordDraw {
+    pub(super) fn new(queued: usize, elapsed: Duration) -> Self {
+        Self { records: queued as u64, elapsed: if queued == 0 { Duration::ZERO } else { elapsed } }
+    }
+
+    pub(super) fn acquired(&mut self, tap: Option<bool>, elapsed: impl FnOnce() -> Duration) -> bool {
+        let record = tap == Some(false);
+        if record {
+            self.records += 1;
+            self.elapsed += elapsed();
+        }
+        record
+    }
+
+    pub(super) fn placed(&mut self, record: bool, elapsed: Duration) -> Duration {
+        if record {
+            self.elapsed += elapsed;
+        }
+        elapsed
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn record_draw_cost_includes_queued_records_and_excludes_deposit_taps() {
+    let mut cost = RecordDraw::new(3, Duration::from_millis(6));
+    let tap = cost.acquired(Some(true), || panic!("a deposit tap contributes no record-route cost"));
+    cost.placed(tap, Duration::from_millis(10));
+    assert!(!cost.acquired(None, || panic!("an empty read contributes no record-route cost")));
+    let record = cost.acquired(Some(false), || Duration::from_millis(1));
+    cost.placed(record, Duration::from_millis(1));
+    assert_eq!((cost.records, cost.elapsed), (4, Duration::from_millis(8)));
+    assert_eq!(RecordDraw::new(0, Duration::from_millis(6)).elapsed, Duration::ZERO);
+}
+
+pub(super) fn place_records(
+    frames: &[std::sync::Arc<crate::board::Frame>],
+    plan: impl Fn(&std::sync::Arc<crate::board::Frame>) -> crate::picture::deposit::standard::FastFrame + Sync,
+) -> Vec<crate::picture::deposit::standard::FastFrame> {
+    let placed = crate::fastdraw::par_map(frames, plan);
+    drawpipe::counters().routes.add(drawpipe::route::Route::Record, frames.len() as u64);
+    placed
+}
+
 pub(super) fn fast(
     ui: &mut Ui,
     sw: &crate::sysconf::Switches,
     clear: &mut bool,
-    window_now: Option<Instant>,
+    keep_window: bool,
     composition: &mut Composition,
     draw: &mut [Duration; 5],
 ) -> Fast {
     let started = Instant::now();
-    let frames = ui.src.drain_newest(ui.fast_max());
+    let frames = if ui.m.acq == AcqMode::Peak || ui.m.zoom { Vec::new() } else { ui.src.drain_newest() };
     let before_merge = Instant::now();
     let pipe = crate::drawpipe::pipe(sw);
-    let merged = pipe.map(|pipe| merge(ui, pipe, clear, window_now));
+    let merged = pipe.map(|pipe| merge(ui, pipe, clear, keep_window));
     let after_merge = Instant::now();
     if !frames.is_empty() && std::mem::take(clear) {
         reset_window(ui);
@@ -94,9 +172,7 @@ pub(super) fn fast(
     draw[1] += before_merge - started + after_merge.elapsed();
     let ms = draw[1].as_secs_f32() * 1e3;
     ui.t_fast += 0.05 * (ms - ui.t_fast);
-    if result.frames > 0 && ms > 0.0 {
-        ui.fast_take = fast_take_next(ui.fast_take, result.frames, ms, ui.fast_budget());
-    }
+
     let processing = Instant::now();
     if let Some(d) = merged {
         result.window_frames = d.window_frames;
@@ -231,6 +307,8 @@ pub(super) struct Composition {
     pub(super) record: usize,
     pub(super) newest: Option<std::time::Instant>,
     pub(super) merged: u64,
+    #[cfg(feature = "private-picture-counts")]
+    pub(super) oldest: Option<std::time::Instant>,
     pub(super) redrawn: usize,
 }
 
@@ -244,6 +322,9 @@ impl Composition {
         eligibility: PictureEligibility,
     ) -> usize {
         let (fast, records) = deep_draw::record(ui, rec, interp, input, eligibility);
+        if ui.src.is_hw() && eligibility == PictureEligibility::Drawable {
+            drawpipe::counters().routes.add(drawpipe::route::Route::Record, (fast + records) as u64);
+        }
         self.deposit += fast;
         self.record += records;
         self.redrawn += if eligibility == PictureEligibility::Redraw { fast + records } else { 0 };
@@ -252,7 +333,18 @@ impl Composition {
 }
 
 pub(super) fn account_picture(ui: &Ui, records: usize, composition: Composition) {
+    #[cfg(not(feature = "private-picture-counts"))]
     let Composition { deposit, record, newest, merged, redrawn } = composition;
+    #[cfg(feature = "private-picture-counts")]
+    let Composition {
+        deposit,
+        record,
+        newest,
+        merged,
+        redrawn,
+        #[cfg(feature = "private-picture-counts")]
+        oldest,
+    } = composition;
     let counters = crate::drawpipe::counters();
     crate::drawpipe::Counters::add(&counters.used, records as u64);
     if ui.src.is_hw() && counters.diagnostics_enabled() {
@@ -262,6 +354,16 @@ pub(super) fn account_picture(ui: &Ui, records: usize, composition: Composition)
             crate::drawpipe::Counters::add(&counters.deposited, direct);
         }
     }
+    #[cfg(feature = "private-picture-counts")]
+    if ui.src.is_hw()
+        && ui.m.run == RunState::Run
+        && !ui.record_mode()
+        && ui.m.draw_batch
+        && ui.fast_ok()
+        && counters.diagnostics_enabled()
+    {
+        counters.timing.picture_counts().observed(merged, oldest.filter(|_| merged > 0), records as u64 - merged);
+    }
     crate::pacing::composition(deposit, record, newest.map(|t| t.elapsed().as_secs_f32() * 1e3));
     crate::pacing::picture(records + redrawn);
 }
@@ -269,9 +371,16 @@ pub(super) fn account_picture(ui: &Ui, records: usize, composition: Composition)
 pub(super) fn finish(ui: &mut Ui, parts: [std::time::Duration; 5], records: usize) {
     ui.ph.publish();
     ui.phz.publish();
+    #[cfg(feature = "private-picture-counts")]
+    crate::drawpipe::counters().timing.picture_counts().published();
     let timing = change::timing_mut(ui);
     timing.draw_step(parts);
     if crate::drawpipe::counters().diagnostics_enabled() {
         timing.picture_frames(records);
     }
 }
+
+pub(crate) mod capture;
+#[cfg(all(test, feature = "private-picture-counts"))]
+mod count_tests;
+pub(crate) mod owner;

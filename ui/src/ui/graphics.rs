@@ -9,6 +9,15 @@
 use super::*;
 
 impl Ui {
+    pub(crate) fn gpu_pinned_cpu(&self) -> Option<usize> {
+        self.host.runtime().gpu_pinned_cpu
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn set_gpu_pinned_cpu(&mut self, cpu: Option<usize>) {
+        self.host.runtime_mut().gpu_pinned_cpu = cpu;
+    }
+
     pub(super) fn graphics_kind(it: Item) -> Option<Kind> {
         (it == Item::Graphics).then_some(Kind::Choice)
     }
@@ -65,6 +74,18 @@ mod tests {
         assert!(crate::sysconf::SysConf::parse(&u.sys.text()).0.gpu);
         // a file without the line (older versions): the default
         assert!(crate::sysconf::SysConf::parse("ntp = off\n").0.gpu);
+    }
+
+    #[test]
+    fn scpi_state_distinguishes_the_gpu_cpu_switch_from_the_observed_pin() {
+        let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
+        let cv = Canvas::new(1, 1);
+        let mut scpi = crate::scpi::Scpi::disconnected();
+        for (pin, expected) in [(Some(5), "5"), (None, "none")] {
+            ui.set_gpu_pinned_cpu(pin);
+            let state = String::from_utf8(scpi.exec_line(&mut ui, &cv, ":SYST:STAT?")).unwrap();
+            assert!(state.contains(&format!("gpu.cpu=ui gpu.pinned_cpu={expected}")));
+        }
     }
 
     #[test]

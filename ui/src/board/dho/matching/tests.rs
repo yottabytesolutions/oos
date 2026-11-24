@@ -3,6 +3,8 @@
 use super::*;
 use crate::board::dho::switches::HeaderProbe;
 
+mod reduced_capture;
+
 fn setup(mask: u32, header: bool, n: u32) -> (Settings, hz::Params) {
     let mut s = Settings { mask, header, compress: 1, ..Settings::default() };
     for (c, ch) in s.ch.iter_mut().enumerate() {
@@ -11,6 +13,7 @@ fn setup(mask: u32, header: bool, n: u32) -> (Settings, hz::Params) {
     }
     let mut p = hz::prep(mask, 1_000_000_000, n as i128, 0);
     p.memsel = n;
+    p.rate = hz::CLOCK as u64 / u64::from(p.ratio);
     (s, p)
 }
 
@@ -18,10 +21,11 @@ fn record(s: &Settings, p: &hz::Params, frame: usize) -> Vec<u8> {
     let map = seq::code_map(s.mask, s.ch.map(|c| (c.scale, c.offset)));
     let mut bytes = if s.header { vec![0xa5; 16] } else { Vec::new() };
     let pattern = [80, -40, 20, -60, -20, 60, -80, 40];
+    let period = MatchInput::new(s, p).period;
     for i in 0..p.memsel as usize {
         for lane in 0..map.ratio {
             let c = map.word.iter().position(|&w| w == Some(lane)).unwrap_or(lane);
-            let offset = pattern[(i + frame * 3 + c) % 8] * (10 + frame as i32 % 5) / 10;
+            let offset = pattern[(i + frame * 3 + c) % period] * (10 + frame as i32 % 5) / 10;
             let wave = (i as f64 * 0.019 + frame as f64).sin() * 3000.0;
             let word = (32768 + wave as i32 + offset) as u16;
             bytes.extend(word.to_le_bytes());
@@ -34,39 +38,83 @@ fn record(s: &Settings, p: &hz::Params, frame: usize) -> Vec<u8> {
 fn standard(bytes: &[u8], s: &Settings, p: &hz::Params, cores: &mut Cores) -> Frame {
     let mut words = seq::deinterleave(payload(bytes, s), s.mask);
     let ch = std::array::from_fn(|c| {
-        cores.apply((s.mask, c, p.rate), &mut words[c]);
+        let samples = &mut words[c];
+        let period = MatchInput::new(s, p).period;
+        if let Some(correction) = cores.learn((s.mask, c, p.rate), samples.len(), period, |i| samples[i]) {
+            for (i, word) in samples.iter_mut().enumerate() {
+                *word = correction.word(i, *word);
+            }
+        }
         seq::volts(&words[c], s.ch[c].scale, s.ch[c].offset)
     });
     Frame { ch, ..Frame::default() }
 }
 
+/// Independent deinterleaved oracle for a fixed snapshot.
+fn frozen(bytes: &[u8], s: &Settings, p: &hz::Params, cores: &Cores) -> Frame {
+    let mut words = seq::deinterleave(payload(bytes, s), s.mask);
+    let ch = std::array::from_fn(|c| {
+        if let Some((mut estimate, _)) = super::super::cores::estimate(&words[c]) {
+            let period = MatchInput::new(s, p).period;
+            estimate = std::array::from_fn(|i| {
+                (i % period..P).step_by(period).map(|j| estimate[j]).sum::<f64>() / (P / period) as f64
+            });
+            let (l, turn, correct) = cores.pattern((s.mask, c, p.rate)).map_or((estimate, 0, true), |(l, _)| {
+                let (turn, score) = (0..8)
+                    .map(|turn| (turn, (0..8).map(|i| estimate[i] * l[(i + turn) % 8]).sum::<f64>()))
+                    .max_by(|a, b| a.1.total_cmp(&b.1))
+                    .unwrap();
+                let energy = |pattern: &[f64; 8]| pattern.iter().map(|x| x * x).sum::<f64>();
+                let rest = (0..8).map(|i| (estimate[i] - l[(i + turn) % 8]).powi(2)).sum::<f64>();
+                assert!(score.is_finite());
+                (l, turn, rest < energy(&l).min(energy(&estimate)))
+            });
+            if correct {
+                for (i, word) in words[c].iter_mut().enumerate() {
+                    *word = (i32::from(*word) - l[(i + turn) % 8].round() as i32).clamp(0, 65535) as u16;
+                }
+            }
+        }
+        seq::volts(&words[c], s.ch[c].scale, s.ch[c].offset)
+    });
+    let mut frame = super::super::hw::decode_probed(bytes, s, p, 0, HeaderProbe::Off);
+    frame.ch = ch;
+    frame
+}
+
+fn seed(bytes: &[u8], s: &Settings, p: &hz::Params) -> Cores {
+    let mut cores = Cores::default();
+    standard(bytes, s, p, &mut cores);
+    cores
+}
+
 #[test]
-fn batch_core_matching_equals_standard_in_record_order() {
+fn batch_core_matching_uses_one_frozen_pattern_and_learns_in_batch_order() {
     for mask in [1, 2, 3, 5, 7, 15] {
         for header in [false, true] {
-            let (mut batch_cores, mut standard_cores, mut live_cores) =
-                (Cores::default(), Cores::default(), Cores::default());
+            let (mut batch_cores, mut oracle, mut live_cores, mut legacy) =
+                (Cores::default(), Cores::default(), Cores::default(), Cores::default());
             for n in [4097, 255, 8192, 1003, 70_000, 4097] {
                 let (s, p) = setup(mask, header, n);
                 let records: Vec<_> = (0..8).map(|i| record(&s, &p, i)).collect();
-                let bytes: Vec<_> = records.concat();
                 let fb = records[0].len();
-                let expected: Vec<_> = records.iter().map(|r| standard(r, &s, &p, &mut standard_cores)).collect();
+                let cold = (0..4).all(|c| oracle.pattern((mask, c, p.rate)).is_none());
+                let expected: Vec<_> = if cold {
+                    standard(&records[1], &s, &p, &mut oracle);
+                    records.iter().map(|r| frozen(r, &s, &p, &oracle)).collect()
+                } else {
+                    let expected = records.iter().map(|r| frozen(r, &s, &p, &oracle)).collect();
+                    standard(&records[1], &s, &p, &mut oracle);
+                    expected
+                };
                 for (i, r) in records.iter().enumerate() {
                     let f = super::super::hw::decode_with(r, &s, &p, 0, HeaderProbe::Off, Some(&mut live_cores));
-                    assert_eq!(f.ch, expected[i].ch, "Standard changed: {mask} {header} {n} {i}");
+                    assert_eq!(f.ch, standard(r, &s, &p, &mut legacy).ch, "Standard: {mask} {header} {n} {i}");
                 }
-                let batch = BatchMatch::learn(&bytes, fb, 0..records.len(), &s, &p, &mut batch_cores);
-                assert_eq!(
-                    batch
-                        .newest(records.last().expect("the fixture has eight records"), &s, &p, 7, HeaderProbe::Off)
-                        .ch,
-                    expected[7].ch
-                );
-                let decode = batch.decoder(s.clone(), p, HeaderProbe::Off);
-                // Workers may complete in any order; each frame keeps the correction learned for it.
+                let batch = BatchMatch::prepare(&records.concat(), fb, 1..records.len(), &s, &p, &mut batch_cores);
+                let (decode, _) = BatchMatch::dispatch(Some(batch), s.clone(), p, (HeaderProbe::Off, None));
                 std::thread::scope(|scope| {
-                    for (i, r) in records.iter().enumerate().rev() {
+                    for (i, r) in records.iter().enumerate().skip(1).rev() {
                         let (decode, expected) = (&decode, &expected);
                         scope.spawn(move || {
                             let mut f = Frame::default();
@@ -75,6 +123,9 @@ fn batch_core_matching_equals_standard_in_record_order() {
                         });
                     }
                 });
+                for c in 0..4 {
+                    assert_eq!(batch_cores.pattern((mask, c, p.rate)), oracle.pattern((mask, c, p.rate)));
+                }
             }
         }
     }
@@ -84,18 +135,17 @@ fn batch_core_matching_equals_standard_in_record_order() {
 fn batch_core_matching_corrects_neighbours_and_freezes_snapshots() {
     let (s, p) = setup(1, true, 4096);
     let records: Vec<_> = (0..12).map(|i| record(&s, &p, i)).collect();
-    let mut cores = Cores::default();
-    let batch = BatchMatch::learn(&records.concat(), records[0].len(), 0..records.len(), &s, &p, &mut cores);
-    // Further acquisition must not change corrections of an in-flight batch.
+    let oracle = seed(&records[0], &s, &p);
+    let mut cores = seed(&records[0], &s, &p);
+    let batch = BatchMatch::prepare(&records.concat(), records[0].len(), 0..records.len(), &s, &p, &mut cores);
     for i in 20..40 {
-        FrameMatch::learn(&record(&s, &p, i), &s, &p, &mut cores);
+        FrameMatch::immediate(&record(&s, &p, i), &s, &p, &mut cores);
     }
-    let decode = batch.decoder(s.clone(), p, HeaderProbe::Off);
-    let mut oracle = Cores::default();
+    let (decode, _) = BatchMatch::dispatch(Some(batch), s.clone(), p, (HeaderProbe::Off, None));
     for (i, r) in records.iter().enumerate() {
         let mut frame = Frame::default();
         decode(i, r, &mut frame);
-        assert_eq!(frame.ch, standard(r, &s, &p, &mut oracle).ch);
+        assert_eq!(frame.ch, frozen(r, &s, &p, &oracle).ch);
         let raw = super::super::hw::decode_probed(r, &s, &p, 0, HeaderProbe::Off);
         assert_ne!(frame.ch[0], raw.ch[0], "uncorrected neighbour {i}");
     }
@@ -146,11 +196,11 @@ fn batch_core_matching_workers_draw_the_standard_picture() {
     for (c, ch) in m.ch.iter_mut().enumerate() {
         ch.on = c == 0;
     }
-    let mut oracle = Cores::default();
+    let oracle = seed(&records[0], &s, &p);
     let mut want = Phosphor::new(128, 64);
     let mut last = Frame::default();
     for (i, r) in records.iter().enumerate() {
-        let f = super::super::hw::decode_with(r, &s, &p, 0, HeaderProbe::Off, Some(&mut oracle));
+        let f = frozen(r, &s, &p, &oracle);
         drawpipe::draw_frame(&mut want, &m, &f, Interp::Exact, None);
         if i == records.len() - 1 {
             last = f;
@@ -159,17 +209,15 @@ fn batch_core_matching_workers_draw_the_standard_picture() {
     for workers in [1, 2] {
         let pipe = drawpipe::Pipe::start(workers, 0, Box::leak(Box::default()));
         pipe.publish_view(&m, 128, 64, Interp::Exact, Default::default());
-        let mut cores = Cores::default();
-        let (matched, newest) =
-            prepare(&bytes, (fb, records.len(), 0), &s, &p, (10, HeaderProbe::Off, None), Some(&mut cores));
-        assert_eq!(newest.ch, last.ch);
+        let mut cores = seed(&records[0], &s, &p);
+        let newest = Frame { seq: 10, ..Frame::default() };
         feed(
             &pipe,
             (Box::new(Bytes(bytes.clone())), fb, 0..10),
             (Default::default(), std::time::Instant::now()),
             (s.clone(), p, HeaderProbe::Off),
-            matched,
-            (Some(Arc::new(newest)), None),
+            Some(&mut cores),
+            (Some(newest), None, true),
         );
         finish(&pipe);
         let mut got = Phosphor::new(128, 64);
@@ -195,14 +243,14 @@ fn batch_core_matching_keeps_rejected_frames_and_clamps_codes() {
     for r in &mut records {
         r.truncate(r.len() - 3);
     }
-    let mut cores = Cores::default();
-    let batch = BatchMatch::learn(&records.concat(), records[0].len(), 0..records.len(), &s, &p, &mut cores);
-    let decode = batch.decoder(s.clone(), p, HeaderProbe::Off);
-    let mut oracle = Cores::default();
+    let oracle = seed(&records[0], &s, &p);
+    let mut cores = seed(&records[0], &s, &p);
+    let batch = BatchMatch::prepare(&records.concat(), records[0].len(), 0..records.len(), &s, &p, &mut cores);
+    let (decode, _) = BatchMatch::dispatch(Some(batch), s.clone(), p, (HeaderProbe::Off, None));
     for (i, r) in records.iter().enumerate() {
         let mut f = Frame::default();
         decode(i, r, &mut f);
-        assert_eq!(f.ch, standard(r, &s, &p, &mut oracle).ch, "frame {i}");
+        assert_eq!(f.ch, frozen(r, &s, &p, &oracle).ch, "frame {i}");
     }
 }
 
@@ -221,8 +269,7 @@ fn perf_guard_batch_core_learning() {
         assert_eq!(bytes.len(), 4_000_000);
         let fb = bytes.len() / frames;
         let (mut cores, mut oracle) = (Cores::default(), Cores::default());
-        // Warm both estimator windows and keys; BatchMatch still allocates its per-batch snapshots.
-        BatchMatch::learn(&bytes, fb, 0..frames, &s, &p, &mut cores);
+        FrameMatch::immediate(&bytes[..fb], &s, &p, &mut cores);
         for chunk in bytes.chunks_exact(fb) {
             let mut words = seq::deinterleave(chunk, mask);
             for (c, words) in words.iter_mut().enumerate() {
@@ -242,11 +289,11 @@ fn perf_guard_batch_core_learning() {
                 }
             },
             || {
-                std::hint::black_box(BatchMatch::learn(&bytes, fb, 0..frames, &s, &p, &mut cores));
+                std::hint::black_box(BatchMatch::prepare(&bytes, fb, 0..frames, &s, &p, &mut cores));
             },
         );
         eprintln!(
-            "BatchMatch::learn 4 MB mask={mask}: best {:?}, p99 CPU {:?}; estimated A72 p99 {:?} (4x, unverified)",
+            "Source matching 4 MB mask={mask}: best {:?}, p99 CPU {:?}; estimated A72 p99 {:?} (4x, unverified)",
             pair.best.1,
             pair.p99.1,
             pair.p99.1 * 4
@@ -296,3 +343,29 @@ fn learning_budget_rejects_candidate_regressions() {
         assert!(std::panic::catch_unwind(|| check_learning_budget(&pair)).is_err());
     }
 }
+
+mod short_columns;
+
+mod deep_window;
+
+#[test]
+fn short_records_without_a_template_are_counted_once_per_record() {
+    let (s, p) = setup(1, false, 64);
+    let bytes = record(&s, &p, 0);
+    let pipe = crate::drawpipe::Pipe::start(1, 0, Box::leak(Box::default()));
+    let identity = oos_core::change::Identity::default();
+    pipe.publish_view(&crate::model::Model::default(), 128, 64, crate::sparse::Interp::Exact, identity);
+    let fb = bytes.len();
+    feed(
+        &pipe,
+        (Box::new(Bytes(bytes)), fb, 0..1),
+        (identity, std::time::Instant::now()),
+        (s, p, HeaderProbe::Off),
+        Some(&mut Cores::default()),
+        (Some(Frame { seq: 1, ..Frame::default() }), None, true),
+    );
+    finish(&pipe);
+    assert!(pipe.batch_counters().pipeline_text(std::time::Duration::ZERO, 0).contains(" uncorrected=1"));
+}
+
+pub(super) mod fixtures;

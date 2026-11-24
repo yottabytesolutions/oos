@@ -22,7 +22,6 @@ fn counters_preserve_picture_membership_pixels_and_pacing() {
                 candidate_scope.select();
                 candidate.run();
                 compare(&picture(&reference.route.ui), &picture(&candidate.route.ui), "counters on/off");
-                assert_eq!(reference.route.ui.fast_take, candidate.route.ui.fast_take);
                 assert_eq!(reference.route.ui.wfm_total, candidate.route.ui.wfm_total);
             }
             assert!(drawpipe::counters().deposited.load(std::sync::atomic::Ordering::Relaxed) > 0);

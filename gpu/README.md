@@ -71,8 +71,8 @@ The helper's GPU time per frame there: the panel 8 to 10 ms, the monitor 12 to 1
   a full first copy. A skipped monitor frame retains all intervening changes; multiple windows retain independent
   revisions. Cleared and newly drawn bands both enter the hull, including the unchanged gap between them.
   The commands, images and new glyphs lie at the top of the half. Pixel layers retain row comparison.
-- **Pipelined**: while the GPU puts frame N together, the CPU draws frame N+1; frame N is shown when it is done
-  (three scan-out buffers per output). A screenshot waits for its own frame.
+- **Presentation**: the UI polls the helper socket and requests a page flip when the panel's reply arrives.
+  Each reply carries a monotonic completion timestamp. Screenshots use the readback from their own frame.
 - **Clock**: the Mali's load governor only sees the short work of each frame and stays at 200 MHz (an 8 ms frame);
   while the helper runs, its lowest step is 400 MHz, which runs at the same voltage.
 - **Fallback**: no Panfrost render node, a helper that does not start, or any failed frame: oos-ui says so and draws

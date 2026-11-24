@@ -8,7 +8,7 @@ use std::sync::atomic::Ordering::Relaxed;
 
 /// The ordinary worker's production admission/publication sequence without hardware IO.
 pub(crate) fn peak_batch(shared: &HwShared, frames: Vec<Frame>) -> Result<(), Vec<Frame>> {
-    if publication::peak_backpressure(&lock(shared), Mode::Peak) {
+    if !lock(shared).queue.is_empty() {
         return Err(frames);
     }
     assert!(frames.len() <= super::PEAK_BATCH_MAX, "the host producer must obey the real planner bound");
@@ -44,58 +44,17 @@ fn peak_backpressure_preserves_repeated_maximum_batches() {
             assert!(peak_batch(&shared, vec![]).is_err(), "no next read while any capture remains");
             assert_eq!(lock(&shared).queue.pop_front().unwrap().seq, batch * max + seq);
         }
-        assert!(!publication::peak_backpressure(&lock(&shared), Mode::Peak));
+        assert!(lock(&shared).queue.is_empty());
     }
     assert_eq!(crate::drawpipe::counters().losses.overflow.load(Relaxed), 0);
     assert_eq!(crate::drawpipe::counters().dropped.load(Relaxed), 0);
 }
 
 #[test]
-fn peak_keeps_count_and_sample_bounds_and_newest_exception() {
-    let _scope = crate::drawpipe::test_scope::Scope::new();
-    let shared = shared();
-    publication::push_frames(&shared, vec![Frame::default(); super::PEAK_BATCH_MAX + 1], Mode::Peak);
-    assert_eq!(lock(&shared).queue.len(), super::PEAK_BATCH_MAX);
-    assert_eq!(crate::drawpipe::counters().losses.overflow.load(Relaxed), 1);
-    lock(&shared).queue.clear();
-    // An oversized newest record retains the existing exception, without retaining older captures beside it.
-    let large = Frame {
-        seq: 2,
-        ch: [vec![0.0; crate::board::QUEUE_SAMPLES + 1], vec![], vec![], vec![]],
-        ..Default::default()
-    };
-    publication::push_frames(&shared, vec![Frame { seq: 1, ..Default::default() }, large], Mode::Peak);
-    assert_eq!(lock(&shared).queue.len(), 1);
-    assert_eq!(lock(&shared).queue.front().unwrap().seq, 2);
-    assert_eq!(crate::drawpipe::counters().losses.overflow.load(Relaxed), 2);
-}
-
-#[test]
-fn peak_decodes_all_records_across_a_normal_to_peak_transition() {
-    let _scope = crate::drawpipe::test_scope::Scope::new();
-    let shared = shared();
-    lock(&shared).take = 3;
-    assert_eq!(publication::record_decode(&shared, Mode::Peak, 720, false, false), ((0, 0), false));
-    assert_eq!(publication::record_decode(&shared, Mode::Normal, 720, false, false), ((0, 717), false));
-    assert_eq!(publication::record_decode(&shared, Mode::Peak, 720, false, true), ((1, 0), false));
-    assert_eq!(publication::record_decode(&shared, Mode::Average { count: 4 }, 720, true, false), ((0, 719), false));
-    assert_eq!(crate::drawpipe::counters().read(), (0, 0, 0), "selection must not account losses");
-    assert_eq!(publication::record_decode(&shared, Mode::Normal, 720, false, false), ((0, 717), false));
-    assert_eq!(crate::drawpipe::counters().read(), (0, 0, 0), "repeated selection must remain side-effect free");
-    lock(&shared).take = 0;
-    assert_eq!(publication::record_decode(&shared, Mode::Normal, 720, false, false), ((0, 0), false));
-}
-
-#[test]
-fn normal_publication_retains_its_overflow_policy_without_backpressure() {
-    let _scope = crate::drawpipe::test_scope::Scope::new();
-    let shared = HwShared::default();
-    publication::push_frames(&shared, (1..=720).map(|seq| Frame { seq, ..Default::default() }).collect(), Mode::Normal);
-    assert_eq!(lock(&shared).queue.len(), crate::board::QUEUE_MAX);
-    assert_eq!(lock(&shared).queue.front().unwrap().seq, 465);
-    assert_eq!(lock(&shared).frame.seq, 720);
-    assert_eq!(crate::drawpipe::counters().losses.overflow.load(Relaxed), 464);
-    assert!(!publication::peak_backpressure(&lock(&shared), Mode::Normal));
+fn record_decode_preserves_frame_zero_and_average_selection() {
+    assert_eq!(publication::record_decode(720, false, false), (0, 0));
+    assert_eq!(publication::record_decode(720, false, true), (1, 0));
+    assert_eq!(publication::record_decode(720, true, false), (0, 719));
 }
 
 #[test]
@@ -150,29 +109,11 @@ fn peak_rejects_old_identity_without_overflowing_current_batch() {
 }
 
 #[test]
-fn publication_bound_follows_applied_mode_during_request_changes() {
-    use crate::board::Board;
-    use crate::model::{AcqMode, Model};
-    let _scope = crate::drawpipe::test_scope::Scope::new();
-    for (applied, requested, max) in
-        [(Mode::Peak, AcqMode::Normal, super::PEAK_BATCH_MAX), (Mode::Normal, AcqMode::Peak, crate::board::QUEUE_MAX)]
-    {
-        let shared = HwShared::default();
-        let model = Model { acq: requested, ..Default::default() };
-        lock(&shared).want = Some(crate::board::board().want(&model, &Default::default()));
-        let frames = (1..=max + 1).map(|seq| Frame { seq: seq as u64, ..Default::default() }).collect();
-        publication::push_frames(&shared, frames, applied);
-        assert_eq!(lock(&shared).queue.len(), max);
-        assert_eq!(lock(&shared).queue.front().unwrap().seq, 2);
-    }
-}
-
-#[test]
 fn peak_wait_status_is_rate_limited_across_waits_and_resets_its_timer() {
     use std::time::{Duration, Instant};
     let shared = shared();
     let identity = lock(&shared).acquisition.identity();
-    let mut wait = publication::PeakWait::default();
+    let mut wait = publication::RecordWait::default();
     let start = Instant::now();
     let mut reports = vec![];
     for ms in 0..=3001 {
@@ -182,7 +123,7 @@ fn peak_wait_status_is_rate_limited_across_waits_and_resets_its_timer() {
         }
     }
     assert_eq!(reports.iter().map(|(ms, _)| *ms).collect::<Vec<_>>(), [1001, 2001, 3001]);
-    assert!(reports[0].1.contains("event=peak_backpressure wait_ms=1001"));
+    assert!(reports[0].1.contains("event=record_backpressure wait_ms=1001"));
     assert!(reports[0].1.contains(&format!(
         "queued={} gen={} epoch={}",
         super::PEAK_BATCH_MAX,
@@ -201,28 +142,6 @@ fn peak_wait_status_is_rate_limited_across_waits_and_resets_its_timer() {
 }
 
 #[test]
-fn peak_wait_poll_releases_the_lock_for_status_and_bypasses_normal_or_empty_queues() {
-    use std::time::{Duration, Instant};
-    let shared = shared();
-    let identity = lock(&shared).acquisition.identity();
-    lock(&shared).queue.push_back(Frame::default().into());
-    let mut wait = publication::PeakWait::default();
-    wait.observe(
-        Instant::now().checked_sub(Duration::from_secs(2)).expect("monotonic clock past 2 s"),
-        identity,
-        true,
-        1,
-    );
-    assert!(wait.poll(&shared, Mode::Peak, |message| lock(&shared).status = message));
-    assert!(lock(&shared).status.starts_with("event=peak_backpressure wait_ms="));
-    assert!(!wait.poll(&shared, Mode::Normal, |_| panic!("Normal must not log Peak waits")));
-    // A new Peak wait starts over after Normal, while the shared rate limit survives.
-    assert!(wait.poll(&shared, Mode::Peak, |_| panic!("new wait must not log immediately")));
-    lock(&shared).queue.clear();
-    assert!(!wait.poll(&shared, Mode::Peak, |_| panic!("an empty queue must not log")));
-}
-
-#[test]
 fn peak_wait_timer_restarts_on_an_identity_change() {
     use oos_core::change::{Request, Shadow, UiAcq};
     use std::time::{Duration, Instant};
@@ -232,7 +151,7 @@ fn peak_wait_timer_restarts_on_an_identity_change() {
     let old = shadow.identity();
     let new = shadow.observe(&model, UiAcq::default(), &[Request::Clear], &config).unwrap().identity();
     let start = Instant::now();
-    let mut wait = publication::PeakWait::default();
+    let mut wait = publication::RecordWait::default();
     assert!(wait.observe(start, old, true, 1).is_none());
     let changed = start + Duration::from_secs(2);
     assert!(wait.observe(changed, new, true, 1).is_none(), "previous identity's wait must not carry over");

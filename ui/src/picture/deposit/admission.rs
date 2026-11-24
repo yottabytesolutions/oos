@@ -67,7 +67,7 @@ impl Funding {
         samples: usize,
         limit: Duration,
     ) -> Option<Arc<Plan>> {
-        const PERIOD_NS: u64 = 33_333_334;
+        let period_ns = u64::try_from(crate::pacing::picture_period().as_nanos()).ok()?;
         let record = samples
             .checked_mul(std::mem::size_of::<f32>())?
             .checked_add(std::mem::size_of::<crate::board::Frame>())?
@@ -80,11 +80,11 @@ impl Funding {
         if cycles == 0 {
             return None;
         }
-        let interval = self.interval.max(Duration::from_nanos(PERIOD_NS.div_ceil(cycles)));
+        let interval = self.interval.max(Duration::from_nanos(period_ns.div_ceil(cycles)));
         if interval > limit {
             return None;
         }
-        let b = usize::try_from(u128::from(PERIOD_NS).div_ceil(interval.as_nanos())).ok()? + 3;
+        let b = usize::try_from(u128::from(period_ns).div_ceil(interval.as_nanos())).ok()? + 3;
         let fifo = 2 * b;
         let bytes = (fifo + 2) * record + overhead;
         used.0 += bytes;

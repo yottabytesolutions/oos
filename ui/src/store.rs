@@ -7,7 +7,7 @@
 #[cfg(test)]
 mod codec_tests;
 pub(crate) mod durable;
-mod setup;
+pub(crate) mod setup;
 pub(crate) mod startup;
 pub use setup::{parse_sweep, set, setup_text};
 mod import;

@@ -2,6 +2,9 @@
 
 //! Sampled claims travel with deposits. The picture owner updates the shared timing rings.
 
+pub(crate) mod histogram;
+#[cfg(feature = "private-picture-counts")]
+mod picture_counts;
 use crate::perfguard::ring::Ring;
 use oos_hal::sync::lock;
 use std::sync::Mutex;
@@ -24,8 +27,12 @@ pub(crate) struct Progress {
     pub(crate) sample: Option<(Duration, u64)>,
 }
 
+#[cfg(not(feature = "private-picture-counts"))]
 #[derive(Default)]
 pub struct Timing(Mutex<Rings>);
+#[cfg(feature = "private-picture-counts")]
+#[derive(Default)]
+pub struct Timing(Mutex<Rings>, picture_counts::PictureCounts);
 
 #[derive(Clone, Default)]
 struct Rings {
@@ -47,6 +54,17 @@ impl Timing {
         if let Some(age) = age {
             rings.batch.add(age.as_nanos().min(u64::MAX as u128) as u64);
         }
+        #[cfg(feature = "private-picture-counts")]
+        {
+            drop(rings);
+            if let Some(age) = age {
+                self.1.accepted(age);
+            }
+        }
+    }
+    #[cfg(feature = "private-picture-counts")]
+    pub(crate) fn picture_counts(&self) -> &picture_counts::PictureCounts {
+        &self.1
     }
     pub(crate) fn text(&self) -> String {
         let rings = lock(&self.0).clone();
@@ -82,6 +100,9 @@ mod tests {
         assert!(text.contains("deposit.slice n=256 total=400 p50_ns=1088 p90_ns=1500 p99_ns=1592 max_ns=1600"));
         assert!(text.contains("deposit.record n=256 total=400 p50_ns=272 p90_ns=375 p99_ns=398 max_ns=400"));
         assert!(text.contains("deposit.batch n=256 total=400 p50_ns=272 p90_ns=375 p99_ns=398 max_ns=400"));
+        #[cfg(not(feature = "private-picture-counts"))]
         assert!(std::mem::size_of::<Timing>() < 7 * 1024);
+        #[cfg(feature = "private-picture-counts")]
+        assert!(std::mem::size_of::<picture_counts::PictureCounts>() <= 6144 + 256);
     }
 }

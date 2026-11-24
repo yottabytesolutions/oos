@@ -10,12 +10,13 @@ pub struct Assignment {
     cpu: usize,
 }
 
-/// An explicit A53 plan: keep XDMA and Ethernet away from the busy deposit core.
-/// Prefer the last A53 for XDMA and a different A53 for Ethernet; no big-core fallback.
-pub fn plan(cores: Cores, busiest: usize, interrupts: &str) -> Vec<Assignment> {
+/// Keep XDMA and Ethernet off the busiest A53 and on different cores when possible.
+fn plan(cores: Cores, busiest: usize, interrupts: &str) -> Vec<Assignment> {
     let available: Vec<_> = cpus(cores.little).into_iter().filter(|c| *c != busiest).collect();
-    let Some(&dma) = available.last() else { return Vec::new() };
-    let net = available.iter().rev().copied().find(|&c| c != dma && c != 0).unwrap_or(dma);
+    let dma = available.last().copied();
+    let ethernet = dma
+        .filter(|_| cores.little & 1 != 0)
+        .map(|cpu| available.iter().rev().copied().find(|&c| c != cpu && c != 0).unwrap_or(cpu));
     interrupts
         .lines()
         .filter_map(|line| {
@@ -23,9 +24,9 @@ pub fn plan(cores: Cores, busiest: usize, interrupts: &str) -> Vec<Assignment> {
             let irq = number.trim().parse().ok()?;
             let words: Vec<_> = description.split_whitespace().collect();
             let cpu = if description.contains("MSI") && words.iter().any(|w| w.starts_with("xdma")) {
-                dma
-            } else if cores.little & 1 != 0 && words.iter().any(|w| *w == "eth0" || w.starts_with("eth0-")) {
-                net
+                dma?
+            } else if words.iter().any(|w| *w == "eth0" || w.starts_with("eth0-")) {
+                ethernet?
             } else {
                 return None;
             };
@@ -62,19 +63,22 @@ pub fn startup(sw: &crate::sysconf::Switches) {
     if !sw.perf.place() {
         return;
     }
+    // CPU0 is the crowded core in the supplied baseline. Unit acceptance must
+    // confirm this conservative choice against per-thread deposit measurements.
     let root = Path::new("/proc");
     let result = std::fs::read_to_string(root.join("interrupts"));
     match result {
         Ok(interrupts) => {
-            // CPU0 is the crowded core in the supplied baseline. Unit acceptance must
-            // confirm this conservative choice against per-thread deposit measurements.
-            let plan = plan(sw.cores, 0, &interrupts);
-            for error in apply(root, &plan) {
+            for error in apply(root, &startup_plan(sw, &interrupts)) {
                 eprintln!("oos-ui: irq_placement error={}", error);
             }
         }
         Err(error) => eprintln!("oos-ui: irq_placement error={}", error),
     }
+}
+
+fn startup_plan(sw: &crate::sysconf::Switches, interrupts: &str) -> Vec<Assignment> {
+    plan(sw.cores, 0, interrupts)
 }
 
 #[cfg(test)]

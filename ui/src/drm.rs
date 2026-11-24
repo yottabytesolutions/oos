@@ -11,6 +11,11 @@ use crate::gfx::Canvas;
 use std::ffi::CString;
 use std::io;
 
+mod flip;
+#[cfg(target_os = "linux")]
+pub(crate) use flip::FlipEvent;
+use flip::{Events, FlipState};
+
 const fn iowr(nr: u32, size: usize) -> libc::c_ulong {
     ((3u32 << 30) | ((size as u32) << 16) | ((b'd' as u32) << 8) | nr) as libc::c_ulong
 }
@@ -195,12 +200,7 @@ pub struct Display {
     front: usize,
     /// the buffer shown before `front`: still on the screen until the flip to `front` is done
     prev: usize,
-    /// page flips asked for with an event whose event has not been read yet (normally 0 or 1; more only after a late
-    /// event, which must not count for the flip after it)
-    flips_out: u32,
-    /// how often a flip event came later than `wait_flip` waited (said on stderr at 1, 2, 4, ...)
-    flips_late: u32,
-    use_flip: bool,
+    flips: FlipState,
     /// scaled output (HDMI): the map from the canvas, built for the first canvas size
     fit: Option<crate::gfx::Fit>,
 }
@@ -208,22 +208,6 @@ pub struct Display {
 /// DRM connector types (drm_mode.h).
 const CONNECTOR_HDMIA: u32 = 11;
 const CONNECTOR_DSI: u32 = 16;
-
-/// The number of flip-complete events (`DRM_EVENT_FLIP_COMPLETE`) in what a read of the DRM file gave: events are
-/// a type and a length (u32 each) and their data.
-fn flip_events(buf: &[u8]) -> u32 {
-    let (mut at, mut n) = (0, 0);
-    while at + 8 <= buf.len() {
-        let typ = u32::from_ne_bytes(buf[at..at + 4].try_into().unwrap());
-        let len = u32::from_ne_bytes(buf[at + 4..at + 8].try_into().unwrap()) as usize;
-        if len < 8 {
-            break;
-        }
-        n += (typ == 2) as u32;
-        at += len;
-    }
-    n
-}
 
 impl Display {
     pub fn open(path: &str) -> io::Result<Display> {
@@ -350,9 +334,7 @@ impl Display {
             bufs: Vec::new(),
             front: 0,
             prev: 0,
-            flips_out: 0,
-            flips_late: 0,
-            use_flip: true,
+            flips: FlipState::default(),
             fit: None,
         };
         // on any error the buffers made so far are freed again (the HDMI search retries)
@@ -433,30 +415,26 @@ impl Display {
         ioc(self.fd, SETCRTC, &mut c)
     }
 
-    /// Waits up to 100 ms for the events of the flips asked for. A late one stays counted (`flips_out`) and is read
-    /// the next time, so it never passes for the flip after it.
-    fn wait_flip(&mut self) {
-        while self.flips_out > 0 {
-            let mut p = libc::pollfd { fd: self.fd, events: libc::POLLIN, revents: 0 };
-            if unsafe { libc::poll(&mut p, 1, 100) } <= 0 {
-                self.flips_late += 1;
-                if self.flips_late.is_power_of_two() {
-                    eprintln!("oos-ui: page flip event late ({} times)", self.flips_late);
-                }
-                return;
-            }
-            let mut buf = [0u8; 256];
-            let n = unsafe { libc::read(self.fd, buf.as_mut_ptr() as *mut libc::c_void, buf.len()) };
-            if n <= 0 {
-                return;
-            }
-            self.flips_out = self.flips_out.saturating_sub(flip_events(&buf[..n as usize]));
+    pub(crate) fn read_flips(&mut self, timeout_ms: i32) -> Events {
+        let mut p = libc::pollfd { fd: self.fd, events: libc::POLLIN, revents: 0 };
+        // SAFETY: the descriptor is open and p points to one writable poll entry.
+        if unsafe { libc::poll(&mut p, 1, timeout_ms) } <= 0 || p.revents & libc::POLLIN == 0 {
+            return Events::default();
         }
+        let mut buf = [0u8; 256];
+        // SAFETY: this loop is the only reader and buf has capacity for the requested bytes.
+        let n = unsafe { libc::read(self.fd, buf.as_mut_ptr().cast(), buf.len()) };
+        self.flips.read(&buf[..n.max(0) as usize])
     }
 
-    /// Copies the canvas into the back buffer and shows it at the next vblank.
+    /// Copies the splash into a spare buffer and requests a vblank flip.
     pub fn present(&mut self, cv: &Canvas) {
-        let back = self.back();
+        let back = self.copy(cv);
+        self.request_flip(back, std::time::Instant::now());
+    }
+
+    pub(crate) fn copy(&mut self, cv: &Canvas) -> usize {
+        let back = self.free();
         let b = &self.bufs[back];
         let stride = (b.pitch / 4) as usize;
         let w = (cv.w.min(self.width)) as usize;
@@ -466,7 +444,7 @@ impl Display {
                 std::ptr::copy_nonoverlapping(cv.px.as_ptr().add(y * cv.w as usize), b.map.add(y * stride), w);
             }
         }
-        self.flip(back);
+        back
     }
 
     /// Scan-out buffer `i` as a dma-buf for the GPU (System > Graphics = GPU), with its row pitch in bytes.
@@ -483,40 +461,9 @@ impl Display {
         self.bufs.len()
     }
 
-    /// The buffer the next picture goes into, once the last flip is done.
-    pub fn back(&mut self) -> usize {
-        self.wait_flip();
-        (self.front + 1) % self.bufs.len()
-    }
-
     /// A buffer neither shown nor waiting to be: the GPU fills it without waiting for the flip.
     pub fn free(&self) -> usize {
         (0..self.bufs.len()).find(|&i| i != self.front && i != self.prev).unwrap_or((self.front + 1) % self.bufs.len())
-    }
-
-    /// Shows buffer `back` (filled by `present` or by the GPU) at the next vblank, once the last flip is done.
-    pub fn flip(&mut self, back: usize) {
-        self.wait_flip();
-        let b = &self.bufs[back];
-        if self.use_flip {
-            let mut pf =
-                PageFlip { crtc_id: self.crtc_id, fb_id: b.fb, flags: PAGE_FLIP_EVENT, reserved: 0, user_data: 0 };
-            match ioc(self.fd, PAGE_FLIP, &mut pf) {
-                Ok(()) => {
-                    self.flips_out += 1;
-                    (self.prev, self.front) = (self.front, back);
-                    return;
-                }
-                // the last flip still in the kernel (its event late): this frame by SETCRTC, flips go on after it
-                Err(e) if e.raw_os_error() == Some(libc::EBUSY) => {}
-                Err(e) => {
-                    eprintln!("oos-ui: page flip failed ({}), using SETCRTC", e);
-                    self.use_flip = false;
-                }
-            }
-        }
-        let _ = self.set_crtc(back);
-        (self.prev, self.front) = (self.front, back);
     }
 
     /// HDMI: the canvas scaled into the mode with its aspect ratio (black bars), shown at the next vblank. The flip
@@ -543,20 +490,6 @@ impl Display {
     pub fn flip_scaled(&mut self, back: usize) {
         self.fit = None;
         self.flip_quiet(back);
-    }
-
-    fn flip_quiet(&mut self, back: usize) {
-        let b = &self.bufs[back];
-        let mut pf = PageFlip { crtc_id: self.crtc_id, fb_id: b.fb, flags: 0, reserved: 0, user_data: 0 };
-        match ioc(self.fd, PAGE_FLIP, &mut pf) {
-            Ok(()) => (self.prev, self.front) = (self.front, back),
-            Err(e) if e.raw_os_error() == Some(libc::EBUSY) => {}
-            Err(_) => {
-                if self.set_crtc(back).is_ok() {
-                    (self.prev, self.front) = (self.front, back);
-                }
-            }
-        }
     }
 
     /// The connector is still connected (a cheap state read: no new probe of the monitor).

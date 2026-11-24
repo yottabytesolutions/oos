@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
+use crate::picture::deposit::count::Count;
+use std::cell::RefCell;
+
+pub(crate) mod zoom;
 
 /// The fast path collects a screen's frames as differences: a span of rows r0..=r1 with weight w is +w at r0 and -w
 /// at r1 + 1 of its column (wrapping u16), whatever its height; `fold_t` sums them up once a screen into the map.
@@ -16,7 +20,11 @@ pub(crate) fn diff_span<T: crate::picture::deposit::count::Count>(
     r1: usize,
     wgt: u16,
 ) {
-    let wgt = T::weight(wgt);
+    span(band, bw, x, r0, r1, T::weight(wgt));
+}
+
+#[inline(always)]
+fn span<T: Count>(band: &mut [T], bw: usize, x: usize, r0: usize, r1: usize, wgt: T) {
     band[r0 * bw + x] = band[r0 * bw + x].wrapping_add(wgt);
     band[(r1 + 1) * bw + x] = band[(r1 + 1) * bw + x].wrapping_sub(wgt);
 }
@@ -49,33 +57,133 @@ pub(crate) fn deposit_dots_t<T: crate::picture::deposit::count::Count, S: Sample
     m: &Map,
     wgt: u16,
 ) -> Range<usize> {
-    if v.len() == 0 || m.x_per_sample <= 0.0 {
+    dots(band, (h, c_lo, v.len()), m, wgt, |i| {
+        let row = (v.at(i) * m.y_per_volt + m.y0).round();
+        if row >= 0.0 {
+            row as usize
+        } else {
+            usize::MAX
+        }
+    })
+}
+
+thread_local! {
+    static DOT_ROWS: RefCell<[code_rows::RowCache; 4]> = RefCell::new(Default::default());
+}
+
+pub(crate) fn deposit_code_dots<T: Count>(
+    band: &mut [T],
+    h: usize,
+    first: usize,
+    codes: &Codes<'_>,
+    map: &Map,
+) -> Range<usize> {
+    DOT_ROWS.with_borrow_mut(|cache| {
+        if let Some(rows) = cache[codes.word % 4].get(codes, map, h) {
+            dots(band, (h, first, codes.n), map, 24, |i| rows.row(codes.at_code(i)) as usize)
+        } else {
+            deposit_dots_t(band, h, first, codes, map, 24)
+        }
+    })
+}
+
+fn dots<T: Count>(
+    band: &mut [T],
+    (height, first, len): (usize, usize, usize),
+    map: &Map,
+    weight: u16,
+    row_at: impl Fn(usize) -> usize,
+) -> Range<usize> {
+    if len == 0 || map.x_per_sample <= 0.0 {
         return 0..0;
     }
-    let bw = band.len() / (h + 1);
-    let c_hi = (c_lo + bw) as i64;
-    let k_of = |x: f64| m.ti + (x - m.x0) / m.x_per_sample;
-    let first = |c: i64| (k_of(c as f64).ceil().max(0.0) as usize).min(v.len());
-    let c0 = (((-m.ti) * m.x_per_sample + m.x0).floor() as i64).max(c_lo as i64);
-    let c1 = ((((v.len() as f64 - m.ti) * m.x_per_sample + m.x0).ceil()) as i64).min(c_hi);
-    if c1 <= c0 {
-        return 0..0;
+    let width = band.len() / (height + 1);
+    let visible = columns(first + width, len, map);
+    let start = visible.start.max(first as i64);
+    let step = map.x_per_sample.recip();
+    let origin = map.ti - map.x0 * step;
+    const UNIT: i64 = 1 << 32;
+    let fixed = |x: f64| (x * UNIT as f64).round() as i64;
+    let stride = fixed(step);
+    let mut edge = fixed(origin + start as f64 * step);
+    let index = |column, edge: i64| {
+        // At an integer edge, preserve the original ceil even when floating-point rounding put it just above.
+        let fraction = edge & (UNIT - 1);
+        let tolerance = width as i64 + 4;
+        if fraction <= tolerance || fraction >= UNIT - tolerance {
+            super::mapping::first_sample(column, len, map)
+        } else {
+            (((edge >> 32) + 1).max(0) as usize).min(len)
+        }
+    };
+    let mut a = index(start, edge);
+    let (mut low, mut high) = (height, 0);
+    for column in start..visible.end {
+        edge = edge.saturating_add(stride);
+        let b = index(column + 1, edge).max(a);
+        let x = column as usize - first;
+        let mut put = |row, hits: u32| {
+            if row < height {
+                span(band, width, x, row, row, T::from_value(u32::from(weight).wrapping_mul(hits)));
+                low = low.min(row);
+                high = high.max(row + 1);
+            }
+        };
+        // Consecutive dots on the same cell contribute the same count in one pair of writes.
+        let (mut previous, mut hits) = (height, 0u32);
+        for i in a..b {
+            let row = row_at(i);
+            if row != previous {
+                put(previous, hits);
+                previous = row;
+                hits = 0;
+            }
+            hits += 1;
+        }
+        put(previous, hits);
+        a = b;
     }
-    let mut rows = crate::wave::phosphor::RowBand::empty();
-    let mut ka = first(c0);
-    for c in c0..c1 {
-        let kb = first(c + 1);
-        let xc = c as usize - c_lo;
-        for i in ka..kb.max(ka) {
-            let x = v.at(i);
-            let r = (x * m.y_per_volt + m.y0).round();
-            // NaN fails both comparisons
-            if r >= 0.0 && r < h as f32 {
-                diff_span(band, bw, xc, r as usize, r as usize, wgt);
-                rows.include(r as usize..r as usize + 1);
+    low.min(high)..high
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn integer_dots_agree_with_legacy_decoded_pixels_across_tile_boundaries() {
+        let words: Vec<_> = (0..4096).map(|i| (i * 977) as u16).collect();
+        let volt = |code: u16, (scale, offset): (f32, f32)| (f32::from(code) - 32768.0) * scale - offset;
+        let codes = Codes {
+            bytes: &[],
+            words: Some(&words),
+            stride: 2,
+            word: 1,
+            n: words.len() / 2,
+            affine: (0.000_157, 0.23),
+            corrected: None,
+            volt,
+        };
+        let decoded: Vec<_> = (0..codes.n).map(|i| codes.at(i)).collect();
+        let (width, height) = (97, 125);
+        let mut expected = vec![0; width * height];
+        for ti in [1024.0, 997.000_000_000_1, 966.877] {
+            for x_per_sample in [0.05, 0.11, 0.5] {
+                let map = Map { ti, x_per_sample, x0: 48.5, y_per_volt: -20.25, y0: 62.4 };
+                expected.fill(0);
+                let _ = crate::fastdraw::deposit_dots(&mut expected, width, height, &decoded, &map, 24);
+                for (start, count) in [(0, 28), (28, 31), (59, 38)] {
+                    let mut actual = vec![0u16; count * (height + 1)];
+                    deposit_code_dots(&mut actual, height, start, &codes, &map);
+                    let mut running = vec![0u16; count];
+                    for row in 0..height {
+                        for col in 0..count {
+                            running[col] = running[col].wrapping_add(actual[row * count + col]);
+                            assert_eq!(running[col], expected[row * width + start + col], "row={row}, tile={start}");
+                        }
+                    }
+                }
             }
         }
-        ka = kb.max(ka);
     }
-    rows.into_range()
 }

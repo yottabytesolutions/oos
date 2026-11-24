@@ -51,8 +51,10 @@ fn the_record_path_leaves_out_frame1_only_after_frame0() {
     assert_eq!(drop_frame1(&mut all, 2, true, &s), 0, "not frame 1");
     assert_eq!(drop_frame1(&mut all, 1, false, &s), 0, "acq.frame0 = keep");
     assert_eq!(all.len(), 2);
-    assert!(newest_kept(&frame(506), 2, true, &s) && !newest_kept(&frame(410), 2, true, &s));
-    assert!(newest_kept(&frame(410), 3, true, &s), "with three frames the newest is not frame 1");
+    let p = hz::prep(1, 1_000_000_000, 4096, 0);
+    let kept = |edge, avail| newest_kept((Some(&frame(edge)), &[]), (avail, true), (&s, &p));
+    assert!(kept(506, 2) && !kept(410, 2));
+    assert!(kept(410, 3), "with three frames the newest is not frame 1");
     assert!(crate::drawpipe::counters().records_text().contains("lost.frame1=2"));
     assert_eq!(crate::drawpipe::counters().read().2, 0);
 }
@@ -67,4 +69,28 @@ fn the_raw_newest_frame_takes_the_place_of_the_last() {
     let mut none: Vec<Frame> = Vec::new();
     raw_newest(&mut none, Some(Frame::default()), (1, 1));
     assert!(none.is_empty());
+}
+
+#[test]
+fn dma_trigger_gate_matches_decoding_with_headers_windows_and_interleaving() {
+    for (mask, source) in [(1, 1), (6, 3), (13, 4)] {
+        for header in [false, true] {
+            let s = Settings { mask, header, trig_src: source, window: Some((8000, -5000)), ..settings() };
+            let p = hz::Params { memsel: 12_000, pre: 6500, ..hz::prep(mask, 1_000_000_000, 4096, 0) };
+            let map = oos_hal::dho::seq::code_map(mask, s.ch.map(|c| (c.scale, c.offset)));
+            let lane = map.word[(source - 1) as usize].unwrap();
+            for (edge, off) in [(5006, false), (4910, true), (8000, true)] {
+                let mut bytes = vec![0; if header { 16 } else { 0 }];
+                for i in 0..8000 {
+                    for j in 0..map.ratio {
+                        let word: u16 = if j == lane && i < edge { 22000 } else { 44000 };
+                        bytes.extend(word.to_le_bytes());
+                    }
+                }
+                let decoded = super::super::hw::decode(&bytes, &s, &p, 0);
+                assert_eq!(off_trigger(&decoded, &s), off);
+                assert_eq!(bytes_off_trigger(&bytes, &s, &p), off);
+            }
+        }
+    }
 }

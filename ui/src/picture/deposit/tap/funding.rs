@@ -22,14 +22,25 @@ impl TapReservation {
 }
 
 impl Handoff {
-    #[cfg(any(target_os = "linux", test))]
+    #[cfg(test)]
     pub(crate) fn reserve_tap(
         self: &Arc<Self>,
         samples: usize,
         submitted: u64,
         identity: Option<Identity>,
     ) -> Option<Arc<TapReservation>> {
-        self.reserve(samples, submitted, identity, None)
+        self.reserve_tap_until(samples, submitted, identity, &|| false)
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn reserve_tap_until(
+        self: &Arc<Self>,
+        samples: usize,
+        submitted: u64,
+        identity: Option<Identity>,
+        canceled: &dyn Fn() -> bool,
+    ) -> Option<Arc<TapReservation>> {
+        self.reserve(samples, submitted, identity, None, true, canceled)
     }
 
     #[cfg(any(target_os = "linux", test))]
@@ -39,8 +50,21 @@ impl Handoff {
         submitted: u64,
         identity: Option<Identity>,
         plan: Option<Arc<Plan>>,
+        wait: bool,
+        canceled: &dyn Fn() -> bool,
     ) -> Option<Arc<TapReservation>> {
-        let mut state = self.wait_for_tap(samples, submitted, identity, plan.as_ref(), true)?;
+        let mut state = if wait {
+            self.wait_for_tap_until(samples, submitted, identity, plan.as_ref(), true, canceled)?
+        } else {
+            let state = lock(&self.state);
+            if state.taps.admission.held
+                || !Self::current(&state, submitted, identity, plan.as_ref())
+                || !state.taps.fits(samples, plan.as_ref())
+            {
+                return None;
+            }
+            state
+        };
         if let Some(plan) = &plan {
             plan.reserve();
         } else {
@@ -75,6 +99,18 @@ impl Handoff {
         plan: Option<&Arc<Plan>>,
         cancel_on_hold: bool,
     ) -> Option<std::sync::MutexGuard<'_, Slot>> {
+        self.wait_for_tap_until(samples, submitted, identity, plan, cancel_on_hold, &|| false)
+    }
+
+    fn wait_for_tap_until(
+        &self,
+        samples: usize,
+        submitted: u64,
+        identity: Option<Identity>,
+        plan: Option<&Arc<Plan>>,
+        cancel_on_hold: bool,
+        canceled: &dyn Fn() -> bool,
+    ) -> Option<std::sync::MutexGuard<'_, Slot>> {
         let mut state = lock(&self.state);
         let stop_generation = state.taps.admission.stop_generation;
         let current = |state: &Slot| {
@@ -82,7 +118,11 @@ impl Handoff {
             (!cancel_on_hold || (!admission.held && admission.stop_generation == stop_generation))
                 && Self::current(state, submitted, identity, plan)
         };
-        while current(&state) && !state.taps.fits(samples, plan) {
+        loop {
+            state = self.check_commands(state, canceled)?;
+            if !current(&state) || state.taps.fits(samples, plan) {
+                break;
+            }
             #[cfg(test)]
             {
                 state.waiting = true;
@@ -95,6 +135,39 @@ impl Handoff {
             state.waiting = false;
         }
         current(&state).then_some(state)
+    }
+
+    /// Shared may be held by command publishers. Never call its predicate under Handoff.
+    fn check_commands<'a>(
+        &'a self,
+        mut state: std::sync::MutexGuard<'a, Slot>,
+        canceled: &dyn Fn() -> bool,
+    ) -> Option<std::sync::MutexGuard<'a, Slot>> {
+        loop {
+            let observed = state.commands;
+            drop(state);
+            if canceled() {
+                #[cfg(test)]
+                {
+                    lock(&self.state).waiting = false;
+                }
+                return None;
+            }
+            state = lock(&self.state);
+            if state.commands == observed {
+                return Some(state);
+            }
+        }
+    }
+
+    pub(crate) fn wake_tap_commands(&self) {
+        let mut state = lock(&self.state);
+        state.commands = state.commands.wrapping_add(1);
+        #[cfg(test)]
+        {
+            state.waiting = false;
+        }
+        self.space.notify_all();
     }
 
     pub(crate) fn require_tap_funding(&self) {
@@ -179,10 +252,49 @@ impl Handoff {
         state.taps.admission.plans.iter().filter_map(Weak::upgrade).map(|p| p.drain()).max().unwrap_or(0)
     }
 
-    #[cfg(any(target_os = "linux", test))]
+    #[cfg(test)]
     pub(crate) fn reserve_plan(self: &Arc<Self>, submitted: u64, id: Identity) -> Option<Arc<TapReservation>> {
+        self.reserve_plan_until(submitted, id, &|| false)
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn reserve_plan_until(
+        self: &Arc<Self>,
+        submitted: u64,
+        id: Identity,
+        canceled: &dyn Fn() -> bool,
+    ) -> Option<Arc<TapReservation>> {
+        self.reserve_funded(submitted, id, true, canceled)
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn try_reserve_plan(self: &Arc<Self>, submitted: u64, id: Identity) -> Option<Arc<TapReservation>> {
+        self.reserve_funded(submitted, id, false, &|| false)
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    fn reserve_funded(
+        self: &Arc<Self>,
+        submitted: u64,
+        id: Identity,
+        wait: bool,
+        canceled: &dyn Fn() -> bool,
+    ) -> Option<Arc<TapReservation>> {
         let plan = lock(&self.state).taps.admission.plan.as_ref().filter(|p| p.identity(id))?.clone();
-        self.reserve(plan.samples(), submitted, Some(id), Some(plan))
+        self.reserve(plan.samples(), submitted, Some(id), Some(plan), wait, canceled)
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn current_reservation(&self, reservation: &TapReservation) -> bool {
+        let state = lock(&self.state);
+        Self::current(&state, reservation.submitted, None, reservation.plan.as_ref())
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn try_start_cycle(&self, reservation: &TapReservation, now: Instant) -> Option<()> {
+        let plan = reservation.plan.as_ref()?;
+        let state = lock(&self.state);
+        (Self::current(&state, reservation.submitted, None, Some(plan)) && plan.start(now).is_zero()).then_some(())
     }
 
     #[cfg(test)]
@@ -192,11 +304,25 @@ impl Handoff {
         Some(plan.start(now))
     }
 
-    #[cfg(any(target_os = "linux", test))]
+    #[cfg(test)]
     pub(crate) fn wait_for_cycle(&self, reservation: &TapReservation, now: impl Fn() -> Instant) -> Option<()> {
+        self.wait_for_cycle_until(reservation, now, &|| false)
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn wait_for_cycle_until(
+        &self,
+        reservation: &TapReservation,
+        now: impl Fn() -> Instant,
+        canceled: &dyn Fn() -> bool,
+    ) -> Option<()> {
         let plan = reservation.plan.as_ref()?;
         let mut state = lock(&self.state);
-        while Self::current(&state, reservation.submitted, None, Some(plan)) {
+        loop {
+            state = self.check_commands(state, canceled)?;
+            if !Self::current(&state, reservation.submitted, None, Some(plan)) {
+                return None;
+            }
             let wait = plan.start(now());
             if wait.is_zero() {
                 return Some(());
@@ -213,6 +339,5 @@ impl Handoff {
                 state.waiting = false;
             }
         }
-        None
     }
 }

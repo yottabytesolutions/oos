@@ -6,7 +6,11 @@
 //! already go to the little cores (`to_little_cores`). Opt-in until measured on the unit; Linux only, a no-op elsewhere and on SoCs whose cores are
 //! all alike. IRQ policy and procfs application live in `irq`.
 
+#[cfg(any(target_os = "linux", test))]
+mod experiment;
 pub mod irq;
+#[cfg(target_os = "linux")]
+pub(crate) use experiment::gpu_cpu;
 
 #[cfg(test)]
 pub use oos_hal::system::capacities;
@@ -47,6 +51,11 @@ fn plan(cores: Cores) -> Option<Plan> {
     Some(Plan { ui: vec![first], hw: vec![big.get(1).copied().unwrap_or(first)] })
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn fifo_cpu(cores: Cores) -> Option<usize> {
+    plan(cores).and_then(|p| p.hw.first().copied().filter(|_| p.hw != p.ui))
+}
+
 /// The calling thread (and the threads and processes it starts after this) onto the CPUs of `r`, when placement is on
 /// (`Switches::perf`: `perf.place = on` in system.conf, or OOS_PLACE set to any value but empty or 0).
 /// Device startup also applies the explicit IRQ plan from `irq`.
@@ -64,6 +73,20 @@ pub fn place(r: Role, sw: &crate::sysconf::Switches) {
     }
     #[cfg(not(target_os = "linux"))]
     let _ = r;
+}
+
+#[cfg(target_os = "linux")]
+pub(crate) fn place_acquisition(sw: &crate::sysconf::Switches) {
+    if sw.source.fifo() {
+        let result = fifo_cpu(sw.cores)
+            .ok_or_else(|| std::io::Error::other("selected acquisition core unavailable"))
+            .and_then(oos_hal::system::fifo_current_thread);
+        match result {
+            Ok(()) => return,
+            Err(error) => eprintln!("oos-ui: acq.sched=fifo: {error}"),
+        }
+    }
+    place(Role::Hw, sw);
 }
 
 /// Web workers run at SCHED_IDLE, with nice 10 as fallback, on the little cores.
@@ -122,6 +145,7 @@ mod tests {
         assert_eq!(c, Cores { big: 0b11_0000, little: 0b1111 });
         let p = plan(c).unwrap();
         assert_eq!((p.cpus(Role::Ui), p.cpus(Role::Hw)), (&[4][..], &[5][..]));
+        assert_eq!(fifo_cpu(c), Some(5));
         assert_eq!(c.little_count(), Some(4));
         std::fs::remove_dir_all(&root).unwrap();
         // all alike, or no capacity files: nothing to place
@@ -131,7 +155,9 @@ mod tests {
         std::fs::remove_dir_all(&root).unwrap();
         assert_eq!(plan(Cores::of(&[])), None);
         // one big core: the frame loop and the acquisition share it; the order of the files does not matter
-        let p = plan(Cores::of(&[(3, 1024), (2, 400), (0, 400), (1, 400)])).unwrap();
+        let c = Cores::of(&[(3, 1024), (2, 400), (0, 400), (1, 400)]);
+        let p = plan(c).unwrap();
         assert_eq!((p.ui.clone(), p.hw.clone()), (vec![3], vec![3]));
+        assert_eq!(fifo_cpu(c), None);
     }
 }

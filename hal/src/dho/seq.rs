@@ -6,15 +6,27 @@
 //! and the hardware source of `oos-ui`. Order (docs/protocols): [ADC mode] -> [AFE] -> TPU edge trigger -> wait FSM
 //! stopped -> acquisition configuration -> SCU auto/normal trigger -> arm -> wait done -> play-last read-out -> read.
 
+mod capture;
+#[cfg(test)]
+mod capture_tests;
 mod execute;
+mod playback;
+#[cfg(test)]
+mod playback_tests;
+mod readout;
 pub mod time;
 pub use super::samples::{
     code_map, decode_volts, decode_volts_into, deinterleave, lane_volts_into, volt_code, volts_f64 as volts, CodeMap,
 };
+pub use capture::CaptureReduction;
 pub use execute::{
     acquire_batch, acquire_batch_idle, acquire_batch_until, acquire_batch_with_clock, execute_bus, execute_bus_until,
 };
+pub use playback::{stock_play, Playback, StockPlay};
+pub use readout::frame_len;
 
+#[cfg(target_os = "linux")]
+use crate::dho::bus::{Bus, DmaBuf};
 use crate::dho::{acq, adc, afe, auxout, hz, la, mask, scu, tpu, zone, Write};
 
 #[derive(Clone, Debug)]
@@ -178,10 +190,8 @@ pub struct Settings {
     pub trigger: Trig,
     /// points per channel to read, from memory point pre + `at` (None = the whole record)
     pub window: Option<(u32, i64)>,
-    /// read-out with the stock type-4 play and the pass-through writes before it
-    /// (the combination that delivered own frames on the unit, 2026-11-03); false = the play-last read-out of the warm
-    /// hand-over, which only works right after a raw read of the stock system
-    pub play4: bool,
+    /// Requested analog read-out path. Ordinary reads use type-4 play.
+    pub playback: Playback,
     /// configuration blocks written before the arm: bit0 trigger, bit1 acquisition, bit2 auto trigger (7 = all;
     /// 0 = arm with the configuration the stock system left behind; diagnostic)
     pub blocks: u8,
@@ -280,7 +290,7 @@ impl Default for Settings {
             single: false,
             trigger: Trig::Edge,
             window: Some((4000, -2000)),
-            play4: true,
+            playback: Playback::Raw,
             blocks: 7,
             header: false,
             noise_reject: false,
@@ -366,12 +376,7 @@ impl State {
             return Err("channel mask 1..0xf with the trigger source enabled".into());
         }
         let mut st = Vec::new();
-        let mut p = hz::prep(s.mask, tdiv_fs(s.tdiv), s.depth, 0);
-        // with the LA on the record stays centred: its rate rule comes after this one and is not worked out for it
-        if s.delay != 0.0 && s.la.is_none() {
-            let half = p.dot_fs as i128 * p.memsel as i128 / 2;
-            p = hz::prep(s.mask, tdiv_fs(s.tdiv), s.depth, time_fs(s.delay).clamp(-half, half));
-        }
+        let mut p = capture::horizontal(s)?;
         if let Some(l) = &s.la {
             p = la::prep(p, l.analog_shown);
         }
@@ -756,20 +761,9 @@ impl State {
         st
     }
 
-    /// Arm a batch of `frames(s, p)` frames and wait for the done flag (= the first frame is complete; the FPGA goes
-    /// on recording into the ring until the last frame or a stop, unit 2026-11-03).
-    pub fn arm_steps(&mut self, s: &Settings, p: &hz::Params) -> Vec<Step> {
-        let mut st = self.arm_only_steps(s, p);
-        st.extend(wait_steps(p));
-        st
-    }
-
-    /// The arm of `arm_steps` without the wait for done: what `prearm` issues ahead, before the host decodes the batch
-    /// just read.
-    pub fn arm_only_steps(&mut self, s: &Settings, p: &hz::Params) -> Vec<Step> {
-        let nf = frames(s, p);
-        let mut st = vec![Step::Note(format!("arm (frame 0, {} frame{})", nf, if nf == 1 { "" } else { "s" }))];
-        st.extend(scu::arm(s.mask, &mut self.sh, 0, nf).into_iter().map(Step::Wr));
+    fn arm_record_steps(&mut self, s: &Settings, first: u32, nf: u32) -> Vec<Step> {
+        let mut st = vec![Step::Note(format!("arm (frame {first}, {} frame{})", nf, if nf == 1 { "" } else { "s" }))];
+        st.extend(scu::arm(s.mask, &mut self.sh, first, nf).into_iter().map(Step::Wr));
         st
     }
 
@@ -797,7 +791,6 @@ impl State {
         st.extend(acq::avg_clear().into_iter().map(Step::Wr));
         st
     }
-
     /// Read-out of the `count` frames a batch recorded, all of them in every mode: pass-through, window, stop sequence,
     /// type-4 play, one read. In average mode too, as the stock system does: the FPGA's averaging sits on the play
     /// side (assumed: the next frame waits for the play-out of the one before), so a frame that is not played does not
@@ -817,50 +810,7 @@ impl State {
     /// `read_steps` of `count` frames from frame `first` of the ring (the segments of a hardware segmented record,
     /// a stored frame read again).
     pub fn read_steps_at(&mut self, s: &Settings, p: &hz::Params, first: u32, count: u32) -> Vec<Step> {
-        let nf = if s.play4 { count.max(1) } else { 1 };
-        let mut st = Vec::new();
-        let (n, start) = window(s, p);
-        // the window counts words of all interleaved channels: n x ratio from point x ratio (Phase 0.5 step D)
-        let win = scu::Window {
-            n: n * p.ratio,
-            start: start * p.ratio,
-            ratio: p.ratio,
-            fsm: s.mask,
-            la: s.la.is_some(),
-            avg: matches!(s.mode, acq::Mode::Average { .. }),
-        };
-        st.push(Step::Note(format!("read-out: {} points from memory point {} (trigger at {})", n, start, p.pre)));
-        let mut ro = if s.play4 {
-            let mut v = scu::passthrough();
-            if s.compress > 1 {
-                // main compression on, factor k (live value 0xc0000004 at k = 4); TX length = compressed points
-                for w in v.iter_mut().filter(|w| w.0 == 0x1170) {
-                    w.1 = compress_word(compress_k(s, p));
-                }
-            }
-            let mut r = scu::readout_play4(&win, &mut self.sh, first, nf);
-            if s.compress > 1 {
-                let len = compressed_len(s, p);
-                for w in r.iter_mut().filter(|w| w.0 == 0x11f0) {
-                    w.1 = len;
-                }
-            }
-            v.extend(r);
-            v
-        } else {
-            scu::readout(&win, &mut self.sh)
-        };
-        if s.header {
-            // frame header on: the FPGA puts a 16-byte header in front of the frame
-            for w in ro.iter_mut().filter(|w| w.0 == 0x1010) {
-                w.1 &= !(1 << 31);
-            }
-            self.sh.s1010 &= !(1 << 31);
-        }
-        st.extend(ro.into_iter().map(Step::Wr));
-        st.push(Step::Peek(&[0x4034, 0x4080]));
-        st.push(Step::Read { frames: nf as usize, frame: frame_bytes(s, p) });
-        st
+        readout::steps_at(s, p, &mut self.sh, (first, count))
     }
 }
 
@@ -924,9 +874,16 @@ pub fn wait_steps(p: &hz::Params) -> Vec<Step> {
     ]
 }
 
+fn validate_ring_arm(p: &hz::Params, first: u32, nf: u32) -> Result<(), String> {
+    let capacity = hz::max_record_frames(p.seg);
+    let fits = first.checked_add(nf).is_some_and(|end| end <= capacity);
+    fits.then_some(())
+        .ok_or_else(|| format!("cannot arm {nf} frames at index {first}: ring capacity is {capacity} frames"))
+}
+
 /// Frames of one batch: `Settings::frames`, at least 1, at most the frame ring (`max_frames`); 1 for play-last.
 pub fn frames(s: &Settings, p: &hz::Params) -> u32 {
-    if !s.play4 || s.la.is_some() {
+    if !s.playback.is_play4() || s.la.is_some() {
         return 1;
     }
     s.frames.clamp(1, p.max_frames.max(1))
@@ -948,7 +905,13 @@ pub fn read_len(frames: usize, frame: usize) -> usize {
 
 /// Bytes of one frame in the read: the window of all interleaved channels (+ the 16-byte header in header mode).
 pub fn frame_bytes(s: &Settings, p: &hz::Params) -> usize {
-    let n = if s.compress > 1 && s.play4 { compressed_len(s, p) } else { window(s, p).0 };
+    let n = if let Some(play) = stock_play(s, p) {
+        play.frame_len()
+    } else if s.compress > 1 && s.playback.is_play4() {
+        compressed_len(s, p)
+    } else {
+        window(s, p).0
+    };
     2 * (p.ratio * n) as usize + if s.header { 16 } else { 0 }
 }
 
@@ -1072,7 +1035,8 @@ pub fn read_raw_again<B: crate::dho::bus::Bus, R: std::io::Read>(
 
 /// `s` without the FPGA compression: what `read_raw_again` reads with.
 pub fn raw_settings(s: &Settings) -> Settings {
-    Settings { compress: 1, frames: 1, ..s.clone() }
+    let playback = if s.playback.is_play4() { Playback::Raw } else { Playback::Last };
+    Settings { playback, compress: 1, frames: 1, ..s.clone() }
 }
 
 /// Arms the next batch right after a read (and the LA read of the same record), so the FPGA records while the host
@@ -1083,11 +1047,11 @@ pub fn prearm(
     st: &mut State,
     s: &Settings,
     p: &hz::Params,
-    bar: &mut crate::dho::bus::Bar1,
+    bar: &mut impl Bus,
     c2h: &mut std::fs::File,
     log: impl FnMut(String),
 ) -> Result<(), String> {
-    execute(&st.arm_only_steps(s, p), bar, None, c2h, log).map(|_| ())
+    execute_bus(&st.arm_only_steps(s, p), bar, c2h, &mut DmaBuf::new(), log)
 }
 
 /// Stops an acquisition armed by `prearm` that will not be read (`State::disarm_steps`).
@@ -1108,20 +1072,17 @@ pub fn acquire_la(
     st: &mut State,
     s: &Settings,
     p: &hz::Params,
-    bar: &mut crate::dho::bus::Bar1,
+    bar: &mut impl Bus,
     c2h: &mut std::fs::File,
     log: impl FnMut(String),
 ) -> Result<Vec<u16>, String> {
     let (n, _) = la::window(&la::timing(p, s.mask));
-    let steps = st.la_read_steps(s, p);
-    match execute(&steps, bar, None, c2h, log) {
-        Ok(bytes) => Ok(la::words(&bytes, n as usize)),
+    let mut dma = DmaBuf::new();
+    match execute_bus(&st.la_read_steps(s, p), bar, c2h, &mut dma, log) {
+        Ok(()) => Ok(la::words(dma.data(), n as usize)),
         Err(e) => {
             // the read failed before `la::restore` ran: without it the stream stays on the LA and the analog is gone
-            use crate::dho::bus::Bus;
-            for (off, v) in la::restore(&mut st.sh) {
-                bar.wr(off, v);
-            }
+            bar.apply(&la::restore(&mut st.sh));
             Err(e)
         }
     }
@@ -1171,7 +1132,6 @@ pub fn execute_into_until(
     mut log: impl FnMut(String),
     stop: impl Fn() -> bool,
 ) -> Result<(), String> {
-    use crate::dho::bus::Bus;
     let mut afe_bus = afe_bus;
     for s in steps {
         match s {
@@ -1639,7 +1599,7 @@ mod tests {
         let (_, p2) =
             plan(&mut State::handover(1, None), &Settings { frames: 1_000_000, ..s.clone() }, None, None).unwrap();
         assert_eq!(frames(&Settings { frames: 1_000_000, ..s.clone() }, &p2), p2.max_frames);
-        assert_eq!(frames(&Settings { play4: false, ..s }, &p2), 1);
+        assert_eq!(frames(&Settings { playback: Playback::Last, ..s }, &p2), 1);
     }
 
     #[test]
@@ -1668,7 +1628,8 @@ mod tests {
         assert_eq!(*w.last().unwrap(), (0x4004, 0x1));
         // the play-last read-out of the warm hand-over is still available: 28 writes
         let mut state = State::handover(1, None);
-        let (st, _) = plan(&mut state, &Settings { play4: false, ..Settings::default() }, None, None).unwrap();
+        let (st, _) =
+            plan(&mut state, &Settings { playback: Playback::Last, ..Settings::default() }, None, None).unwrap();
         assert_eq!(writes(&st).len(), 17 + 22 + 1 + 3 + 29 + 28);
     }
 

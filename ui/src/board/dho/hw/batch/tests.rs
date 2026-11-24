@@ -86,14 +86,14 @@ fn check_lines_readout(tdiv: f32, compress: bool, match_cores: bool) {
     b.header = false;
     let (input, count, _) = scripted::draw_route_batch(&m, &sw, 0);
     let fb = input.frame_bytes();
-    let raw_newest = super::super::raw_newest(&b, &p).then(|| {
+    let raw_newest = super::super::plan::raw_newest(&b, &p).then(|| {
         let (raw, ..) = scripted::draw_route_batch(&m, &Default::default(), 1);
         raw.newest(0)
     });
     let pipe = Pipe::start(1, 0, counters);
     let id = Identity::default();
     pipe.publish_view(&m, 970, 448, sw.interp, id);
-    crate::board::dho::publication::read(count as u32, count as u32, count);
+    crate::board::dho::publication::read(crate::drawpipe::counters(), count as u32, count as u32, count);
     let readout = Readout::new(
         &pipe,
         (&b, &p),
@@ -102,9 +102,10 @@ fn check_lines_readout(tdiv: f32, compress: bool, match_cores: bool) {
         (id, Instant::now()),
     );
     let mut cores = Cores::default();
-    let mut dma = input.into_bytes();
-    let frames = readout.dispatch(&mut dma, Some(Default::default()), match_cores.then_some(&mut cores), |f| f);
+    let mut dma = Some(input.into_bytes());
+    let frames = readout.dispatch(&mut dma, match_cores.then_some(&mut cores), |f| f, &|| false);
     assert!(frames.is_empty());
+    assert!(dma.is_none(), "complete handoff needs no spare DMA destination");
     let recycled = crate::drawpipe::host::finish_batch(&pipe, 1).unwrap();
     assert_eq!(recycled.bytes().len(), fb * count);
     let mut picture = Phosphor::new(970, 448);
@@ -139,19 +140,17 @@ fn finish(pipe: &crate::drawpipe::Pipe) {
     crate::drawpipe::host::finish_batch(pipe, 1).expect("the completed batch returns its buffer");
 }
 
-fn stale_frame(bytes: &[u8], s: &Settings, p: &hz::Params, warm: bool) -> Frame {
-    // An independent oracle for the pattern valid before frame 0: raw if nothing was learned yet.
+fn stale_frame(bytes: &[u8], s: &Settings, p: &hz::Params, amplitude: i32) -> Frame {
+    // Warm records use the frozen pattern. Cold records use their own amplitude in sample order.
     let mut corrected = bytes.to_vec();
-    if warm {
-        for (i, b) in corrected.as_chunks_mut::<2>().0.iter_mut().enumerate() {
-            let code = u16::from_le_bytes([b[0], b[1]]) as i32 - 200 * [4, -2, 1, -3, -1, 3, -4, 2][i % 8];
-            b.copy_from_slice(&(code as u16).to_le_bytes());
-        }
+    for (i, b) in corrected.as_chunks_mut::<2>().0.iter_mut().enumerate() {
+        let code = u16::from_le_bytes([b[0], b[1]]) as i32 - amplitude * [4, -2, 1, -3, -1, 3, -4, 2][i % 8];
+        b.copy_from_slice(&(code as u16).to_le_bytes());
     }
     super::super::decode_probed(&corrected, s, p, 0, HeaderProbe::Off)
 }
 
-fn run(frame0_drop: bool, replacement: bool, warm: bool) {
+fn run(frame0_drop: bool, warm: bool) {
     let _scope = crate::drawpipe::test_scope::Scope::new();
     let counters = crate::drawpipe::counters();
     // AC coupling: frame 1 is not checked for its edge here (frame1.rs has those tests)
@@ -162,7 +161,7 @@ fn run(frame0_drop: bool, replacement: bool, warm: bool) {
         trig_couple: oos_hal::dho::tpu::Coupling::Ac,
         ..Settings::default()
     };
-    let p = hz::Params { memsel: 4096, ..hz::prep(s.mask, 1_000_000_000, 4096, 0) };
+    let p = hz::Params { memsel: 4096, rate: hz::CLOCK as u64, ..hz::prep(s.mask, 1_000_000_000, 4096, 0) };
     // A stale frame with a fitting but different amplitude would change the learned pattern.
     let (stale, good) = (record(p.memsel, 250), record(p.memsel, 200));
     let (mut cores, mut oracle) = (Cores::default(), Cores::default());
@@ -175,21 +174,24 @@ fn run(frame0_drop: bool, replacement: bool, warm: bool) {
     for (i, ch) in model.ch.iter_mut().enumerate() {
         ch.on = i == 0;
     }
-    let expected_stale = if frame0_drop || !replacement {
-        stale_frame(&stale, &s, &p, warm)
-    } else {
-        super::super::decode_with(&stale, &s, &p, 0, HeaderProbe::Off, Some(&mut oracle))
-    };
-    // frame 0 is left out with `frame0_drop` (upstream 0cc8fcb6): the workers start at frame 1
-    if replacement && !frame0_drop {
+    // Both the picture and the tap use the pattern from the start of the batch.
+    if !frame0_drop {
+        let expected_stale = stale_frame(&stale, &s, &p, if warm { 200 } else { 250 });
         crate::drawpipe::draw_frame(&mut want, &model, &expected_stale, Interp::Exact, None);
     }
     let neighbour = record(p.memsel, 220);
-    if replacement {
-        let frame = super::super::decode_with(&neighbour, &s, &p, 2, HeaderProbe::Off, Some(&mut oracle));
-        crate::drawpipe::draw_frame(&mut want, &model, &frame, Interp::Exact, None);
-    }
-    let expected_newest = super::super::decode_with(&good, &s, &p, 3, HeaderProbe::Off, Some(&mut oracle));
+    let amplitude = if warm {
+        200
+    } else if frame0_drop {
+        220
+    } else {
+        250
+    };
+    let frame = stale_frame(&neighbour, &s, &p, amplitude);
+    crate::drawpipe::draw_frame(&mut want, &model, &frame, Interp::Exact, None);
+    let expected_newest = stale_frame(&good, &s, &p, amplitude);
+    let first_kept = if frame0_drop { &neighbour } else { &stale };
+    super::super::decode_with(first_kept, &s, &p, 0, HeaderProbe::Off, Some(&mut oracle));
     let pipe = Pipe::start(1, 0, counters);
     pipe.publish_view(&model, 128, 64, Interp::Exact, Default::default());
     let frames = Readout::new(
@@ -200,68 +202,54 @@ fn run(frame0_drop: bool, replacement: bool, warm: bool) {
         (Default::default(), Instant::now()),
     )
     .dispatch(
-        &mut Bytes([stale, neighbour, good].concat()),
-        replacement.then(|| Bytes(Vec::new())),
+        &mut Some(Bytes([stale, neighbour, good].concat())),
         Some(&mut cores),
         |frame| Frame { stamp: 17, cfg: 23, ..frame },
+        &|| false,
     );
-    assert_eq!(cores.pattern((1, 0, p.rate)), oracle.pattern((1, 0, p.rate)), "learning includes an ineligible frame");
     let drawn = if frame0_drop { 1 } else { 2 };
-    let newest = newest(&pipe, frames, (replacement, drawn), &want);
+    assert!(frames.is_empty());
+    let newest = newest(&pipe, drawn, &want);
+    assert_eq!(cores.pattern((1, 0, p.rate)), oracle.pattern((1, 0, p.rate)), "learning includes an ineligible frame");
+
     assert_eq!((newest.seq, newest.stamp, newest.cfg), (3, 17, 23));
     assert_eq!(newest.ch, expected_newest.ch);
-    accounted(counters, replacement, frame0_drop);
+    accounted(counters, frame0_drop);
 }
 
-fn accounted(counters: &crate::drawpipe::Counters, replacement: bool, frame0_drop: bool) {
+fn accounted(counters: &crate::drawpipe::Counters, frame0_drop: bool) {
     let dropped = counters.read().2;
     let deposited = counters.deposited.load(std::sync::atomic::Ordering::Relaxed);
     let frame0 = u64::from(frame0_drop);
-    let buffer = if replacement { 0 } else { 2 - frame0 };
-    assert_eq!(deposited + u64::from(!replacement) + frame0 + buffer, 3, "every read record is accounted for");
-    assert_eq!(dropped, if replacement { 0 } else { 2 });
+    assert_eq!(deposited + frame0, 3, "every read record is accounted for");
+    assert_eq!(dropped, 0);
     let text = counters.records_text();
     assert!(text.contains(&format!("lost.frame0={frame0}")));
-    assert!(text.contains(&format!("lost.buffer={buffer}")));
+    assert!(text.contains("lost.buffer=0"));
 }
 
-fn newest(pipe: &Pipe, frames: Vec<Frame>, (replacement, drawn): (bool, usize), want: &Phosphor) -> Frame {
-    if replacement {
-        assert!(frames.is_empty());
-        finish(pipe);
-        let mut got = Phosphor::new(128, 64);
-        let accepted = pipe.accept(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0));
-        assert_eq!(accepted.frames, drawn as u64 + 1);
-        let newest = pipe.take_waveform((128, 64)).unwrap();
-        let mut expected = Phosphor::new(128, 64);
-        expected.add_maps(want, [true; 4]);
-        let mut model = Model::default();
-        for (c, ch) in model.ch.iter_mut().enumerate() {
-            ch.on = c == 0;
-        }
-        crate::drawpipe::draw_frame(&mut expected, &model, &newest, Interp::Exact, None);
-        assert_eq!(got.maps(), expected.maps(), "the complete batch includes its corrected newest frame");
-        std::sync::Arc::try_unwrap(newest.into_frame()).ok().unwrap()
-    } else {
-        assert_eq!(frames.len(), 1);
-        frames.into_iter().next().unwrap()
+fn newest(pipe: &Pipe, drawn: usize, want: &Phosphor) -> Frame {
+    finish(pipe);
+    let mut got = Phosphor::new(128, 64);
+    let accepted = pipe.accept(&mut got, &mut false, &mut [0; 4], &mut (0.0, 0.0));
+    assert_eq!(accepted.frames, drawn as u64 + 1);
+    let newest = pipe.take_waveform((128, 64)).unwrap();
+    let mut expected = Phosphor::new(128, 64);
+    expected.add_maps(want, [true; 4]);
+    let mut model = Model::default();
+    for (c, ch) in model.ch.iter_mut().enumerate() {
+        ch.on = c == 0;
     }
+    crate::drawpipe::draw_frame(&mut expected, &model, &newest, Interp::Exact, None);
+    assert_eq!(got.maps(), expected.maps(), "the complete batch includes its corrected newest frame");
+    std::sync::Arc::try_unwrap(newest.into_frame()).ok().unwrap()
 }
 
 #[test]
 fn acquisition_batch_stale_frame_draws_without_learning() {
     for warm in [false, true] {
         for frame0_drop in [false, true] {
-            run(frame0_drop, true, warm);
-        }
-    }
-}
-
-#[test]
-fn acquisition_batch_buffer_exhaustion_learns_only_the_newest() {
-    for warm in [false, true] {
-        for frame0_drop in [false, true] {
-            run(frame0_drop, false, warm);
+            run(frame0_drop, warm);
         }
     }
 }
@@ -274,19 +262,20 @@ fn unavailable_deposit_intake_falls_back_to_the_record_queue() {
     let counters = crate::drawpipe::counters();
     let pipe = Pipe::start(0, 0, counters);
     let s = Settings { mask: 1, header: false, compress: 1, ..Settings::default() };
-    let p = hz::prep(s.mask, 1_000_000_000, 4096, 0);
+    let p = hz::Params { rate: hz::CLOCK as u64, ..hz::prep(s.mask, 1_000_000_000, 4096, 0) };
     let raw = record(p.memsel, 200);
-    let mut dma = Bytes(raw.repeat(3));
+    let mut dma = Some(Bytes(raw.repeat(3)));
     let identity = Identity::default();
-    publication::read(3, 3, 3);
+    publication::read(crate::drawpipe::counters(), 3, 3, 3);
     let readout =
         Readout::new(&pipe, (&s, &p), (raw.len(), 3, false), (3, HeaderProbe::Off, None), (identity, Instant::now()));
-    let frames = readout.dispatch(&mut dma, Some(Bytes(Vec::new())), None, |frame| frame);
+    let frames = readout.dispatch(&mut dma, Some(&mut Cores::default()), |frame| frame, &|| false);
     let shared = crate::board::HwShared::default();
     publication::push_frames(&shared, frames, s.mode);
     let shared = oos_hal::sync::lock(&shared);
     assert_eq!(shared.queue.len(), 1);
     assert_eq!((shared.queue[0].seq, shared.frame.seq), (3, 3));
+    assert_eq!(shared.queue[0].ch, stale_frame(&raw, &s, &p, 200).ch, "refused intake uses the cold estimate");
     assert_eq!(counters.read(), (3, 0, 2));
     assert!(counters.records_text().contains("lost.unclaimed=2"));
     assert!(pipe.take_buffer().is_some());
@@ -297,14 +286,13 @@ fn publish_readout(
     shared: &crate::board::HwShared,
     (settings, geometry): (&Settings, &hz::Params),
     seq: u64,
-    replacement: Option<Bytes>,
 ) {
     use crate::board::dho::publication;
 
     let id = oos_hal::sync::lock(shared).acquisition.identity();
     let raw = record(geometry.memsel, 200);
-    let mut dma = Bytes(raw.repeat(3));
-    publication::read(3, 3, 3);
+    let mut dma = Some(Bytes(raw.repeat(3)));
+    publication::read(crate::drawpipe::counters(), 3, 3, 3);
     let reservation = pipe.staged_taps().then(|| pipe.reserve_plan(id).unwrap());
     let readout = Readout::new(
         pipe,
@@ -316,19 +304,19 @@ fn publish_readout(
     .reserved(reservation);
     publication::push_frames(
         shared,
-        readout.dispatch(&mut dma, replacement, None, |f| publication::tag(f, id)),
+        readout.dispatch(&mut dma, None, |f| publication::tag(f, id), &|| false),
         settings.mode,
     );
 }
 
 #[test]
-fn replacement_dma_refusal_waits_for_the_older_unpublished_tap() {
+fn record_route_publication_waits_for_the_older_unpublished_tap() {
     for profile in [crate::drawpipe::funding::TEST_PROFILE, ""] {
-        replacement_dma_refusal(profile);
+        ordered_record_route(profile);
     }
 }
 
-fn replacement_dma_refusal(profile: &str) {
+fn ordered_record_route(profile: &str) {
     use crate::ui::{host::Host, lifecycle::test_wait::HANG_GUARD, Ui};
     use crate::wave::Source;
     use oos_hal::sync::lock;
@@ -362,9 +350,12 @@ fn replacement_dma_refusal(profile: &str) {
     assert!(pipe.feed_with(Box::new(Bytes(raw)), fb, 0..1, id, hold, None, None).is_none());
     started.recv_timeout(HANG_GUARD).unwrap();
 
-    let dispatch = |seq, replacement| publish_readout(pipe, &shared, (&s, &p), seq, replacement);
-    dispatch(4, Some(Bytes(Vec::new())));
-    dispatch(7, None);
+    let dispatch = |seq| publish_readout(pipe, &shared, (&s, &p), seq);
+    dispatch(4);
+    // A separately selected record route can still publish while older taps are pending.
+    let raw = record(p.memsel, 200);
+    let frame = super::super::decode_probed(&raw, &s, &p, 7, HeaderProbe::Off);
+    crate::board::dho::publication::push_frames(&shared, vec![crate::board::dho::publication::tag(frame, id)], s.mode);
     ui.step(0.03);
     release.send(()).unwrap();
     assert!(matches!(ui.src, Source::Hw { seen: 0, .. }));
@@ -374,7 +365,7 @@ fn replacement_dma_refusal(profile: &str) {
     ui.step(0.03);
     assert!(matches!(ui.src, Source::Hw { seen: 4, .. }));
     assert_eq!(lock(&shared).frame.seq, 7, "reading the older tap leaves latest publication intact");
-    dispatch(10, Some(Bytes(Vec::new())));
+    dispatch(10);
     crate::drawpipe::host::finish_batch(pipe, 10).unwrap();
     ui.step(0.03);
     assert!(matches!(ui.src, Source::Hw { seen: 7, .. }));
@@ -382,7 +373,7 @@ fn replacement_dma_refusal(profile: &str) {
     assert!(matches!(ui.src, Source::Hw { seen: 10, .. }));
     assert!(lock(&shared).queue.is_empty());
     assert_eq!(pipe.tap_count(), 0);
-    assert!(crate::drawpipe::counters().records_text().contains("lost.buffer=2 "));
+    assert!(crate::drawpipe::counters().records_text().contains("lost.buffer=0 "));
 }
 
 #[test]
@@ -417,6 +408,104 @@ fn one_raw_dot_record_selects_lossless_wide_admission() {
     assert!(hits > crate::picture::deposit::HIT_LIMIT);
 }
 
+mod cancellation;
 mod tap_contract;
 
 mod admission;
+
+#[test]
+fn no_spare_dma_keeps_the_complete_normal_production_batch() {
+    let _scope = crate::drawpipe::test_scope::Scope::new();
+    let (m, sw, mut b, p) = normal_lines_plan(1e-6, false);
+    b.header = false;
+    let (input, count, _) = scripted::draw_route_batch(&m, &sw, 0);
+    let fb = input.frame_bytes();
+    let pipe = Pipe::start(1, 0, crate::drawpipe::counters());
+    pipe.publish_view(&m, 970, 448, sw.interp, Identity::default());
+    let mut dma = Some(input.into_bytes());
+    let frames = Readout::new(
+        &pipe,
+        (&b, &p),
+        (fb, count, false),
+        (count as u64, HeaderProbe::Off, None),
+        (Identity::default(), Instant::now()),
+    )
+    .dispatch(&mut dma, None, |f| f, &|| false);
+    assert!(dma.is_none(), "the complete read moves to the batch owner");
+    assert!(frames.is_empty(), "buffer pressure must not replace the batch with its newest record");
+    finish(&pipe);
+    let got = pipe.accept(&mut Phosphor::new(970, 448), &mut true, &mut [0; 4], &mut (0.0, 0.0));
+    assert_eq!(got.frames, count as u64);
+}
+
+#[test]
+fn invalid_readout_charges_only_the_pipe_that_received_it() {
+    let _scope = crate::drawpipe::test_scope::Scope::new();
+    let pipe = Pipe::start(0, 0, Box::leak(Box::default()));
+    let settings = Settings::default();
+    let params = hz::prep(settings.mask, 1_000_000_000, 4096, 0);
+    let readout = Readout::new(
+        &pipe,
+        (&settings, &params),
+        (0, 1, false),
+        (1, HeaderProbe::Off, None),
+        (Identity::default(), Instant::now()),
+    );
+    let mut dma = Some(Bytes(Vec::new()));
+    assert!(readout.dispatch(&mut dma, None, |frame| frame, &|| false).is_empty());
+    assert_eq!(pipe.batch_counters().read(), (0, 0, 1));
+    assert_eq!(crate::drawpipe::counters().read(), (0, 0, 0));
+}
+
+#[test]
+fn uncorrected_record_count_uses_the_raw_replacement_at_publication() {
+    let _scope = crate::drawpipe::test_scope::Scope::new();
+    let counters = crate::drawpipe::counters();
+    let identity = Identity::default();
+    counters.metrics.set_identity(identity);
+    let s = Settings { mask: 1, header: false, ..Settings::default() };
+    let p = hz::Params { memsel: 4096, rate: hz::CLOCK as u64, ..hz::prep(s.mask, 1_000_000_000, 4096, 0) };
+    let bytes = record(p.memsel, 200);
+    let raw = stale_frame(&bytes, &s, &p, 200);
+    let (frames, _) = decode_records(
+        (false, identity),
+        (&s, &p, HeaderProbe::Off),
+        (&bytes.repeat(2), bytes.len(), 2),
+        (false, false),
+        Some((raw, false)),
+        (&mut 0, &mut Cores::default()),
+    );
+    assert_eq!(frames.len(), 2);
+    assert!(counters.pipeline_text(std::time::Duration::ZERO, 0).contains(" uncorrected=1"));
+}
+
+#[test]
+fn two_frame_readout_tags_the_corrected_newest_after_decoding_at_the_source() {
+    let (model, _, mut s, p) = normal_lines_plan(1e-6, false);
+    s.header = false;
+    s.trig_couple = oos_hal::dho::tpu::Coupling::Ac;
+    let identity = Identity::default();
+    let pipe = Pipe::start(1, 0, Box::leak(Box::default()));
+    pipe.publish_view(&model, 128, 64, Interp::Exact, identity);
+    let bytes = record((oos_hal::dho::seq::frame_bytes(&s, &p) / 2) as u32, 200);
+    let mut dma = Some(Bytes(bytes.repeat(2)));
+    let frames =
+        Readout::new(&pipe, (&s, &p), (bytes.len(), 2, true), (2, HeaderProbe::Off, None), (identity, Instant::now()))
+            .dispatch(
+                &mut dma,
+                Some(&mut Cores::default()),
+                |frame| {
+                    assert!(
+                        frame.ch.iter().any(|samples| !samples.is_empty()),
+                        "the source decodes the newest before handoff"
+                    );
+                    frame
+                },
+                &|| false,
+            );
+    assert!(frames.is_empty());
+    finish(&pipe);
+    let mut picture = Phosphor::new(128, 64);
+    assert_eq!(pipe.accept(&mut picture, &mut false, &mut [0; 4], &mut (0.0, 0.0)).frames, 1);
+    assert_eq!(pipe.take_waveform((128, 64)).unwrap().seq, 2);
+}

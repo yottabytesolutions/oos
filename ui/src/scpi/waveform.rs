@@ -3,6 +3,47 @@
 
 use super::*;
 
+#[derive(Clone, Copy)]
+pub(super) struct Selection {
+    pub(super) source: WaveId,
+    /// 0 BYTE, 1 WORD, 2 ASCII.
+    pub(super) format: u8,
+    /// 0 NORMal (screen), 1 MAXimum (memory while stopped), 2 RAW (memory).
+    pub(super) mode: u8,
+    /// 1-based inclusive. A stop of 0 reads through the last point.
+    pub(super) start: u64,
+    pub(super) stop: u64,
+}
+
+#[derive(Default)]
+pub(super) struct WaveformContext {
+    current: Selection,
+    resumed: Option<Selection>,
+}
+
+impl Default for Selection {
+    fn default() -> Self {
+        Self { source: WaveId::Ch(0), format: 0, mode: 0, start: 1, stop: 0 }
+    }
+}
+
+impl WaveformContext {
+    pub(super) fn read(&self) -> Selection {
+        self.resumed.unwrap_or(self.current)
+    }
+
+    pub(super) fn edit(&mut self, change: impl Fn(&mut Selection)) {
+        change(&mut self.current);
+        if let Some(selection) = &mut self.resumed {
+            change(selection);
+        }
+    }
+
+    pub(super) fn resume(&mut self, selection: Option<Selection>) {
+        self.resumed = selection;
+    }
+}
+
 pub(super) fn exec(scpi: &mut Scpi, ui: &mut Ui, cmd: &str, nodes: &[&str], query: bool, arg: &str) -> Option<Vec<u8>> {
     let n0 = nodes.first().copied().unwrap_or("");
     if kw(n0, "WAVeform") && nodes.len() == 2 {
@@ -37,7 +78,7 @@ fn source(scpi: &mut Scpi, query: bool, arg: &str) -> Option<Vec<u8>> {
         return text_reply(&scpi.wav_source_text());
     }
     if let Some(id) = parse_wave(arg) {
-        scpi.wav_src = id;
+        scpi.waveform.edit(|wave| wave.source = id);
     } else if !arg.is_empty() {
         scpi.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
     }
@@ -46,10 +87,10 @@ fn source(scpi: &mut Scpi, query: bool, arg: &str) -> Option<Vec<u8>> {
 
 fn mode(scpi: &mut Scpi, query: bool, arg: &str) -> Option<Vec<u8>> {
     if query {
-        return text_reply(["NORM", "MAX", "RAW"][scpi.wav_mode.min(2) as usize]);
+        return text_reply(["NORM", "MAX", "RAW"][scpi.waveform.read().mode.min(2) as usize]);
     }
     let a = arg.trim();
-    scpi.wav_mode = if kw(a, "RAW") {
+    let mode = if kw(a, "RAW") {
         2
     } else if kw(a, "MAXimum") {
         1
@@ -59,12 +100,13 @@ fn mode(scpi: &mut Scpi, query: bool, arg: &str) -> Option<Vec<u8>> {
         scpi.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
         return None;
     };
+    scpi.waveform.edit(|wave| wave.mode = mode);
     None
 }
 
 fn format(scpi: &mut Scpi, query: bool, arg: &str) -> Option<Vec<u8>> {
     if query {
-        return text_reply(["BYTE", "WORD", "ASC"][scpi.wav_fmt as usize]);
+        return text_reply(["BYTE", "WORD", "ASC"][scpi.waveform.read().format as usize]);
     }
     let format = if kw(arg.trim(), "BYTE") {
         Some(0)
@@ -76,7 +118,7 @@ fn format(scpi: &mut Scpi, query: bool, arg: &str) -> Option<Vec<u8>> {
         None
     };
     if let Some(format) = format {
-        scpi.wav_fmt = format;
+        scpi.waveform.edit(|wave| wave.format = format);
     } else {
         scpi.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
     }
@@ -85,16 +127,17 @@ fn format(scpi: &mut Scpi, query: bool, arg: &str) -> Option<Vec<u8>> {
 
 fn range(scpi: &mut Scpi, ui: &mut Ui, query: bool, arg: &str, n1: &str) -> Option<Vec<u8>> {
     let stop = kw(n1, "STOP");
+    let selection = scpi.waveform.read();
     if query {
         let n = scpi.wave_len(ui);
         let v = if stop {
-            if scpi.wav_stop == 0 {
+            if selection.stop == 0 {
                 n
             } else {
-                scpi.wav_stop
+                selection.stop
             }
         } else {
-            scpi.wav_start
+            selection.start
         };
         return text_reply(&v.to_string());
     }
@@ -102,17 +145,17 @@ fn range(scpi: &mut Scpi, ui: &mut Ui, query: bool, arg: &str, n1: &str) -> Opti
         scpi.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
         return None;
     };
-    if stop {
-        scpi.wav_stop = p;
-        if p < scpi.wav_start {
-            scpi.wav_start = p;
+    scpi.waveform.edit(|wave| {
+        if stop {
+            wave.stop = p;
+            wave.start = wave.start.min(p);
+        } else {
+            wave.start = p;
+            if wave.stop != 0 {
+                wave.stop = wave.stop.max(p);
+            }
         }
-    } else {
-        scpi.wav_start = p;
-        if scpi.wav_stop != 0 && scpi.wav_stop < p {
-            scpi.wav_stop = p;
-        }
-    }
+    });
     None
 }
 
@@ -125,6 +168,6 @@ fn points(scpi: &mut Scpi, ui: &mut Ui, query: bool, arg: &str) -> Option<Vec<u8
         scpi.push_err(format!("-224,\"Illegal parameter value\" {}", arg));
         return None;
     };
-    scpi.wav_stop = scpi.wav_start.saturating_add(n - 1);
+    scpi.waveform.edit(|wave| wave.stop = wave.start.saturating_add(n - 1));
     None
 }

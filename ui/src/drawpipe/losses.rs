@@ -10,11 +10,20 @@ pub struct Losses {
     pub queue_pop: AtomicU64,
     pub pipe: AtomicU64,
     pub overflow: AtomicU64,
+    pub(super) unexpected_full: AtomicU64,
+    pub(super) unexpected_busy: AtomicU64,
+    pub(crate) record_handoff: RecordHandoff,
     pub folds: AtomicU64,
     /// frames looked at by the header log in its `off` mode (`board::dho::switches::HeaderProbe`), not a loss
     pub probed: AtomicU64,
     source: [AtomicU64; Lost::ALL.len()],
     rejected: [AtomicU64; Rejection::ALL.len()],
+}
+
+#[derive(Default)]
+pub(crate) struct RecordHandoff {
+    pub(crate) unexpected_queue: AtomicU64,
+    pub(crate) sample_mismatch: AtomicU64,
 }
 
 /// Existing discard sites; buffer and unclaimed losses disappear with F3 back-pressure.
@@ -62,16 +71,14 @@ impl Lost {
 pub(super) enum Rejection {
     StaleKey,
     Epoch,
-    Age,
 }
 impl Rejection {
-    const ALL: [Self; 3] = [Self::StaleKey, Self::Epoch, Self::Age];
+    const ALL: [Self; 2] = [Self::StaleKey, Self::Epoch];
 
     fn label(self) -> &'static str {
         match self {
             Self::StaleKey => "stale_key",
             Self::Epoch => "epoch",
-            Self::Age => "age",
         }
     }
 
@@ -134,15 +141,48 @@ impl super::Counters {
         self.reject(Rejection::between(previous, current), records);
         Self::add(&self.dropped, records);
     }
+    pub(crate) fn pipeline_text(&self, budget: std::time::Duration, step_missed: u64) -> String {
+        let full = self.losses.unexpected_full.load(Ordering::Relaxed);
+        let busy = self.losses.unexpected_busy.load(Ordering::Relaxed);
+        format!(
+            " intake.unexpected_full={full} admission.unexpected_busy={busy}{} step.missed={step_missed}",
+            self.metrics.text(&self.routes, budget),
+        )
+    }
+
+    fn source_losses(&self) -> [u64; Lost::ALL.len()] {
+        let n = |value: &AtomicU64| value.load(Ordering::Relaxed);
+        let mut source = self.losses.source.each_ref().map(n);
+        source[Lost::Settings as usize] +=
+            n(&self.losses.worker_push) + n(&self.losses.ui_publish) + n(&self.losses.queue_pop);
+        source
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(crate) fn capture_counts(&self) -> (u64, u64) {
+        let n = |value: &AtomicU64| value.load(Ordering::Relaxed);
+        let mut lost = self.losses.source.each_ref().map(n);
+        lost[Lost::Settings as usize] = 0;
+        lost[Lost::Superseded as usize] = 0;
+        lost[Lost::Frame0 as usize] = 0; // The first read slot is deliberately excluded.
+        (n(&self.shown), lost.into_iter().sum::<u64>() + n(&self.losses.overflow))
+    }
+
     pub(crate) fn records_text(&self) -> String {
         let n = |a: &AtomicU64| a.load(Ordering::Relaxed);
         let mut text =
             format!(" records read={} deposited={} shown={}", n(&self.acquired), n(&self.deposited), n(&self.shown));
+        let handoff = &self.losses.record_handoff;
+        text.push_str(&format!(
+            " records.unexpected_queue={} records.sample_mismatch={}",
+            n(&handoff.unexpected_queue),
+            n(&handoff.sample_mismatch)
+        ));
+        #[cfg(feature = "private-picture-counts")]
+        text.push_str(&self.timing.picture_counts().text());
         let (acquired, used, _) = self.read();
         text.push_str(&format!(" not_used={}", acquired.saturating_sub(used)));
-        let mut source = self.losses.source.each_ref().map(n);
-        source[Lost::Settings as usize] +=
-            n(&self.losses.worker_push) + n(&self.losses.ui_publish) + n(&self.losses.queue_pop);
+        let source = self.source_losses();
         for reason in Lost::ALL {
             let count = source[reason as usize];
             text.push_str(&format!(" lost.{}={count}", reason.label()));
@@ -187,7 +227,7 @@ mod tests {
         {
             assert!(text.contains(&format!(" lost.{label}={} ", i + 2)), "{text}");
         }
-        assert!(text.ends_with("rejected.stale_key=11 rejected.epoch=13 rejected.age=0"), "{text}");
+        assert!(text.ends_with("rejected.stale_key=11 rejected.epoch=13"), "{text}");
         assert_eq!(counters.read().2, 0, "selection buckets preserve the legacy dropped aggregate");
     }
 }

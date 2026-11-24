@@ -80,7 +80,7 @@ pub trait Batch {
 }
 
 #[cfg(test)]
-pub(crate) use super::dho::hw::single_fake::{SegmentWorker, SingleWorker};
+pub(crate) use super::dho::hw::single_fake::{RecordWorker, SegmentWorker, SingleWorker};
 
 #[cfg(test)]
 mod tests {

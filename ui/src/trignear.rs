@@ -5,27 +5,63 @@
 //! edge within a sample or two of it. `edge_smooth_near` first searches `NEAR_COLS` screen columns around the point and
 //! keeps that answer only when it provably equals the wide one; otherwise it runs the wide search.
 //!
+//! In decoded samples, a search with half-span `s` and smoothing width `l` can move placement by up to
+//! `s + ceil(l / 2)`: the search reads an extra `l` samples at each end and centers the averages.
+//! The full-rate anchor refers to the trigger sample or its min/max pair (trigger.md §7).
+//! Decimation can hide that crossing altogether. The legacy wide search can select a different edge
+//! anywhere in its span, so sample or pair quantization alone cannot bound its result.
+//!
 //! Why the near answer is the wide one when it is accepted: `oos_dsp::edges::trigger_edges` keeps one armed flag per
 //! direction. A sample below level - h arms the rising comparator and disarms the falling one (it is below the level);
 //! a sample above level + h does the reverse. So both flags after such an out-of-band sample are the same whatever came
 //! before, and after the first out-of-band sample in the near window both windows see the same states and the same
 //! edges, each decided at its own crossing. Let d be the distance of the near result from `pre`. When the near window
 //! has an out-of-band sample before `pre` - d, every wide edge within d is also a near edge, in the same order: the
-//! nearest one (and the nearest of either direction) is the same. The near search also asks for an out-of-band sample
-//! after `pre` + d, so that the firing samples of those edges lie inside the near window. The times can differ in the
-//! last bits (the running sum starts at another sample, the window offset is added in another order), far below 1e-6
-//! sample.
+//! nearest one (and the nearest of either direction) is the same. A finite smoothed sample after
+//! `pre` + d bounds the interpolation of any crossing decided later. A second rail visit is unnecessary.
 
-use crate::fastdraw::edge_smooth;
+use crate::fastdraw::{Codes, EdgeSearch, Samples};
+use crate::picture::deposit::kernel::SamplesRef;
 use oos_dsp::edges::Edge;
+use std::ops::Range;
+
+mod pruned;
+mod wide;
+pub(crate) use wide::{WideSearch, WideShard};
+
+pub(crate) type SearchResult = (Option<f64>, Option<Edge>);
+pub(crate) type WideRefine<'a> = dyn FnMut(WideSearch, &dyn Fn(f64) -> bool) -> SearchResult + 'a;
+
+pub(crate) trait TriggerSamples: Samples {
+    fn trigger_codes(&self) -> Option<&Codes<'_>> {
+        None
+    }
+}
+
+impl TriggerSamples for [f32] {}
+impl TriggerSamples for Vec<f32> {}
+impl TriggerSamples for Codes<'_> {
+    fn trigger_codes(&self) -> Option<&Codes<'_>> {
+        Some(self)
+    }
+}
+impl TriggerSamples for SamplesRef<'_> {
+    fn trigger_codes(&self) -> Option<&Codes<'_>> {
+        match self {
+            Self::Codes(codes) => Some(codes),
+            Self::Volts(_) => None,
+        }
+    }
+}
 
 /// Half width of the near search in screen columns (plus `NEAR_PAD` samples).
 pub const NEAR_COLS: usize = 16;
 pub const NEAR_PAD: usize = 64;
 
+#[cfg(test)]
 /// `fastdraw::edge_smooth` with the same arguments and the same result, searched near `pre` first.
-#[allow(clippy::too_many_arguments)]
-pub fn edge_smooth_near<S: crate::fastdraw::Samples + ?Sized>(
+#[allow(clippy::too_many_arguments)] // Keep the existing trigger refinement interface.
+pub(crate) fn edge_smooth_near<S: TriggerSamples + ?Sized>(
     v: &S,
     pre: usize,
     level: f32,
@@ -35,30 +71,61 @@ pub fn edge_smooth_near<S: crate::fastdraw::Samples + ?Sized>(
     span: usize,
     l: usize,
     fits: impl Fn(f64) -> bool,
-) -> (Option<f64>, Option<Edge>) {
-    let l = l.max(1);
-    let near = NEAR_COLS * l + NEAR_PAD;
-    if near < span {
-        if let Some(r) = near_only(v, 0, v.len(), pre, level, hyst, rising, either, near, l, &fits) {
-            return r;
-        }
+) -> SearchResult {
+    edge_smooth_near_with(v, (pre, span, l), EdgeSearch { level, hysteresis: hyst, rising, either }, &fits, true, None)
+}
+
+pub(crate) fn edge_smooth_near_with<S: TriggerSamples + ?Sized>(
+    v: &S,
+    (pre, span, l): (usize, usize, usize),
+    trigger: EdgeSearch,
+    fits: &dyn Fn(f64) -> bool,
+    // The board adapter still passes its former end-rail policy.
+    _require_end_rail: bool,
+    wide: Option<&mut WideRefine<'_>>,
+) -> SearchResult {
+    #[cfg(test)]
+    if fixture::bypass_sparse() {
+        return (Some(pre as f64), None);
     }
-    edge_smooth(v, pre, crate::fastdraw::EdgeSearch { level, hysteresis: hyst, rising, either }, span, l, fits)
+    let l = l.max(1);
+    let near = near_span(l);
+    let bounds = sample_bounds(v.len(), (pre, span, l));
+    let local = if near >= span || bounds == sample_bounds(v.len(), (pre, near, l)) {
+        Some(smooth_all(v, pre, trigger, span, l, fits))
+    } else {
+        near_proof(v, (0, v.len()), (pre, near, l), trigger, fits, bounds.map(|b| b.start))
+    };
+    let result = local.unwrap_or_else(|| {
+        crate::drawpipe::counters().routes.wide_search();
+        if let Some(wide) = wide {
+            wide(WideSearch::new(pre, span, l, trigger), fits)
+        } else {
+            smooth_all(v, pre, trigger, span, l, fits)
+        }
+    });
+    #[cfg(test)]
+    fixture::compare(v, (pre, span, l), trigger, fits, fixture::Outcome::Refined(local.is_some(), result));
+    result
 }
 
 /// Samples `edge_near_window` needs of a frame of `len` samples: `near_window(pre, len, l)` = start..end.
 #[cfg(test)]
 pub fn near_window(pre: usize, len: usize, l: usize) -> (usize, usize) {
     let l = l.max(1);
-    let near = NEAR_COLS * l + NEAR_PAD;
+    let near = near_span(l);
     (pre.saturating_sub(near + l), (pre + near + l).min(len))
+}
+
+fn near_span(l: usize) -> usize {
+    NEAR_COLS * l + NEAR_PAD
 }
 
 /// The near search of `edge_smooth_near` alone, on a window of the samples: `v` holds samples `base..` of a frame of
 /// `len` samples and covers `near_window`. Some where `edge_smooth_near` answers from the near search (the same
 /// answer, the same arithmetic), None where it runs the wide search (then call it on all samples).
-#[allow(clippy::too_many_arguments)]
-pub fn edge_near_window<S: crate::fastdraw::Samples + ?Sized>(
+#[allow(clippy::too_many_arguments)] // The frame and the borrowed window have separate coordinates.
+pub(crate) fn edge_near_window<S: TriggerSamples + ?Sized>(
     v: &S,
     base: usize,
     len: usize,
@@ -72,45 +139,46 @@ pub fn edge_near_window<S: crate::fastdraw::Samples + ?Sized>(
     fits: impl Fn(f64) -> bool,
 ) -> Option<(Option<f64>, Option<Edge>)> {
     let l = l.max(1);
-    let near = NEAR_COLS * l + NEAR_PAD;
+    let near = near_span(l);
     if near >= span {
         return None;
     }
-    near_only(v, base, len, pre, level, hyst, rising, either, near, l, &fits)
+    let trigger = EdgeSearch { level, hysteresis: hyst, rising, either };
+    near_proof(v, (base, len), (pre, near, l), trigger, &fits, None)
 }
 
 /// The near search: Some only when its answer is the wide search's (module comment). `v` holds samples `base..` of
 /// `len`.
-#[allow(clippy::too_many_arguments)]
-fn near_only<S: crate::fastdraw::Samples + ?Sized>(
+#[cfg(test)]
+fn near_only<S: TriggerSamples + ?Sized>(
     v: &S,
-    base: usize,
-    len: usize,
-    pre: usize,
-    level: f32,
-    hyst: f32,
-    rising: bool,
-    either: bool,
-    span: usize,
-    l: usize,
+    source: (usize, usize),
+    geometry: (usize, usize, usize),
+    trigger: EdgeSearch,
     fits: &dyn Fn(f64) -> bool,
 ) -> Option<(Option<f64>, Option<Edge>)> {
-    let (a, s) = smoothed(v, base, len, pre, span, l, level)?;
-    let edges = oos_dsp::edges::trigger_edges(&s, level, hyst);
-    let d = |e: &Edge| (a as f64 + e.t - pre as f64).abs();
-    let near = |ok: &dyn Fn(&Edge) -> bool| nearest(&edges, a, pre, ok, fits);
-    let want = near(&|e| either || e.rising == rising)?;
-    let dist = d(&want);
-    // out-of-band samples (they set both comparators) on both sides beyond the result (absolute indices)
-    let (lo, hi) = (level - hyst, level + hyst);
-    let out = |x: &f32| x.is_finite() && (*x > hi || *x < lo);
-    let first = s.iter().position(out)? as f64 + a as f64;
-    let last = s.iter().rposition(out)? as f64 + a as f64;
-    if !(first < pre as f64 - dist && last > pre as f64 + dist) {
-        return None;
-    }
-    let any = near(&|_| true).map(|e| Edge { t: a as f64 + e.t, ..e });
-    Some((Some(a as f64 + want.t), any))
+    near_proof(v, source, geometry, trigger, fits, None)
+}
+
+fn near_proof<S: TriggerSamples + ?Sized>(
+    v: &S,
+    source: (usize, usize),
+    geometry: (usize, usize, usize),
+    trigger: EdgeSearch,
+    fits: &dyn Fn(f64) -> bool,
+    wide_origin: Option<usize>,
+) -> Option<SearchResult> {
+    let pre = geometry.0;
+    let (level, hyst) = (trigger.level, trigger.hysteresis);
+    search(v, source, geometry, trigger, wide_origin, |a, origin, scratch| {
+        let (time, any) = scratch.nearest(origin, pre, trigger, fits);
+        let dist = (time? - pre as f64).abs();
+        let (first, last) = scratch.proof_bounds(level - hyst, level + hyst, wide_origin.is_none())?;
+        let first = (a + first) as f64;
+        let last = (a + last) as f64;
+        (first < pre as f64 - dist && last > pre as f64 + dist).then_some((time, any))
+    })
+    .flatten()
 }
 
 /// The edge of `edges` (times from sample `a`) nearest `pre` that `ok` and `fits` accept, its time still from `a`.
@@ -131,8 +199,8 @@ fn nearest(
 /// comparators see, so an edge farther away is a crossing the hardware did not trigger on; the hardware point stands.
 /// `v` holds samples `base..` of a frame of `len` samples and covers `near_window(pre, len, l)`. Returns the edge and
 /// the nearest edge of either direction, as `edge_smooth`.
-#[allow(clippy::too_many_arguments)]
-pub fn edge_near<S: crate::fastdraw::Samples + ?Sized>(
+#[allow(clippy::too_many_arguments)] // The frame and the borrowed window have separate coordinates.
+pub(crate) fn edge_near<S: TriggerSamples + ?Sized>(
     v: &S,
     base: usize,
     len: usize,
@@ -145,310 +213,184 @@ pub fn edge_near<S: crate::fastdraw::Samples + ?Sized>(
     l: usize,
 ) -> (Option<f64>, Option<Edge>) {
     let l = l.max(1);
-    let near = (NEAR_COLS * l + NEAR_PAD).min(span);
-    let Some((a, s)) = smoothed(v, base, len, pre, near, l, level) else { return (None, None) };
-    let edges = oos_dsp::edges::trigger_edges(&s, level, hyst);
-    let all = |_: f64| true;
-    let want = nearest(&edges, a, pre, &|e| either || e.rising == rising, &all).map(|e| a as f64 + e.t);
-    (want, nearest(&edges, a, pre, &|_| true, &all).map(|e| Edge { t: a as f64 + e.t, ..e }))
+    let near = near_span(l).min(span);
+    let trigger = EdgeSearch { level, hysteresis: hyst, rising, either };
+    let fits = &|_| true;
+    let result =
+        search(v, (base, len), (pre, near, l), trigger, None, |_, a, scratch| scratch.nearest(a, pre, trigger, fits))
+            .unwrap_or_default();
+    #[cfg(test)]
+    if base == 0 && len == v.len() {
+        fixture::compare(v, (pre, span, l), trigger, fits, fixture::Outcome::Anchored(result));
+    }
+    result
 }
 
-/// The samples around `pre` (+-`span`, plus `l` for the average) smoothed by a centred moving average of `l` samples,
-/// as `edge_smooth` computes them: the first index and the smoothed values (NaN where the window is incomplete).
-fn smoothed<S: crate::fastdraw::Samples + ?Sized>(
+pub(crate) fn smooth_all<S: TriggerSamples + ?Sized>(
     v: &S,
-    base: usize,
-    len: usize,
     pre: usize,
+    trigger: EdgeSearch,
     span: usize,
     l: usize,
-    level: f32,
-) -> Option<(usize, Vec<f32>)> {
-    let a = pre.saturating_sub(span + l);
-    let b = (pre + span + l).min(len);
-    if b <= a + 2 * l {
-        return None;
-    }
-    let x = |i: usize| {
-        let y = v.at(i - base);
-        if y.is_finite() {
-            y as f64
-        } else {
-            level as f64
-        }
-    };
-    let half = l / 2;
-    let mut s = Vec::with_capacity(b - a);
-    let mut sum: f64 = (a..(a + l).min(b)).map(x).sum();
-    for j in 0..(b - a) {
-        let lo = a + j;
-        if j >= half && lo + l - half <= b {
-            s.push((sum / l as f64) as f32);
-            if lo + l - half < b {
-                sum += x(lo + l - half) - x(lo - half);
-            }
-        } else {
-            s.push(f32::NAN);
-        }
-    }
-    Some((a, s))
+    fits: &dyn Fn(f64) -> bool,
+) -> (Option<f64>, Option<Edge>) {
+    let l = l.max(1);
+    let origin = Some(pre.saturating_sub(span + l));
+    search(v, (0, v.len()), (pre, span, l), trigger, origin, |_, a, scratch| scratch.nearest(a, pre, trigger, fits))
+        .unwrap_or_default()
 }
 
+#[derive(Default)]
+pub(crate) struct SearchScratch {
+    samples: Vec<f32>,
+    indexed: Vec<(usize, f32)>,
+    edges: Vec<Edge>,
+    window: Vec<f64>,
+}
+
+impl SearchScratch {
+    fn proof_bounds(&self, lo: f32, hi: f32, require_end_rail: bool) -> Option<(usize, usize)> {
+        let outside = |x: f32| x.is_finite() && (x > hi || x < lo);
+        let end = |x: f32| x.is_finite() && (!require_end_rail || outside(x));
+        if self.indexed.is_empty() {
+            Some((self.samples.iter().position(|&x| outside(x))?, self.samples.iter().rposition(|&x| end(x))?))
+        } else {
+            Some((self.indexed.iter().find(|&&(_, x)| outside(x))?.0, self.indexed.iter().rfind(|&&(_, x)| end(x))?.0))
+        }
+    }
+
+    fn nearest(
+        &self,
+        a: usize,
+        pre: usize,
+        trigger: EdgeSearch,
+        fits: &dyn Fn(f64) -> bool,
+    ) -> (Option<f64>, Option<Edge>) {
+        let want = nearest(&self.edges, a, pre, &|e| trigger.either || e.rising == trigger.rising, fits);
+        let any = nearest(&self.edges, a, pre, &|_| true, fits);
+        (want.map(|e| a as f64 + e.t), any.map(|e| Edge { t: a as f64 + e.t, ..e }))
+    }
+}
+
+// The buffers belong to the calling worker. The smoothing keeps the original sum of rounded f32 volts.
+fn search<S: TriggerSamples + ?Sized, T>(
+    v: &S,
+    source: (usize, usize),
+    geometry: (usize, usize, usize),
+    trigger: EdgeSearch,
+    interpolation_origin: Option<usize>,
+    select: impl FnOnce(usize, usize, &SearchScratch) -> T,
+) -> Option<T> {
+    crate::fastdraw::with_scratch(|work| {
+        let scratch = &mut work.trigger;
+        let SearchScratch { samples, indexed, edges, window } = scratch;
+        let bounds = sample_bounds(source.1, geometry)?;
+        let a = bounds.start;
+        // Use the wide origin for interpolation so adding the fractional index rounds the same way.
+        let origin = interpolation_origin.unwrap_or(a);
+        let offset = a - origin;
+        let rebase = |(i, x)| (offset + i, x);
+        indexed.clear();
+        if let Some(codes) = v.trigger_codes().filter(|_| bounds.len() >= pruned::MIN_SAMPLES) {
+            pruned::smooth(codes, source.0, bounds.clone(), geometry.2, trigger, (indexed, window));
+        }
+        if indexed.is_empty() {
+            let initial_sum = if interpolation_origin.is_some() { 0.0 } else { -0.0 };
+            smoothed(v, source.0, bounds, geometry.2, (trigger.level, initial_sum), (samples, window));
+            oos_dsp::edges::trigger_edges_indexed_into(
+                samples.iter().copied().enumerate().map(rebase),
+                trigger.level,
+                trigger.hysteresis,
+                edges,
+            );
+        } else {
+            oos_dsp::edges::trigger_edges_indexed_into(
+                indexed.iter().copied().map(rebase),
+                trigger.level,
+                trigger.hysteresis,
+                edges,
+            );
+        }
+        Some(select(a, origin, scratch))
+    })
+}
+
+fn sample_bounds(len: usize, (pre, span, l): (usize, usize, usize)) -> Option<Range<usize>> {
+    let a = pre.saturating_sub(span + l);
+    let b = (pre + span + l).min(len);
+    (b > a + 2 * l).then_some(a..b)
+}
+
+/// Centred moving averages, with NaN where the window is incomplete.
+fn smoothed<S: Samples + ?Sized>(
+    v: &S,
+    base: usize,
+    bounds: Range<usize>,
+    l: usize,
+    (level, initial_sum): (f32, f64),
+    (s, window): (&mut Vec<f32>, &mut Vec<f64>),
+) {
+    let (a, b) = (bounds.start, bounds.end);
+    let x = |i: usize| finite_or_level(v.at(i - base), level);
+    let half = l / 2;
+    s.clear();
+    s.reserve(b - a);
+    s.resize(half, f32::NAN);
+    smooth_run(a..b - l + 1, l, window, x, |w| sum_window(w, initial_sum), |_, average| s.push(average));
+    s.resize(b - a, f32::NAN);
+}
+
+/// Visit the averages of consecutive complete windows, given their left indices.
+fn smooth_run(
+    starts: Range<usize>,
+    l: usize,
+    window: &mut Vec<f64>,
+    x: impl Fn(usize) -> f64,
+    start_sum: impl FnOnce(&[f64]) -> f64,
+    mut emit: impl FnMut(usize, f32),
+) -> (f64, f64) {
+    let a = starts.start;
+    window.clear();
+    window.extend((a..a + l).map(&x));
+    let first_sum = start_sum(window);
+    let mut sum = first_sum;
+    let center = l / 2;
+    let divisor = l as f64;
+    emit(a + center, (sum / divisor) as f32);
+    let mut first = 0;
+    for start in a + 1..starts.end {
+        let next = x(start + l - 1);
+        sum += next - std::mem::replace(&mut window[first], next);
+        first += 1;
+        if first == l {
+            first = 0;
+        }
+        emit(start + center, (sum / divisor) as f32);
+    }
+    (first_sum, sum)
+}
+
+fn sum_window(window: &[f64], initial: f64) -> f64 {
+    window.iter().fold(initial, |sum, &value| sum + value)
+}
+
+fn finite_or_level(sample: f32, level: f32) -> f64 {
+    f64::from(if sample.is_finite() { sample } else { level })
+}
+
+#[cfg(test)]
+mod bench;
+#[cfg(test)]
+pub(crate) mod fixture;
+#[cfg(test)]
+mod reference;
 #[cfg(test)]
 mod tests {
     use super::*;
     use oos_dsp::sim;
-
-    /// Frames of the guard corpus: name, samples.
-    fn corpus() -> Vec<(String, Vec<f32>)> {
-        let mut out = Vec::new();
-        let n = 40_000;
-        // fast square, slow square (edges over hundreds of samples), sine, each clean and noisy
-        for (name, f, tr) in [("square", 1e5, 2e-8), ("slow-edge", 2e4, 4e-6), ("square-hf", 2e6, 1e-9)] {
-            let p = sim::PulseTrain::square(f, -1.0, 1.0, tr);
-            for noise in [0.0f32, 0.05, 0.4] {
-                let mut v = sim::sample(|t| p.v(t), 3.3e-7, 1e-9, n);
-                sim::add_noise(&mut v, noise, 7);
-                out.push((format!("{} noise {}", name, noise), v));
-            }
-        }
-        for noise in [0.0f32, 0.02, 0.3] {
-            let mut v = sim::sample(|t| (t * 3.1e4 * std::f64::consts::TAU).sin(), 0.0, 1e-9, n);
-            sim::add_noise(&mut v, noise, 11);
-            out.push((format!("sine noise {}", noise), v));
-        }
-        // a not so clean logic signal (scaled to -1..1): ringing after each edge and noise of +-0.4
-        let mut ring: Vec<f32> = (0..n)
-            .map(|k| {
-                let ph = k % 2000;
-                let base: f32 = if ph < 1000 { -1.0 } else { 1.0 };
-                let since = (ph % 1000) as f32;
-                base - base.signum() * 0.5 * (-since / 40.0).exp() * (since / 6.0).cos()
-            })
-            .collect();
-        sim::add_noise(&mut ring, 0.4, 13);
-        out.push(("ringing logic noise 0.4".into(), ring));
-        // runts: pulses to half height between full pulses
-        let runt: Vec<f32> = (0..n)
-            .map(|k| match (k / 500) % 4 {
-                0 => 1.0,
-                2 => 0.1,
-                _ => -1.0,
-            })
-            .collect();
-        out.push(("runts".into(), runt));
-        let mut rp = sim::PulseTrain::square(1e5, -1.0, 1.0, 5e-8);
-        (rp.every, rp.special) = (3, sim::Pulse { width: 5e-6, height: 0.45 });
-        let mut v = sim::sample(|t| rp.v(t), 1.1e-6, 1e-9, n);
-        sim::add_noise(&mut v, 0.03, 5);
-        out.push(("runt-train".into(), v));
-        // quantised like decoded ADC words: many samples exactly on the level
-        let q: Vec<f32> = (0..n).map(|k| ((k as f32 / 900.0).sin() * 40.0).round() / 40.0).collect();
-        out.push(("quantised".into(), q));
-        // flat with a single glitch, and constant: no edge at all
-        let mut g = vec![0.0f32; n];
-        g[n / 2 + 37] = 1.0;
-        out.push(("glitch".into(), g));
-        out.push(("flat".into(), vec![0.25f32; n]));
-        out
-    }
-
-    fn same(a: (Option<f64>, Option<Edge>), b: (Option<f64>, Option<Edge>)) -> bool {
-        let t = |x: Option<f64>, y: Option<f64>| match (x, y) {
-            (None, None) => true,
-            (Some(x), Some(y)) => (x - y).abs() < 1e-6,
-            _ => false,
-        };
-        t(a.0, b.0) && t(a.1.map(|e| e.t), b.1.map(|e| e.t)) && a.1.map(|e| e.rising) == b.1.map(|e| e.rising)
-    }
-
-    // Break it catches: a near search that returns an edge the wide search would not (a closer edge it could not see,
-    // an edge the comparator only decides outside the near window, a different edge of either direction).
-    #[test]
-    fn near_first_equals_the_wide_search() {
-        let (mut cases, mut hits) = (0, 0);
-        for (name, v) in corpus() {
-            // anywhere, and where the hardware puts it: on or next to an edge
-            let at_edges = oos_dsp::edges::trigger_edges(&v, 0.0, 0.1)
-                .into_iter()
-                .map(|e| e.t as usize)
-                .filter(|&t| t > 300 && t < v.len() - 300)
-                .step_by(7)
-                .take(12);
-            let pres: Vec<usize> =
-                (300..v.len() - 300).step_by(4999).chain(at_edges.flat_map(|t| [t, t + 3, t - 40])).collect();
-            for pre in pres {
-                for (l, span) in [(1, 600), (4, 2000), (16, 9000), (62, 19_000)] {
-                    for hyst in [0.0f32, 0.06, 0.3] {
-                        // -0.97: next to the low rail, where noise moves around the level but never arms a rising edge
-                        for level in [0.0f32, 0.3, -0.5, -0.97] {
-                            for (rising, either) in [(true, false), (false, false), (true, true)] {
-                                let trigger = crate::fastdraw::EdgeSearch { level, hysteresis: hyst, rising, either };
-                                let fits_all = |_: f64| true;
-                                let lo = pre as f64 - 50.0;
-                                let fits_some = |t: f64| t >= lo;
-                                let w = edge_smooth(v.as_slice(), pre, trigger, span, l, fits_all);
-                                let n = edge_smooth_near(&v, pre, level, hyst, rising, either, span, l, fits_all);
-                                assert!(
-                                    same(w, n),
-                                    "{} pre {} l {} hyst {} level {} {:?}/{}: wide {:?} near {:?}",
-                                    name,
-                                    pre,
-                                    l,
-                                    hyst,
-                                    level,
-                                    rising,
-                                    either,
-                                    w,
-                                    n
-                                );
-                                let w = edge_smooth(v.as_slice(), pre, trigger, span, l, fits_some);
-                                let n = edge_smooth_near(&v, pre, level, hyst, rising, either, span, l, fits_some);
-                                assert!(same(w, n), "{} (fits) pre {} l {}: wide {:?} near {:?}", name, pre, l, w, n);
-                                cases += 2;
-                                hits += near_only(
-                                    &v,
-                                    0,
-                                    v.len(),
-                                    pre,
-                                    level,
-                                    hyst,
-                                    rising,
-                                    either,
-                                    NEAR_COLS * l + NEAR_PAD,
-                                    l,
-                                    &fits_all,
-                                )
-                                .is_some() as usize;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        // the near search must answer a fair share by itself, or it only costs time
-        println!("{} cases, the near search answered {}", cases / 2, hits);
-        assert!(cases > 10_000 && hits * 5 > cases / 2, "{} cases, near answered {}", cases / 2, hits);
-    }
-
-    // Break it catches: a near result accepted although a closer wide edge depends on what lies before the near
-    // window: the comparator was armed (or not) by a sample the near window does not see
-    #[test]
-    fn near_first_falls_back_when_the_window_cannot_decide() {
-        let pre = 1000;
-        // +1 long before, then just above the level (inside the band) into the near window, a falling crossing at
-        // pre - 20 that only the history armed, -1 from pre + 5, a rising edge far away at pre + 200
-        let armed_before: Vec<f32> = (0..6000)
-            .map(|k| {
-                if k < pre - 300 {
-                    1.0
-                } else if k < pre - 20 {
-                    0.05
-                } else if k < pre + 5 {
-                    -0.05
-                } else if k < pre + 200 {
-                    -1.0
-                } else {
-                    1.0
-                }
-            })
-            .collect();
-        // -1, then just below the level from pre - 200, a rising crossing at pre - 75 inside the band, +1 from pre - 60,
-        // falling at pre + 79
-        let early: Vec<f32> = (0..6000)
-            .map(|k| {
-                if k < pre - 200 {
-                    -1.0
-                } else if k < pre - 75 {
-                    -0.05
-                } else if k < pre - 60 {
-                    0.05
-                } else if k < pre + 79 {
-                    1.0
-                } else {
-                    -1.0
-                }
-            })
-            .collect();
-        for (v, rising) in [(armed_before, false), (early, true)] {
-            let wide = edge_smooth(
-                v.as_slice(),
-                pre,
-                crate::fastdraw::EdgeSearch { level: 0.0, hysteresis: 0.3, rising: true, either: true },
-                4000,
-                1,
-                |_| true,
-            );
-            assert!(wide.1.is_some_and(|e| e.rising == rising), "{:?}", wide);
-            assert!(near_only(&v, 0, v.len(), pre, 0.0, 0.3, true, true, NEAR_COLS + NEAR_PAD, 1, &|_| true).is_none());
-            assert!(same(wide, edge_smooth_near(&v, pre, 0.0, 0.3, true, true, 4000, 1, |_| true)));
-        }
-    }
-
-    // Break it catches (`edge_near`, AC and LF-reject trigger coupling): an edge outside the near window (a crossing
-    // the hardware did not trigger on), another edge than the nearest within it, or another answer from the window the
-    // codes path decodes than from the whole frame.
-    #[test]
-    fn filtered_path_answers_from_the_near_window_only() {
-        let (mut cases, mut found) = (0, 0);
-        for (name, v) in corpus() {
-            for pre in (300..v.len() - 300).step_by(1733) {
-                for (l, span) in [(1, 600), (4, 2000), (16, 9000), (62, 19_000)] {
-                    let near = (NEAR_COLS * l + NEAR_PAD).min(span);
-                    let (a, b) = near_window(pre, v.len(), l);
-                    for hyst in [0.0f32, 0.06, 0.3] {
-                        for level in [0.0f32, 0.3, -0.97] {
-                            for (rising, either) in [(true, false), (false, false), (true, true)] {
-                                let r = edge_near(&v, 0, v.len(), pre, level, hyst, rising, either, span, l);
-                                let what = format!(
-                                    "{} pre {} l {} hyst {} level {} {:?}/{}",
-                                    name, pre, l, hyst, level, rising, either
-                                );
-                                assert!(
-                                    same(
-                                        r,
-                                        edge_smooth(
-                                            v.as_slice(),
-                                            pre,
-                                            crate::fastdraw::EdgeSearch { level, hysteresis: hyst, rising, either },
-                                            near,
-                                            l,
-                                            |_| true
-                                        )
-                                    ),
-                                    "{}: {:?}",
-                                    what,
-                                    r
-                                );
-                                assert!(
-                                    same(r, edge_near(&v[a..b], a, v.len(), pre, level, hyst, rising, either, span, l)),
-                                    "{}: window",
-                                    what
-                                );
-                                if let Some(t) = r.0 {
-                                    assert!(
-                                        (t - pre as f64).abs() <= (near + l) as f64,
-                                        "{}: {} from pre",
-                                        what,
-                                        t - pre as f64
-                                    );
-                                    found += 1;
-                                }
-                                cases += 1;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        assert!(cases > 5000 && found * 10 > cases, "{} cases, {} edges", cases, found);
-        // the case it is for: one edge, far from the hardware point; the wide search finds it, the filtered path not
-        let far: Vec<f32> = (0..40_000).map(|k| if k < 30_000 { -1.0 } else { 1.0 }).collect();
-        assert!(edge_smooth_near(&far, 20_000, 0.0, 0.1, true, false, 19_000, 16, |_| true)
-            .0
-            .is_some_and(|t| (t - 30_000.0).abs() < 1.0));
-        assert!(same(edge_near(&far, 0, far.len(), 20_000, 0.0, 0.1, true, false, 19_000, 16), (None, None)));
-    }
+    mod corpus;
+    mod exact;
+    pub(super) use corpus::corpus;
 
     /// Reference timing (run with --ignored --nocapture): near-first vs the wide search at 12.5 k and 100 k points with
     /// the edge at the hardware point.
@@ -465,14 +407,15 @@ mod tests {
             let t0 = std::time::Instant::now();
             let mut acc = 0.0;
             for _ in 0..reps {
-                acc += edge_smooth(
+                acc += reference::search(
                     std::hint::black_box(v.as_slice()),
-                    pre,
+                    (0, n),
+                    (pre, span, l),
                     crate::fastdraw::EdgeSearch { level: 0.0, hysteresis: 0.06, rising: true, either: false },
-                    span,
-                    l,
+                    false,
                     |_| true,
                 )
+                .unwrap_or_default()
                 .0
                 .unwrap_or(0.0);
             }

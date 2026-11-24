@@ -4,9 +4,7 @@ use crate::*;
 use std::time::Instant;
 
 pub(super) struct Timers {
-    pub(super) last: Instant,
-    fps_t: Instant,
-    fps_n: u64,
+    fps: pacing::PictureRate,
     shot_n: u32,
     led_mask: u32,
     led_t: Instant,
@@ -20,9 +18,7 @@ impl Timers {
     pub(super) fn new(start_up: Option<String>) -> Self {
         let now = Instant::now();
         Self {
-            last: now,
-            fps_t: now,
-            fps_n: 0,
+            fps: pacing::PictureRate::default(),
             shot_n: 0,
             led_mask: u32::MAX,
             led_t: now,
@@ -46,7 +42,7 @@ impl Timers {
             ui.start_up_update(&std::fs::read_to_string(p).unwrap_or_default(), up);
         }
     }
-    pub(super) fn panel(&mut self, ui: &mut Ui, cv: &Canvas, inp: &mut input::Inputs) {
+    pub(super) fn panel(&mut self, ui: &mut Ui, inp: &mut input::Inputs) {
         use board::Board;
         // LEDs: on change, and refreshed every 2 s (the MCU may have been reset)
         let lm = ui.leds();
@@ -55,11 +51,13 @@ impl Timers {
             self.led_mask = lm;
             self.led_t = Instant::now();
         }
-        if let Some(p) = ui.shot_request.take() {
-            save_shot(ui, cv, p, &mut self.shot_n);
-        }
         for c in ui.panel_tx.drain(..) {
             inp.send(&board::board().panel_cmd(c));
+        }
+    }
+    pub(super) fn shot(&mut self, ui: &mut Ui, cv: &Canvas, path: Option<String>) {
+        if let Some(path) = path {
+            save_shot(ui, cv, path, &mut self.shot_n);
         }
     }
     pub(super) fn network(&mut self, ui: &mut Ui) {
@@ -75,11 +73,11 @@ impl Timers {
             self.eth_t = Some(Instant::now());
             eth_watch(ui, self.eth_t0.elapsed().as_secs_f64());
         }
-        self.fps_n += 1;
-        if self.fps_t.elapsed().as_secs_f64() >= 1.0 {
-            ui.fps = self.fps_n as f32 / self.fps_t.elapsed().as_secs_f32();
-            self.fps_n = 0;
-            self.fps_t = Instant::now();
+    }
+
+    pub(super) fn picture(&mut self, ui: &mut Ui, at: Instant) {
+        if let Some(rate) = self.fps.observe(at) {
+            ui.fps = rate;
         }
     }
 }

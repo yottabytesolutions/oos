@@ -18,6 +18,8 @@
 use crate::board::Frame;
 use crate::model::*;
 
+mod codes;
+pub(crate) use codes::{fold_codes, requires_frame};
 mod tap;
 pub(crate) use tap::{measurement_bounds, measurement_slice, measurement_view, TapFolds};
 
@@ -271,6 +273,10 @@ impl Values {
 /// Folds the cheap measurements of frame `f` into `folds`, on the samples the record path would measure. Returns
 /// whether the frame counted.
 pub fn fold_frame(f: &Frame, m: &Model, folds: &mut Folds) -> bool {
+    fold_frame_with(f, m, folds, None)
+}
+
+pub(crate) fn fold_frame_with(f: &Frame, m: &Model, folds: &mut Folds, trigger: Option<f64>) -> bool {
     if folds.is_empty() {
         return false;
     }
@@ -281,36 +287,50 @@ pub fn fold_frame(f: &Frame, m: &Model, folds: &mut Folds) -> bool {
     if f.roll || f.scan || crate::compress::live(f) {
         return false;
     }
-    let ti = crate::board::trigger_point(f, m, crate::sparse::POINTS, window, t_first).unwrap_or(f.pre as f64);
+    let ti = trigger.unwrap_or_else(|| {
+        crate::board::trigger_point(f, m, crate::sparse::POINTS, window, t_first).unwrap_or(f.pre as f64)
+    });
     fold_at(f, m, folds, window, t_first, ti)
 }
 
 fn fold_at(f: &Frame, m: &Model, folds: &mut Folds, window: f64, t_first: f64, ti: f64) -> bool {
     let len = f.ch.iter().map(|v| v.len()).max().unwrap_or(0);
-    let i0 = (ti + t_first / f.dt).floor().max(0.0) as usize;
-    let i1 = ((ti + (t_first + window) / f.dt).ceil().max(0.0) as usize).min(len);
+    let (i0, i1) = fold_window(f.dt, window, t_first, ti, len);
     if i1.saturating_sub(i0) <= crate::sparse::POINTS {
         return false;
     }
-    let mut counted = false;
     let mut cache: [Option<Option<Values>>; NCH] = Default::default();
-    for ((k, c), fold) in folds.iter_mut() {
-        if f.envelope && needs_samples(*k) {
-            continue;
+    push_measurements(folds, |kind, c| {
+        let v = &f.ch[c];
+        if v.len() < 2 || i1 > v.len() || (f.envelope && needs_samples(kind)) {
+            return None;
         }
-        let v = &f.ch[*c];
-        if v.len() < 2 || i1 > v.len() {
-            continue;
-        }
-        let std =
-            m.meas.iter().any(|(x, y)| *y == crate::model::WaveId::Ch(*c) && matches!(x, Meas::StdDev | Meas::VrmsAc));
-        let vals = cache[*c].get_or_insert_with(|| Values::of(&v[i0..i1], std));
-        if let Some(x) = vals.as_ref().map(|s| s.get(*k)).filter(|x| x.is_finite()) {
-            fold.push(x);
+        let vals = cache[c].get_or_insert_with(|| {
+            let std = m
+                .meas
+                .iter()
+                .any(|(x, y)| *y == crate::model::WaveId::Ch(c) && matches!(x, Meas::StdDev | Meas::VrmsAc));
+            Values::of(&v[i0..i1], std)
+        });
+        vals.as_ref().map(|s| s.get(kind))
+    })
+}
+
+fn push_measurements(folds: &mut Folds, mut value: impl FnMut(Meas, usize) -> Option<f64>) -> bool {
+    let mut counted = false;
+    for &mut ((kind, channel), ref mut fold) in folds {
+        if let Some(v) = value(kind, channel).filter(|x| x.is_finite()) {
+            fold.push(v);
             counted = true;
         }
     }
     counted
+}
+
+fn fold_window(dt: f64, window: f64, t_first: f64, ti: f64, len: usize) -> (usize, usize) {
+    let i0 = (ti + t_first / dt).floor().max(0.0) as usize;
+    let i1 = ((ti + (t_first + window) / dt).ceil().max(0.0) as usize).min(len);
+    (i0, i1)
 }
 
 #[cfg(test)]

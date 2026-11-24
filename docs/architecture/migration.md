@@ -359,8 +359,9 @@ scope explicitly changes behaviour. No step claims implementation or unit accept
   - Task 0011's measurement-selection regression passes.
   - Frozen/stale/epoch rejections are counted; preview loses to current live data and frozen replace wins.
   - Dots density normalization across raw/replay and main/zoom; sample-hit capacity before/after grade transition.
-  - A UI slot held beyond the age limit, expiry boundaries, mixed-age deposits and conservation follow the
-    linked window contract. Authorized unit round covers full picture acceptance and screenshot pairs.
+  - A missed picture step keeps current records for the next picture and preserves conservation. At minimum
+    persistence, the last picture stays until a new record, a settings change, Clear or Stop.
+    An authorized unit round covers full picture acceptance and screenshot pairs.
 - **Remove:** stopped redraw, 24 * 6, picture_ref, per_frame*, pic_frames, vmax follow and grade_refs scan.
 - **Delta:** -100..-300 production lines.
 - **Risk:** medium, approved freeze/grade changes.

@@ -36,7 +36,7 @@
 #include <unistd.h>
 
 #define MAGIC 0x47534f4fu /* "OOSG" */
-#define VERSION 2
+#define VERSION 3
 #define MAX_TARGETS 8
 #define MAX_QUADS 4
 #define MAX_JOBS 16
@@ -117,9 +117,11 @@ struct frame {
 };
 
 struct done {
-	uint32_t magic, kind, status, pad;
-	float ms_upload, ms_draw, ms_read, pad2;
+	uint32_t magic, kind, status;
+	float ms_upload, ms_draw, ms_read;
+	uint64_t monotonic_ns;
 };
+_Static_assert(sizeof(struct done) == 32, "helper reply ABI");
 
 static uint8_t *arena;
 static uint64_t arena_size;
@@ -157,7 +159,9 @@ static int recv_msg(void *buf, size_t len, int *fd) {
 }
 
 static int send_done(uint32_t status, float up, float draw, float rd) {
-	struct done d = {MAGIC, K_DONE, status, 0, up, draw, rd, 0};
+	struct timespec t = {0};
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	struct done d = {MAGIC, K_DONE, status, up, draw, rd, (uint64_t)t.tv_sec * 1000000000 + t.tv_nsec};
 	return write(sock, &d, sizeof d) == sizeof d ? 0 : -1;
 }
 

@@ -5,6 +5,8 @@ use std::time::Instant;
 
 pub(super) struct Outputs {
     pub(super) disp: drm::Display,
+    pub(super) panel: pacing::Panel,
+    pub(super) vblank: Option<pacing::Flip>,
     pub(super) hdmi: Option<drm::Display>,
     hdmi_cv: Option<Canvas>,
     hdmi_t: Option<Instant>,
@@ -13,10 +15,11 @@ pub(super) struct Outputs {
 }
 impl Outputs {
     pub(super) fn new(disp: drm::Display, hdmi_on: bool) -> Self {
-        Self { disp, hdmi_on, hdmi: None, hdmi_cv: None, hdmi_t: None, frame_n: 0 }
+        let panel = Default::default();
+        Self { disp, panel, vblank: None, hdmi_on, hdmi: None, hdmi_cv: None, hdmi_t: None, frame_n: 0 }
     }
-    pub(super) fn cpu_hdmi(&mut self, ui: &mut Ui, cv: &Canvas, hdmi_frame: bool, hdmi_done: bool) {
-        if let Some(h) = self.hdmi.as_mut().filter(|_| hdmi_frame && !hdmi_done) {
+    pub(super) fn cpu_hdmi(&mut self, ui: &mut Ui, cv: &Canvas, hdmi_frame: bool) {
+        if let Some(h) = self.hdmi.as_mut().filter(|_| hdmi_frame) {
             // the monitor's picture: its own layout, the workspace, or the panel's
             let size = match ui.m.hdmi {
                 model::HdmiMode::Layout => ui::Screen::for_monitor(h.width, h.height),

@@ -19,7 +19,7 @@ fn tap_contract_actual_descriptor_backing_includes_raw_replay() {
             let decoded = tap::storage(&b, fb).unwrap();
             let raw = seq::raw_settings(&b);
             let replay = tap::storage(&raw, seq::frame_bytes(&raw, &p)).unwrap();
-            let mandatory = super::super::super::raw_newest(&b, &p);
+            let mandatory = super::super::super::plan::raw_newest(&b, &p);
             let owned = if mandatory { backing(&replay).max(backing(&decoded)) } else { backing(&decoded) };
             assert_eq!(decoded.ch.each_ref().map(Vec::len), [0; 4]);
             assert!(decoded.ch.iter().all(|ch| ch.capacity() > 0));
@@ -71,7 +71,7 @@ fn pulses(tdiv: f32, compress: bool, records: usize, batches: usize) {
     let mut picture = Phosphor::new(size.0, size.1);
     let mut sequence = 0;
     for window in 0..3 {
-        assert!(picture.map.iter().all(|ch| ch.iter().all(|&px| px == 0)));
+        assert!(picture.maps().iter().all(|ch| ch.iter().all(|&px| px == 0)));
         for batch in 0..batches {
             let at = origin + std::time::Duration::from_nanos(window as u64 * 33_333_334) + interval * batch as u32;
             assert_eq!(pipe.tap_start(id, at), Some(std::time::Duration::ZERO));
@@ -94,10 +94,10 @@ fn pulses(tdiv: f32, compress: bool, records: usize, batches: usize) {
         }
         assert_eq!(accepted, (batches * records) as u64);
         assert!(!picture.is_wide(), "normal Lines retain narrow counts");
-        let before = picture.map.clone();
+        let before = picture.maps().clone();
         crate::drawpipe::host::barrier(&pipe);
         assert_eq!(pipe.accept(&mut picture, &mut false, &mut [0; 4], &mut (0.0, 0.0)).frames, 0);
-        assert_eq!(picture.map, before, "settlement must not draw the pending preview twice");
+        assert_eq!(picture.maps(), &before, "settlement must not draw the pending preview twice");
         picture.clear();
     }
     assert_eq!(counters.deposited.load(std::sync::atomic::Ordering::Relaxed), sequence);
@@ -113,16 +113,16 @@ pub(super) fn submit_pulse(
     n: usize,
 ) {
     let reservation = pipe.reserve_plan(id).unwrap();
-    let raw = super::super::super::raw_newest(b, p).then(|| {
+    let raw = super::super::super::plan::raw_newest(b, p).then(|| {
         let raw = seq::raw_settings(b);
         let bytes = vec![0; seq::frame_bytes(&raw, p)];
         super::super::super::decode_probed(&bytes, &raw, p, sequence, HeaderProbe::Off)
     });
-    let mut dma = Bytes(bytes.repeat(n));
+    let mut dma = Some(Bytes(bytes.repeat(n)));
     let result =
         Readout::new(pipe, (b, p), (bytes.len(), n, false), (sequence, HeaderProbe::Off, raw), (id, Instant::now()))
             .reserved(Some(reservation))
-            .dispatch(&mut dma, Some(Bytes(Vec::new())), None, |f| f);
+            .dispatch(&mut dma, None, |f| f, &|| false);
     assert!(result.is_empty());
     finish(pipe);
 }

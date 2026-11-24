@@ -151,7 +151,20 @@ impl Reservation {
     pub fn capacity(&self) -> usize {
         self.bytes
     }
+    pub(crate) fn expand_available(&mut self, minimum: usize) -> bool {
+        let mut used = oos_hal::sync::lock(&self.budget.used);
+        let available = self.budget.limit - *used;
+        if available < minimum {
+            return false;
+        }
+        self.bytes += available;
+        *used = self.budget.limit;
+        true
+    }
     pub fn retain(&mut self, bytes: usize) {
+        if bytes == self.bytes {
+            return;
+        }
         assert!(bytes <= self.bytes, "response allocation exceeds its reservation");
         *oos_hal::sync::lock(&self.budget.used) -= self.bytes - bytes;
         self.bytes = bytes;

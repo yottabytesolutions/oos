@@ -62,7 +62,10 @@ impl Configured {
 
 /// The process OnceLock retains the staged accounting permit before the first source admission.
 pub(super) fn application(sw: &crate::sysconf::Switches, counters: &'static Counters) -> Pipe {
-    let pipe = Pipe::start(sw.cores.little_count().unwrap_or(super::WORKERS), sw.cores.little, counters);
+    let cores = sw.cores;
+    let workers = cores.little_count().unwrap_or(super::WORKERS);
+    let pipe = Pipe::start(workers, cores.little, counters);
+    super::admission::model_pool(&pipe, workers);
     if sw.f2_funding != Profile::Unconfigured {
         pipe.slot.require_tap_funding();
         let funded = if let Profile::Staged(input) = sw.f2_funding {

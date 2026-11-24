@@ -19,13 +19,10 @@ pub(crate) fn draw_frame_reusing(
     saved: Option<(&crate::wave::Record, reuse::EdgeInputs)>,
 ) -> bool {
     let (w, h) = (ph.w, ph.h);
-    let tdiv = m.time_per_div() as f64;
-    let x_per_sample = f.dt / tdiv * w as f64 / HDIV as f64;
-    // min/max pairs of the live compression (compress.rs) take the dense path with a pair deposit
-    let pairs = crate::compress::live(f) && x_per_sample <= 0.5;
-    // the raw screen window of a deep record (`deepmeas`, once a second) takes the record path of its record's pair
-    // frames: drawn densely it was 1.44 times their brightness (lines) and the grade swung (docs/fork/flicker.md)
-    if !pairs && (x_per_sample > 0.5 || f.envelope || f.roll || f.scan || crate::deepmeas::deep_raw_frame(f)) {
+    let spacing = f.dt / m.time_per_div() as f64 * w as f64 / HDIV as f64;
+    let projection = crate::picture::deposit::standard::projection(m, w, h, spacing);
+    let route = route::route(f, &projection, m.acq, false);
+    if route.screen_raster(projection.dots, f) || crate::deepmeas::deep_pairs(f) || crate::deepmeas::deep_raw_frame(f) {
         return fallback(ph, m, f, interp, saved);
     }
     let placed = crate::picture::deposit::standard::batch_plan(m, (w, h), f, None, None);

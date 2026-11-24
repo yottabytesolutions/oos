@@ -3,10 +3,12 @@
 //! Placement and column differences, independent of live settings and decoded frame ownership.
 
 use super::count::{Count, CountFormat};
+use super::envelope;
+use crate::drawpipe::route::Route;
 use crate::fastdraw::{self, Fold, Map, Samples, Spans};
 use oos_core::model::{HDIV, NCH, VDIV};
 
-/// Pairs retain the existing screen-record adapter until F5.
+#[derive(Clone, Copy)]
 pub(crate) enum SamplesRef<'a> {
     Codes(fastdraw::Codes<'a>),
     Volts(&'a [f32]),
@@ -57,6 +59,21 @@ pub(crate) struct Projection {
 }
 
 impl Projection {
+    pub(crate) fn code_geometry(&self) -> bool {
+        self.cols > 0
+            && self.rows > 0
+            && self.time_per_div.is_finite()
+            && self.time_per_div > 0.0
+            && self.x_per_sample.is_finite()
+            && self.x_per_sample > 0.0
+            && self.delay.is_finite()
+            && self
+                .ch
+                .iter()
+                .flatten()
+                .all(|ch| ch.volts_per_div.is_finite() && ch.volts_per_div > 0.0 && ch.offset.is_finite())
+    }
+
     pub(crate) fn record_rows(&self, c: usize, values: &[f32]) -> (usize, usize) {
         let Some(ch) = self.ch[c] else { return (usize::MAX, 0) };
         let h = self.rows as f32;
@@ -89,7 +106,7 @@ pub(crate) struct FrameTiming {
     pub(crate) trigger: TrigSnapshot,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum TrigOutcome {
     Hardware,
     AtPoint,
@@ -122,6 +139,7 @@ pub(crate) struct RawTrace {
 
 pub(crate) struct Placed {
     pub(crate) projection: Projection,
+    pub(crate) route: Route,
     pub(crate) trace: RawTrace,
     pub(crate) fold: [Option<Fold>; NCH],
 }
@@ -177,39 +195,67 @@ pub(crate) fn place(
             |_| true,
         )
     });
-    place_at(samples, meta, proj, want_fold, ti, outcome, None)
+    let route = if proj.dots { Route::Dots } else { Route::Volts };
+    let mut placed = place_at(samples, proj, (route, None), (ti, outcome), None);
+    placed.fold = fold_samples(&samples, meta, proj, ti, want_fold);
+    placed
 }
 
 pub(crate) fn place_at(
     samples: [SamplesRef<'_>; NCH],
-    meta: &FrameTiming,
     proj: &Projection,
-    want_fold: [bool; NCH],
-    ti: f64,
-    outcome: TrigOutcome,
+    (route, layout): (Route, Option<envelope::Layout>),
+    (ti, outcome): (f64, TrigOutcome),
     previous: Option<RawTrace>,
 ) -> Placed {
+    let mut spans = previous.map_or_else(|| std::array::from_fn(|_| None), |trace| trace.spans);
+    for (c, span) in spans.iter_mut().enumerate() {
+        if proj.ch[c].is_none() || samples[c].len() == 0 || proj.dots {
+            *span = None;
+        }
+    }
+    if !proj.dots {
+        if let Some(layout) = layout {
+            fastdraw::with_scratch(|scratch| scratch.envelope.place(layout, &samples, proj, ti, &mut spans));
+        } else {
+            for (c, span) in spans.iter_mut().enumerate() {
+                if let Some(map) = raw_map(proj, c, ti).filter(|_| samples[c].len() > 0) {
+                    let out = span.get_or_insert_with(Spans::default);
+                    match samples[c] {
+                        SamplesRef::Codes(codes) => fastdraw::with_scratch(|scratch| {
+                            scratch.envelope.code_spans(c, (proj.cols, proj.rows), &codes, &map, out);
+                        }),
+                        SamplesRef::Volts(values) => crate::drawpipe::stage::fixture_stage!(
+                            FusedReduceMap,
+                            c,
+                            fastdraw::spans_into(proj.cols, proj.rows, values, &map, out)
+                        ),
+                    }
+                }
+            }
+        }
+    }
+    Placed { projection: *proj, route, trace: RawTrace { trigger_at: ti, outcome, spans }, fold: [None; NCH] }
+}
+
+fn fold_samples(
+    samples: &[SamplesRef<'_>; NCH],
+    meta: &FrameTiming,
+    proj: &Projection,
+    ti: f64,
+    want_fold: [bool; NCH],
+) -> [Option<Fold>; NCH] {
     let window = proj.time_per_div * HDIV as f64;
     let t_first = proj.delay - window / 2.0;
-    let mut reused = previous.map_or_else(|| std::array::from_fn(|_| None), |trace| trace.spans);
-    let used = |c: usize| proj.ch[c].is_some() && samples[c].len() > 0;
-    let spans = std::array::from_fn(|c| {
-        raw_map(proj, c, ti).filter(|_| used(c) && !proj.dots).map(|map| {
-            let mut spans = reused[c].take().unwrap_or_default();
-            fastdraw::spans_into(proj.cols, proj.rows, &samples[c], &map, &mut spans);
-            spans
-        })
-    });
-    let fold = std::array::from_fn(|c| {
-        (want_fold[c] && used(c)).then(|| {
+    std::array::from_fn(|c| {
+        (want_fold[c] && proj.ch[c].is_some() && samples[c].len() > 0).then(|| {
             let v = &samples[c];
             let n = v.len();
             let i0 = ((ti + t_first / meta.dt).floor().max(0.0) as usize).min(n);
             let i1 = ((ti + (t_first + window) / meta.dt).ceil().max(0.0) as usize).min(n);
             Fold::of(v, i0..i1.max(i0))
         })
-    });
-    Placed { projection: *proj, trace: RawTrace { trigger_at: ti, outcome, spans }, fold }
+    })
 }
 
 pub(crate) fn add_placed_band<T: Count>(
@@ -227,7 +273,10 @@ pub(crate) fn add_placed_band<T: Count>(
             let (start, end) = fastdraw::span_rows(s);
             start.min(end)..end
         }
-        None => fastdraw::deposit_dots_t(band, proj.rows, c_lo, samples, &map, 24),
+        None => match samples {
+            SamplesRef::Codes(codes) => fastdraw::difference::deposit_code_dots(band, proj.rows, c_lo, codes, &map),
+            SamplesRef::Volts(volts) => fastdraw::deposit_dots_t(band, proj.rows, c_lo, *volts, &map, 24),
+        },
     }
 }
 

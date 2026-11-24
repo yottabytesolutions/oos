@@ -9,6 +9,15 @@
 //! (sub-sample, by linear interpolation) near it.
 
 use std::ops::Range;
+pub(crate) mod code_rows;
+mod corrected;
+mod mapping;
+pub(crate) use corrected::CorrectedCodes;
+#[cfg(test)]
+pub(crate) use mapping::first_sample;
+#[cfg(test)]
+pub(crate) use mapping::spans_mapped;
+pub(crate) use mapping::{clip_rows, code_spans_into, columns, mapped_rows, spans_into};
 
 /// The level crossing of the edge nearest to `pre` within +-`span` samples, as a fractional sample index (rising:
 /// below -> at or above `level`; falling the other way). `either`: both directions. `hyst` > 0: like the hardware
@@ -67,7 +76,7 @@ pub(crate) struct EdgeSearch {
 /// (a slow sine at a high rate) cannot make an edge of the other direction look right, which a test on single samples
 /// cannot rule out. Only edges at times `fits` accepts count. Returns the edge and the nearest edge of either direction
 /// (for the statistics).
-pub(crate) fn edge_smooth<S: Samples + ?Sized>(
+pub(crate) fn edge_smooth<S: crate::trignear::TriggerSamples + ?Sized>(
     v: &S,
     pre: usize,
     trigger: EdgeSearch,
@@ -75,35 +84,7 @@ pub(crate) fn edge_smooth<S: Samples + ?Sized>(
     l: usize,
     fits: impl Fn(f64) -> bool,
 ) -> (Option<f64>, Option<oos_dsp::edges::Edge>) {
-    let (l, EdgeSearch { level, hysteresis: hyst, rising, either }) = (l.max(1), trigger);
-    let (a, b) = (pre.saturating_sub(span + l), (pre + span + l).min(v.len()));
-    if b <= a + 2 * l {
-        return (None, None);
-    }
-    // running sum over the window; NaN samples count as the level (none in hardware frames)
-    let x = |i: usize| if v.at(i).is_finite() { v.at(i) as f64 } else { level as f64 };
-    let mut s = Vec::with_capacity(b - a);
-    let mut sum = (a..(a + l).min(b)).fold(0.0, |sum, i| sum + x(i));
-    let half = l / 2;
-    // s[j] = mean of v[a + j - half .. a + j - half + l], defined from j = half
-    for j in 0..(b - a) {
-        let lo = a + j;
-        if j >= half && lo + l - half <= b {
-            s.push((sum / l as f64) as f32);
-            if lo + l - half < b {
-                sum += x(lo + l - half) - x(lo - half);
-            }
-        } else {
-            s.push(f32::NAN);
-        }
-    }
-    let edges = oos_dsp::edges::trigger_edges(&s, level, hyst);
-    let d = |e: &oos_dsp::edges::Edge| (a as f64 + e.t - pre as f64).abs();
-    let near = |ok: &dyn Fn(&oos_dsp::edges::Edge) -> bool| {
-        edges.iter().filter(|e| ok(e) && fits(a as f64 + e.t)).min_by(|p, q| d(p).total_cmp(&d(q))).copied()
-    };
-    let want = near(&|e| either || e.rising == rising).map(|e| a as f64 + e.t);
-    (want, near(&|_| true).map(|e| oos_dsp::edges::Edge { t: a as f64 + e.t, ..e }))
+    crate::trignear::smooth_all(v, pre, trigger, span, l, &fits)
 }
 
 /// Helper threads the fast path spreads a batch over, besides the frame loop itself: one per core of
@@ -232,44 +213,22 @@ pub struct Spans {
     pub rows: Vec<(i16, i16)>,
 }
 
-pub(crate) fn spans_into<S: Samples + ?Sized>(w: usize, h: usize, v: &S, m: &Map, out: &mut Spans) {
-    out.c0 = 0;
-    out.rows.clear();
-    if v.len() == 0 || m.x_per_sample <= 0.0 || w == 0 || h == 0 {
-        return;
-    }
-    let k_of = |x: f64| m.ti + (x - m.x0) / m.x_per_sample;
-    let first = |c: i64| (k_of(c as f64).ceil().max(0.0) as usize).min(v.len());
-    let c0 = (((-m.ti) * m.x_per_sample + m.x0).floor() as i64).max(0);
-    let c1 = ((((v.len() as f64 - m.ti) * m.x_per_sample + m.x0).ceil()) as i64).min(w as i64);
-    if c1 <= c0 {
-        return;
-    }
-    out.c0 = c0 as usize;
-    out.rows.reserve((c1 - c0) as usize);
-    let hh = h as i32;
-    let mut ka = first(c0);
-    for c in c0..c1 {
-        let kb = first(c + 1);
-        if kb <= ka {
-            out.rows.push((1, 0));
-            continue;
-        }
-        let (mut mn, mut mx) = v.extremes(ka, kb);
-        if ka > 0 && v.at(ka - 1).is_finite() {
-            mn = mn.min(v.at(ka - 1));
-            mx = mx.max(v.at(ka - 1));
-        }
-        ka = kb;
-        if mn.partial_cmp(&mx).is_none_or(|o| o.is_gt()) {
-            out.rows.push((1, 0));
-            continue;
-        }
-        let (ya, yb) = (mn * m.y_per_volt + m.y0, mx * m.y_per_volt + m.y0);
-        let r0 = (ya.min(yb).round() as i32).max(0);
-        let r1 = (ya.max(yb).round() as i32).min(hh - 1);
-        out.rows.push(if r0 <= r1 { (r0 as i16, r1 as i16) } else { (1, 0) });
-    }
+// Reused by the pool workers and the standalone drawing path on their own threads.
+#[derive(Default)]
+pub(crate) struct Scratch {
+    spans: Spans,
+    rows: code_rows::RowCache,
+    pub(crate) routing: crate::drawpipe::route::Scratch,
+    pub(crate) envelope: crate::picture::deposit::envelope::Scratch,
+    pub(crate) trigger: crate::trignear::SearchScratch,
+}
+
+thread_local! {
+    static SPANS: std::cell::RefCell<Scratch> = std::cell::RefCell::new(Scratch::default());
+}
+
+pub(crate) fn with_scratch<T>(draw: impl FnOnce(&mut Scratch) -> T) -> T {
+    SPANS.with(|scratch| draw(&mut scratch.borrow_mut()))
 }
 
 /// Adds `wgt` to the pixels of `s` that fall in `band`: rows `r_lo` .. `r_lo + band.len() / w` of a map `w` wide.
@@ -416,7 +375,7 @@ impl Fold {
 /// The live picture goes through the bands above (`spans`, `diff_span`, `fold_t`); these serve the min/max
 /// compression, the frame statistics and the tests, and are the reference for both.
 pub mod difference;
-pub(crate) use difference::{add_spans_t, deposit_dots_t, diff_span};
+pub(crate) use difference::{add_spans_t, deposit_dots_t, diff_span, zoom};
 mod whole {
     use super::{Map, Range, Spans};
     mod dots;
@@ -434,12 +393,12 @@ mod whole {
     /// were three quarters of the time.
     #[must_use]
     pub fn deposit(map: &mut [u16], w: usize, h: usize, v: &[f32], m: &Map, wgt: u16) -> Range<usize> {
-        deposit_from(map, w, h, v, m, wgt)
+        deposit_from(map, w, wgt, |scratch| super::spans_into(w, h, v, m, &mut scratch.spans))
     }
     /// `deposit` straight from a frame's read-out words (`Codes`): the same picture, without the f32 copy of the channel.
     #[must_use]
     pub fn deposit_codes(map: &mut [u16], w: usize, h: usize, v: &Codes, m: &Map, wgt: u16) -> Range<usize> {
-        deposit_from(map, w, h, &crate::picture::deposit::kernel::SamplesRef::Codes(*v), m, wgt)
+        deposit_from(map, w, wgt, |scratch| super::code_spans_into(w, h, v, m, &mut scratch.rows, &mut scratch.spans))
     }
 
     /// The samples of one channel as `deposit` needs them: their number, the extremes of a range and one sample.
@@ -476,16 +435,8 @@ mod whole {
         pub word: usize,
         pub n: usize,
         pub affine: (f32, f32),
+        pub(crate) corrected: Option<super::CorrectedCodes>,
         pub volt: fn(u16, (f32, f32)) -> f32,
-    }
-
-    impl Codes<'_> {
-        /// Word `i` of the channel.
-        #[inline]
-        pub fn code(&self, i: usize) -> u16 {
-            let j = 2 * (i * self.stride + self.word);
-            u16::from_le_bytes([self.bytes[j], self.bytes[j + 1]])
-        }
     }
 
     impl Samples for Codes<'_> {
@@ -497,23 +448,28 @@ mod whole {
             if a >= b {
                 return (f32::INFINITY, f32::NEG_INFINITY);
             }
-            let (lo, hi) = match (self.words, self.stride) {
-                (Some(w), s) => word_extremes(w, s, self.word, a, b),
-                (None, 1) => code_extremes::<2>(&self.bytes[2 * a..2 * b], 0),
-                (None, 2) => code_extremes::<4>(&self.bytes[4 * a..(4 * b).min(self.bytes.len())], self.word),
-                (None, _) => code_extremes::<8>(&self.bytes[8 * a..(8 * b).min(self.bytes.len())], self.word),
-            };
-            let (x, y) = ((self.volt)(lo, self.affine), (self.volt)(hi, self.affine));
-            // a negative scale turns the order around
-            if x <= y {
-                (x, y)
-            } else {
-                (y, x)
-            }
+            let (lo, hi) = self.code_extremes(a, b);
+            self.calibrated(lo, hi)
         }
         #[inline]
         fn at(&self, i: usize) -> f32 {
-            (self.volt)(self.code(i), self.affine)
+            self.volts(self.at_code(i))
+        }
+    }
+
+    impl Codes<'_> {
+        #[inline]
+        pub(crate) fn code_extremes(&self, a: usize, b: usize) -> (u16, u16) {
+            if self.corrected.is_some() {
+                (a..b).map(|i| self.at_code(i)).fold((u16::MAX, u16::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)))
+            } else {
+                match (self.words, self.stride) {
+                    (Some(w), s) => word_extremes(w, s, self.word, a, b),
+                    (None, 1) => code_extremes::<2>(&self.bytes[2 * a..2 * b], 0),
+                    (None, 2) => code_extremes::<4>(&self.bytes[4 * a..(4 * b).min(self.bytes.len())], self.word),
+                    (None, _) => code_extremes::<8>(&self.bytes[8 * a..(8 * b).min(self.bytes.len())], self.word),
+                }
+            }
         }
     }
 
@@ -594,17 +550,11 @@ mod whole {
         (lo, hi)
     }
 
-    fn deposit_from<S: Samples + ?Sized>(
-        map: &mut [u16],
-        w: usize,
-        h: usize,
-        v: &S,
-        m: &Map,
-        wgt: u16,
-    ) -> Range<usize> {
-        SPANS.with(|sp| {
-            let sp = &mut *sp.borrow_mut();
-            let Some((c0, c1, rmin, rmax, pixels)) = spans(v, m, w, h, sp) else { return 0..0 };
+    fn deposit_from(map: &mut [u16], w: usize, wgt: u16, build: impl FnOnce(&mut super::Scratch)) -> Range<usize> {
+        super::with_scratch(|scratch| {
+            build(scratch);
+            let sp = &scratch.spans;
+            let Some((c0, c1, rmin, rmax, pixels)) = span_extent(sp) else { return 0..0 };
             if pixels > sweep_cost(rmax - rmin + 1, c1 - c0) {
                 for r in rmin..=rmax {
                     let row = &mut map[r * w + c0..r * w + c1];
@@ -627,29 +577,16 @@ mod whole {
         })
     }
 
-    thread_local! {
-        static SPANS: std::cell::RefCell<Spans> = std::cell::RefCell::new(Spans::default());
+    fn span_extent(sp: &Spans) -> Option<(usize, usize, usize, usize, usize)> {
+        let (rmin, end) = super::span_rows(sp);
+        let pixels: usize = sp.rows.iter().filter(|(a, b)| a <= b).map(|&(a, b)| (b - a + 1) as usize).sum();
+        (pixels > 0).then_some((sp.c0, sp.c0 + sp.rows.len(), rmin, end.saturating_sub(1), pixels))
     }
 
     /// Scattered pixel writes the row sweep of `rows` x `cols` pixels is worth: about one scattered read-modify-write per
     /// eight pixels of the sweep (eight u16 lanes per vector step, a compare and an add each). Only the speed depends on it.
     fn sweep_cost(rows: usize, cols: usize) -> usize {
         rows * cols / 8
-    }
-
-    /// The spans of `deposit` into `sp`: columns `c0..c1`, the rows used (`rmin..=rmax`) and the pixel count; None when
-    /// nothing is drawn.
-    fn spans<S: Samples + ?Sized>(
-        v: &S,
-        m: &Map,
-        w: usize,
-        h: usize,
-        sp: &mut Spans,
-    ) -> Option<(usize, usize, usize, usize, usize)> {
-        super::spans_into(w, h, v, m, sp);
-        let (rmin, end) = super::span_rows(sp);
-        let pixels = sp.rows.iter().filter(|(a, b)| a <= b).map(|&(a, b)| (b - a + 1) as usize).sum::<usize>();
-        (pixels > 0).then_some((sp.c0, sp.c0 + sp.rows.len(), rmin, end.saturating_sub(1), pixels))
     }
 
     /// `deposit` as it was before the span pass (one scattered write per pixel, one compare chain per sample): the
@@ -835,7 +772,8 @@ mod whole {
                                 let _ = deposit(&mut b, w, h, &v, &m, wgt);
                                 assert!(a == b, "n {} xps {} ti {} y {} {} wgt {}", n, xps, ti, ypv, y0, wgt);
                                 let mut sp = Spans::default();
-                                if let Some((c0, c1, r0, r1, px)) = spans(&v[..], &m, w, h, &mut sp) {
+                                super::super::spans_into(w, h, &v[..], &m, &mut sp);
+                                if let Some((c0, c1, r0, r1, px)) = span_extent(&sp) {
                                     sweeps += (px > sweep_cost(r1 - r0 + 1, c1 - c0)) as usize;
                                 }
                                 cases += 1;

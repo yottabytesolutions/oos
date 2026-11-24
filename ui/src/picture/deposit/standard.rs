@@ -4,7 +4,15 @@
 
 use super::count::{Count, CountFormat};
 use super::kernel::{self, FrameTiming, Placed, Projection, RawTrace, SamplesRef, TrigSnapshot, Vertical};
+use crate::drawpipe::route::{self, hardware_position, Route};
+use crate::drawpipe::stage::fixture_stage;
 use crate::model::*;
+use std::time::{Duration, Instant};
+
+mod screen;
+pub(crate) use screen::trigger as screen_trigger;
+pub(crate) use zoom::{zoom_code_plans, zoom_plans, zoom_reduced_plans, ZoomScratch};
+mod zoom;
 
 pub(crate) fn projection(m: &Model, w: usize, h: usize, x_per_sample: f64) -> Projection {
     Projection {
@@ -63,6 +71,7 @@ pub(crate) struct FastPlan {
     route: FastRoute,
     projection: Projection,
     fold: [Option<crate::fastdraw::Fold>; NCH],
+    origins: Option<[f64; NCH]>,
 }
 
 impl FastPlan {
@@ -73,10 +82,18 @@ impl FastPlan {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn into_raw(self) -> Option<RawTrace> {
+        self.recycle(&mut Default::default())
+    }
+
+    pub(crate) fn recycle(self, screen: &mut [Vec<f32>; NCH]) -> Option<RawTrace> {
         match self.route {
             FastRoute::Raw(trace) => Some(trace),
-            FastRoute::Rec(_) => None,
+            FastRoute::Rec(rec) => {
+                *screen = rec.ch;
+                None
+            }
         }
     }
 
@@ -95,6 +112,21 @@ impl FastPlan {
         }
     }
 
+    pub(crate) fn weight(&self) -> f64 {
+        if self.projection.dots {
+            let spacing = match &self.route {
+                FastRoute::Rec(rec) => {
+                    rec.dt / self.projection.time_per_div * self.projection.cols as f64 / HDIV as f64
+                }
+                FastRoute::Raw(_) => self.projection.x_per_sample,
+            };
+            if spacing.is_finite() && spacing > 0.0 {
+                return 24.0 / spacing;
+            }
+        }
+        24.0
+    }
+
     pub(crate) fn format(&self) -> CountFormat {
         self.projection.format
     }
@@ -111,7 +143,10 @@ impl FastPlan {
             FastRoute::Rec(rec) if rec.dt == 0.0 && rec.ch.iter().all(Vec::is_empty) => 1,
             FastRoute::Rec(rec) => {
                 let window = proj.time_per_div * HDIV as f64;
-                record_hit_bound(proj.cols, window / rec.dt, proj.delay / window)
+                let delay_in_windows = self.origins.map_or(proj.delay.abs(), |origins| {
+                    origins.into_iter().fold(proj.delay.abs(), |delay, t0| delay.max((t0 + window / 2.0).abs()))
+                }) / window;
+                record_hit_bound(proj.cols, window / rec.dt, delay_in_windows)
             }
         }
     }
@@ -131,7 +166,7 @@ impl FastPlan {
             (ch.volts_per_div, ch.offset),
             proj.dots,
             (proj.time_per_div, proj.delay),
-            rec.t0,
+            self.origins.map_or(rec.t0, |origins| origins[c]),
             rec.dt,
             &rec.ch[c],
             24,
@@ -144,6 +179,7 @@ impl FastPlan {
 }
 
 pub(crate) struct FastFrame {
+    pub(crate) route: Route,
     pub(crate) plan: FastPlan,
     pub(crate) triggered: bool,
 }
@@ -154,13 +190,18 @@ impl FastFrame {
         projection: Projection,
         fold: [Option<crate::fastdraw::Fold>; NCH],
     ) -> Self {
-        Self { triggered: rec.triggered, plan: FastPlan { route: FastRoute::Rec(rec), fold, projection } }
+        Self {
+            triggered: rec.triggered,
+            route: Route::Volts,
+            plan: FastPlan { route: FastRoute::Rec(rec), fold, projection, origins: None },
+        }
     }
 
-    fn placed(Placed { projection, trace, fold }: Placed, meta: &FrameTiming) -> Self {
+    pub(crate) fn placed(Placed { projection, route, trace, fold }: Placed, meta: &FrameTiming) -> Self {
         Self {
             triggered: trace.outcome.triggered(meta),
-            plan: FastPlan { route: FastRoute::Raw(trace), projection, fold },
+            route,
+            plan: FastPlan { route: FastRoute::Raw(trace), projection, fold, origins: None },
         }
     }
 }
@@ -175,7 +216,11 @@ pub(crate) fn fast_plan(
     let window = m.time_per_div() as f64 * HDIV as f64;
     let x_per_sample = f.dt / m.time_per_div() as f64 * w as f64 / HDIV as f64;
     let proj = projection(m, w, h, x_per_sample);
-    if x_per_sample > 0.5 || f.envelope || f.roll || f.scan {
+    let route = route::route(f, &proj, m.acq, false);
+    if route == Route::Boxcar && !proj.dots {
+        return batch_plan_timed(m, f, BatchPlacement { projection: proj, route, words: None }, None, None);
+    }
+    if x_per_sample > 0.5 || f.envelope || f.roll || f.scan || m.acq == AcqMode::HiRes {
         // Preserve the 3600-point sparse record and its trigger/interpolation policy until that source migrates.
         let rec = crate::board::to_record(f, m, 3600, window, m.delay as f64 - window / 2.0);
         let fold = std::array::from_fn(|c| {
@@ -184,6 +229,9 @@ pub(crate) fn fast_plan(
         return FastFrame::record(rec, proj, fold);
     }
     let meta = frame_timing(m, f);
+    if hardware_position(m, f).is_some() {
+        return batch_plan_timed(m, f, BatchPlacement { projection: proj, route, words: None }, None, None);
+    }
     let placed = kernel::place(
         std::array::from_fn(|c| SamplesRef::Volts(&f.ch[c])),
         &meta,
@@ -256,46 +304,122 @@ pub(crate) fn batch_plan(
     previous: Option<RawTrace>,
 ) -> FastFrame {
     let spacing = f.dt / m.time_per_div() as f64 * w as f64 / HDIV as f64;
-    let pairs = crate::compress::live(f) && spacing <= 0.5;
-    let (bytes, codes) = words.map_or((&[][..], None), |(bytes, layout)| (bytes, Some(layout)));
-    use crate::fastdraw::Samples;
-    let samples = std::array::from_fn(|c| match codes {
-        Some(layout) => kernel::SamplesRef::Codes(layout.channel(bytes, c)),
+    let projection = projection(m, w, h, spacing);
+    let words = words.and_then(|(bytes, layout)| Some((bytes, layout, super::envelope::Layout::new(&layout)?)));
+    let route = route::route(f, &projection, m.acq, words.is_some());
+    batch_plan_timed(m, f, BatchPlacement { projection, route, words }, previous, None)
+}
+
+pub(crate) struct BatchPlacement<'a> {
+    pub(crate) projection: Projection,
+    pub(crate) route: Route,
+    pub(crate) words: Option<(&'a [u8], crate::drawpipe::CodeLayout, super::envelope::Layout)>,
+}
+
+pub(crate) fn batch_plan_timed(
+    m: &Model,
+    f: &crate::board::Frame,
+    BatchPlacement { projection: proj, route, words }: BatchPlacement<'_>,
+    previous: Option<RawTrace>,
+    refine_time: Option<&mut Duration>,
+) -> FastFrame {
+    let samples = std::array::from_fn(|c| match words {
+        Some((bytes, layout, _)) => kernel::SamplesRef::Codes(layout.channel(bytes, c)),
         None => kernel::SamplesRef::Volts(&f.ch[c]),
     });
     let meta = frame_timing(m, f);
-    let proj = projection(m, w, h, spacing);
-    let src = &samples[m.trig_src];
-    let level = crate::board::sw_trig_level_of(m, src.len(), |i| src.at(i));
-    let col =
-        if pairs { crate::compress::smooth_len(spacing) } else { (1.0 / spacing).floor().clamp(1.0, 256.0) as usize };
-    let t = meta.trigger;
-    let (ti, outcome) = kernel::refine(&meta, col, || {
-        let half = (proj.time_per_div * HDIV as f64 / 2.0 / f.dt) as usize;
-        if near_only(m, f) {
-            crate::trignear::edge_near(src, 0, src.len(), f.pre, level, t.hysteresis, t.rising, t.either, half, col)
-        } else {
-            crate::trignear::edge_smooth_near(src, f.pre, level, t.hysteresis, t.rising, t.either, half, col, |_| true)
+    let (ti, outcome) = if route == Route::Boxcar {
+        let (ti, outcome) = screen::trigger(m, f, &proj, None, refine_time);
+        (ti, if outcome == kernel::TrigOutcome::NotFound { outcome } else { kernel::TrigOutcome::Hardware })
+    } else {
+        batch_trigger(m, f, &proj, &meta, (&samples[m.trig_src], route), refine_time)
+    };
+    let layout = words.map(|(_, _, layout)| layout);
+    let placed = match route {
+        Route::Pairs | Route::Boxcar => {
+            let mut spans = previous.map_or_else(Default::default, |trace| trace.spans);
+            crate::fastdraw::with_scratch(|scratch| match route {
+                Route::Pairs => scratch.envelope.pairs((&samples, layout), &proj, ti, &mut spans),
+                _ => scratch.envelope.boxcar(&samples, &proj, (ti, f.dt), &mut spans),
+            });
+            let trace = RawTrace { trigger_at: ti, outcome, spans };
+            Placed { projection: proj, route, trace, fold: [None; NCH] }
         }
-    });
-    if !pairs {
-        return FastFrame::placed(kernel::place_at(samples, &meta, &proj, [false; NCH], ti, outcome, previous), &meta);
-    }
-    let mut reused = previous.map_or_else(|| std::array::from_fn(|_| None), |trace| trace.spans);
-    let spans = std::array::from_fn(|c| {
-        kernel::raw_map(&proj, c, ti).map(|map| {
-            let mut spans = reused[c].take().unwrap_or_default();
-            crate::compress::spans_into(w, h, &f.ch[c], &map, proj.dots, &mut spans);
-            spans
-        })
-    });
-    let trace = RawTrace { trigger_at: ti, outcome, spans };
-    FastFrame::placed(Placed { projection: proj, trace, fold: [None; NCH] }, &meta)
+        _ => kernel::place_at(samples, &proj, (route, layout), (ti, outcome), previous),
+    };
+    FastFrame::placed(placed, &meta)
 }
 
-// AC and LF reject hide the comparator's signal from software. An exact edge trigger is already at `pre`.
-fn near_only(m: &Model, f: &crate::board::Frame) -> bool {
-    !matches!(m.trig_coupling(), TrigCoup::Dc | TrigCoup::HfReject) || (f.pre_exact && m.trig_type == TrigType::Edge)
+pub(crate) fn screen_plan(
+    m: &Model,
+    f: &crate::board::Frame,
+    placement: BatchPlacement<'_>,
+    interp: crate::sparse::Interp,
+    samples: &mut [Vec<f32>; NCH],
+    previous: Option<RawTrace>,
+) -> FastFrame {
+    screen::place(m, f, placement, interp, samples, previous)
+}
+
+pub(crate) fn batch_trigger(
+    m: &Model,
+    f: &crate::board::Frame,
+    proj: &Projection,
+    meta: &FrameTiming,
+    (source, route): (&SamplesRef<'_>, Route),
+    refine_time: Option<&mut Duration>,
+) -> (f64, kernel::TrigOutcome) {
+    if let Some(ti) = hardware_position(m, f) {
+        #[cfg(test)]
+        crate::trignear::fixture::placed(f, ti);
+        return (ti, kernel::TrigOutcome::Hardware);
+    }
+    #[cfg(test)]
+    if crate::trignear::fixture::bypass() {
+        return (f.pre as f64, kernel::TrigOutcome::Hardware);
+    }
+    let col = if route == Route::Pairs {
+        crate::compress::smooth_len(proj.x_per_sample)
+    } else {
+        (1.0 / proj.x_per_sample).floor().clamp(1.0, 256.0) as usize
+    };
+    let result = kernel::refine(meta, col, || {
+        timed_trigger(refine_time, || refine_batch(m, f, proj.time_per_div, meta.trigger, source, col))
+    });
+    #[cfg(test)]
+    crate::trignear::fixture::placed(f, result.0);
+    result
+}
+
+fn timed_trigger<T>(time: Option<&mut Duration>, mut search: impl FnMut() -> T) -> T {
+    let started = time.as_ref().map(|_| Instant::now());
+    let result = fixture_stage!(Trigger, search());
+    if let Some((started, time)) = started.zip(time) {
+        *time = started.elapsed();
+    }
+    result
+}
+
+fn refine_batch(
+    m: &Model,
+    f: &crate::board::Frame,
+    time_per_div: f64,
+    t: kernel::TrigSnapshot,
+    source: &SamplesRef<'_>,
+    col: usize,
+) -> crate::trignear::SearchResult {
+    use crate::fastdraw::Samples;
+    let level = crate::board::sw_trig_level_of(m, source.len(), |i| source.at(i));
+    let half = (time_per_div * HDIV as f64 / 2.0 / f.dt) as usize;
+    // AC and LF reject hide the comparator's signal. At full rate, the edge is already in the sample or pair.
+    if matches!(m.trig_coupling(), TrigCoup::Ac | TrigCoup::LfReject) || (f.pre_exact && m.trig_type == TrigType::Edge)
+    {
+        crate::trignear::edge_near(source, 0, source.len(), f.pre, level, t.hysteresis, t.rising, t.either, half, col)
+    } else {
+        let trigger =
+            crate::fastdraw::EdgeSearch { level, hysteresis: t.hysteresis, rising: t.rising, either: t.either };
+        crate::trignear::edge_smooth_near_with(source, (f.pre, half, col), trigger, &|_| true, false, None)
+    }
 }
 
 /// Exceptional direct-frame consumer shares the same differences and prefix kernels as Batch.

@@ -179,7 +179,7 @@ impl Batch for ScriptBatch {
     fn codes(&self) -> Option<CodesInto> {
         let (s, p) = (self.settings.clone(), self.params);
         self.codes
-            .then(|| Arc::new(move |bytes: &[u8], f: &mut Frame| hw::codes_into(bytes, &s, &p, 0, f)) as CodesInto)
+            .then(|| Arc::new(move |_, bytes: &[u8], f: &mut Frame| hw::codes_into(bytes, &s, &p, 0, f)) as CodesInto)
     }
     fn into_bytes(self) -> ScriptBytes {
         self.bytes

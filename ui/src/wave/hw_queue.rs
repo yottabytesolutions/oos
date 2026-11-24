@@ -5,14 +5,41 @@ use crate::board::{PictureEligibility, QueuedFrame};
 use crate::drawpipe::{self, TapRead};
 
 impl Source {
-    /// Hardware source: takes the newest `max` queued frames but the newest one (the fast display path draws them;
-    /// the newest stays for `acquire`, which makes the full record for measurements, decoding and history). Older
-    /// ones are dropped and counted.
-    pub fn drain_newest(&mut self, max: usize) -> Vec<std::sync::Arc<crate::board::Frame>> {
+    pub(crate) fn hw_serial(&self) -> bool {
+        matches!(self, Source::Hw { shared, .. } if crate::perfguard::deep::ui_lock(shared).record_flow.serial)
+    }
+
+    /// Ask the acquisition thread for one force-trigger pulse. Other sources ignore it.
+    pub fn force_hw(&self) {
+        if let Source::Hw { shared, .. } = self {
+            let mut state = crate::perfguard::deep::ui_lock(shared);
+            state.force = true;
+            state.record_flow.wake();
+            #[cfg(test)]
+            {
+                state.force_requests += 1;
+            }
+        }
+    }
+
+    /// Hardware source in STOP: the view shown (time per div, delay; None: none to read for), and the frame the
+    /// thread has read again from the stored record for it, if a new one came (`board::Shared::stop_view`).
+    pub fn hw_stop(&mut self, view: Option<(f64, f64)>) -> Option<crate::board::Frame> {
         if let Source::Hw { shared, .. } = self {
             let mut g = crate::perfguard::deep::ui_lock(shared);
-            // the thread decodes no more than this of a batch (the record takes one more)
-            g.take = max + 1;
+            if g.stop_view != view {
+                g.stop_view = view;
+                g.record_flow.wake();
+            }
+            return g.replay.take().filter(|_| view.is_some());
+        }
+        None
+    }
+
+    /// Draw the full queued prefix. The newest stays for the records stage's full analysis and history.
+    pub fn drain_newest(&mut self) -> Vec<std::sync::Arc<crate::board::Frame>> {
+        if let Source::Hw { shared, .. } = self {
+            let mut g = crate::perfguard::deep::ui_lock(shared);
             let id = g.acquisition.identity();
             let before = g.queue.len();
             g.queue.retain(|f| (f.cfg, f.stamp) == (id.gen(), id.epoch()));
@@ -26,12 +53,22 @@ impl Source {
                 return Vec::new();
             }
             let prefix = g.queue.len().saturating_sub(1);
-            let skip = prefix.saturating_sub(max);
-            crate::drawpipe::counters().lose(crate::drawpipe::Lost::Budget, skip as u64);
-            g.dropped += skip as u64;
-            return g.queue.drain(..prefix).skip(skip).collect();
+            if prefix == 0 && before != 0 && g.queue.is_empty() {
+                g.record_flow.drained();
+            }
+            return g.queue.drain(..prefix).collect();
         }
         Vec::new()
+    }
+
+    pub(crate) fn note_record_draw(&self, records: u64, draw: std::time::Duration) {
+        if let Source::Hw { shared, .. } = self {
+            if records > 0 {
+                let mut g = crate::perfguard::deep::ui_lock(shared);
+                let id = g.acquisition.identity();
+                g.record_flow.cost.observe(id, records, draw, std::time::Duration::ZERO);
+            }
+        }
     }
 
     pub(crate) fn acquire_hw(
@@ -42,9 +79,13 @@ impl Source {
         let Source::Hw { shared, seen } = self else { return None };
         let mut g = crate::perfguard::deep::ui_lock(shared);
         let id = g.acquisition.identity();
+        let had_frames = !g.queue.is_empty();
         while g.queue.pop_front_if(|f| (f.cfg, f.stamp) != (id.gen(), id.epoch())).is_some() {
             drawpipe::Counters::add(&drawpipe::counters().losses.queue_pop, 1);
             drawpipe::Counters::add(&drawpipe::counters().dropped, 1);
+        }
+        if had_frames && g.queue.is_empty() {
+            g.record_flow.drained();
         }
         // Shared stays locked across the slot take. A newer fallback cannot be inserted
         // between comparing the FIFO heads and selecting the next reader record.
@@ -57,7 +98,12 @@ impl Source {
             }
             TapRead::Pending | TapRead::Stale => return None,
             TapRead::Empty => match g.queue.pop_front() {
-                Some(frame) => (QueuedFrame::new(frame, PictureEligibility::Drawable), false),
+                Some(frame) => {
+                    if g.queue.is_empty() {
+                        g.record_flow.drained();
+                    }
+                    (QueuedFrame::new(frame, PictureEligibility::Drawable), false)
+                }
                 None => {
                     if g.halted {
                         g.halted = false;
@@ -87,6 +133,10 @@ pub(super) fn hold(shared: &crate::board::HwShared, hold: bool, req: u64) -> boo
             pipe.hold_taps(hold);
         }
     }
+    let changed = g.hold != hold || g.final_req != req;
     (g.hold, g.final_req) = (hold, req);
+    if changed {
+        g.record_flow.wake();
+    }
     g.final_ack >= req && g.queue.is_empty()
 }

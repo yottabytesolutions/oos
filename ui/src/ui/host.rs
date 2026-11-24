@@ -116,7 +116,7 @@ impl Host {
     }
 
     pub(super) fn picture_time(&self, elapsed: f64) -> std::time::Instant {
-        if self.time_budgets {
+        if self.time_budgets() {
             std::time::Instant::now()
         } else {
             self.runtime.started + std::time::Duration::from_secs_f64(elapsed)
@@ -124,7 +124,7 @@ impl Host {
     }
 
     #[cfg(test)]
-    pub(super) fn with_switches(self, switches: crate::sysconf::Switches) -> Self {
+    pub(crate) fn with_switches(self, switches: crate::sysconf::Switches) -> Self {
         Self { switches, ..self }
     }
 
@@ -565,7 +565,7 @@ mod auto_timeout {
     fn backlog_batch(frames: usize) {
         let (mut ui, shared) = hardware();
         let (mut reference, reference_shared) = hardware();
-        let mut sw = *ui.switches();
+        let mut sw = ui.switches().clone();
         sw.pipeline = Mode::Batch;
         let mut source = scripted::source(BatchKind::Raw, 123);
         let batch = source.next_batch(&ui.m, &sw, frames, None).unwrap();

@@ -5,7 +5,7 @@ use super::{rgb, Canvas, Phosphor, Rect, TraceJob, Ui, CH_COLORS, NCH};
 impl TraceJob {
     #[cfg(target_os = "linux")]
     pub(crate) fn count_map<'a>(&'a self, ph: &'a Phosphor, c: usize) -> &'a [u16] {
-        self.indexed.as_ref().map_or(&ph.map[c], |maps| &maps[c])
+        self.indexed.as_ref().map_or(&ph.maps()[c], |maps| &maps[c])
     }
 
     /// Keep counts in Picture. R16UI carries only the CPU grader's exact LUT index here.

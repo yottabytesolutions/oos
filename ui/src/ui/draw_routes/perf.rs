@@ -176,6 +176,8 @@ fn state_reports_the_effective_pipeline_and_draw_route() {
         assert!(text.contains(&format!("pipeline {pipeline} route={draw}")), "{text}");
     }
     route.ui.m.zoom = true;
+    assert!(crate::cmd::stat_text(&route.ui).contains("route=batch"));
+    route.ui.m.z_src = Some(1);
     assert!(crate::cmd::stat_text(&route.ui).contains("route=records"));
     route.ui.m.run = RunState::Stop;
     assert!(crate::cmd::stat_text(&route.ui).contains("route=stopped"));
@@ -268,3 +270,7 @@ fn deposit_waveform_tap_counts_cheap_statistics_once() {
         assert!(a.sum.is_finite() && b.sum.is_finite());
     }
 }
+
+mod worker_short;
+
+mod two_channel;

@@ -77,7 +77,7 @@ fn mask_toggle_only_advances_generation_for_an_effective_worker_route_change() {
     for already_slow in [false, true] {
         let mut ui = base(RunState::Run);
         if already_slow {
-            ui.m.zoom = true;
+            ui.m.z_src = Some(1);
             ui.step(0.04);
             change::reset(&mut ui);
         }
@@ -285,3 +285,5 @@ fn analyzer_settings_never_classify_or_clear_measurement_statistics() {
         }
     }
 }
+
+mod renderer_lifecycle_tests;

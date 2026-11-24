@@ -6,13 +6,18 @@
 use super::*;
 use crate::board::dho::{lifecycle, publication, roll};
 use crate::board::scripted::{self, Batch, BatchKind, BatchSource};
-use crate::board::{HwShared, Want};
+use crate::board::{Frame, HwShared, Slow, Want};
+use crate::model::{AcqMode, Model, TrigMode};
 use oos_hal::dho::{
     bus::{Bus, DmaBuf},
+    hz,
     seg::sim,
     seq,
 };
 use oos_hal::sync::lock;
+
+mod record_route;
+pub(crate) use record_route::RecordWorker;
 
 pub(crate) struct SingleWorker {
     state: seq::State,
@@ -36,8 +41,9 @@ impl SingleWorker {
     }
 
     pub(crate) fn read(&mut self, shared: &HwShared, model: &Model, sw: &crate::sysconf::Switches) -> Option<Frame> {
-        let (_, want, mode, _, _, _, _, id, _) = publication::snapshot(shared);
-        let want = want.unwrap();
+        let request = publication::snapshot(shared);
+        let want = request.want.unwrap();
+        let (mode, id) = (request.mode, request.identity);
         let pair = (id.gen(), id.epoch());
         let changed = publication::reconfigure(self.current.as_ref().map(|(s, m)| (s, *m)), &want, mode);
         let p = if changed {
@@ -159,8 +165,9 @@ impl SegmentWorker {
     }
 
     pub(crate) fn tick(&mut self, shared: &HwShared) {
-        let (_, want, _, _, _, _, _, id, _) = publication::snapshot(shared);
-        let want = want.unwrap();
+        let request = publication::snapshot(shared);
+        let want = request.want.unwrap();
+        let id = request.identity;
         if self.current.is_none() {
             self.state = seq::State::handover(want.mask, None);
         }
@@ -265,7 +272,7 @@ fn scan_single_gen_only_mid_sweep_restarts_before_publishing_completion() {
         hardware_column = 0;
     }
     // The fake hardware's column resets only when the worker starts another sweep.
-    scan_write(&mut sweep[0], 8, hardware_column, &vec![23.0; 8 - hardware_column]);
+    super::roll::scan_write(&mut sweep[0], 8, hardware_column, &vec![23.0; 8 - hardware_column]);
     let frame = publication::tag(Frame { scan: true, partial: false, ch: sweep, ..Default::default() }, id);
     assert!(frame.ch[0].iter().all(|&v| v == 23.0), "the completed record must contain an entire current-pair sweep");
     assert!(rolling.is_none(), "the next poll must restart the hardware sweep");

@@ -260,7 +260,7 @@ pub(super) fn record(
         if count {
             crate::pacing::drawn(raw.frame.cfg, 1);
         }
-        if ui.fast_ok() && !crate::deepmeas::deep_raw_frame(&raw.frame) {
+        if ui.fast_ok() && !ui.m.zoom && ui.m.acq != AcqMode::Peak && !crate::deepmeas::deep_raw_frame(&raw.frame) {
             let stats = count.then_some(crate::drawpipe::Stats { edges: &mut ui.fast_edges, off: &mut ui.fast_off });
             let saved = input.map(|input| (rec, input));
             crate::drawpipe::draw_frame_reusing(&mut ui.ph, &ui.m, &raw.frame, interp, stats, saved);

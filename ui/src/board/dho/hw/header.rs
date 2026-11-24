@@ -4,6 +4,15 @@
 
 use oos_hal::dho::seq::Settings;
 
+#[cfg(any(target_os = "linux", test))]
+pub(super) mod dump;
+#[cfg(test)]
+mod fixtures;
+#[cfg(any(target_os = "linux", test))]
+mod format;
+#[cfg(test)]
+pub(crate) use fixtures::{dispatch_fixture, for_each_fixture, Fixture};
+
 /// One line of the header log: the 8 header words, `pre`, and the offsets (samples) of the nearest rising and falling
 /// crossing of the trigger level from `pre` on the trigger channel. `only_off` (OOS_FRAME_HEADER=off): only the frames
 /// whose edge (of the trigger slope) is not within 20 samples of `pre`, and a count of all frames every 10,000 (the
@@ -54,4 +63,9 @@ fn append_header_log(line: &str) {
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open("/tmp/oos-hdr.log") {
         let _ = f.write_all(line.as_bytes());
     }
+}
+
+#[cfg(test)]
+fn words(header: &[u8]) -> [u16; 8] {
+    std::array::from_fn(|i| u16::from_le_bytes([header[2 * i], header[2 * i + 1]]))
 }

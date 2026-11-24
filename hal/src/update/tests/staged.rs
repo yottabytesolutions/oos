@@ -2,6 +2,8 @@
 
 use super::*;
 
+mod sender;
+
 const OLD: &str = "20261105-160000 kernel x";
 const NEW: &str = "20261105-170000 kernel x";
 
@@ -26,9 +28,23 @@ fn header(tag: u8, build: &str, announce: bool) -> Vec<u8> {
     package
 }
 
-fn receive(f: &Fake, card: &mut Card, header_file: &Path, keys: &[[u8; 32]]) -> Result<Report, String> {
-    let package = kexec::staged_package(card, header_file, NEW, keys)?;
-    install(card, &f.state(), &package, keys, &RUN)
+fn receive(f: &Fake, card: &mut Card, header_file: &Path) -> Result<Report, kexec::StagedError> {
+    kexec::install_staged(card, &f.state(), header_file, NEW, &[pk()], &RUN)
+}
+
+fn refusal(result: Result<Report, kexec::StagedError>) -> String {
+    match result.unwrap_err() {
+        kexec::StagedError::Refused(reason) => reason,
+        error => panic!("expected a refusal before card writes, got {error:?}"),
+    }
+}
+
+fn signed_size_header(size: usize) -> Vec<u8> {
+    let mut manifest = pkg::verify_header(&header(2, NEW, true), &[pk()]).unwrap().manifest;
+    manifest.size = size as u64;
+    let text = manifest.signed_text();
+    let signature = ed25519::sign(&SEED, text.as_bytes());
+    format!("{text}sig {}\n\n", hex(&signature)).into_bytes()
 }
 
 fn valid_header(f: &Fake) -> PathBuf {
@@ -43,7 +59,7 @@ fn staged_receive_installs_and_sets_the_legacy_trial_state() {
     let legacy = Fake::new("staged-legacy", Some(1));
     staged.st().save(&legacy.state()).unwrap();
 
-    assert!(receive(&staged, &mut staged.card(), &valid_header(&staged), &[pk()]).unwrap().written);
+    assert!(receive(&staged, &mut staged.card(), &valid_header(&staged)).unwrap().written);
     assert!(install(&mut legacy.card(), &legacy.state(), &package(2, NEW), &[pk()], &RUN).unwrap().written);
     assert_eq!(staged.region(Region::Recovery), bootimg(2));
     assert_eq!(staged.region(Region::Slot), bootimg(1));
@@ -61,6 +77,8 @@ fn staged_refusals_leave_card_and_install_state_untouched() {
     trailing.push(0);
     let wrong_build = header(2, OLD, true);
     let unannounced = header(2, NEW, false);
+    let empty = signed_size_header(0);
+    let oversized = signed_size_header(IMAGE_MAX + 1);
 
     let cases = [
         ("hash", Some(&valid), Some(vec![0; bootimg(2).len()]), false, "SHA-256 mismatch"),
@@ -71,6 +89,8 @@ fn staged_refusals_leave_card_and_install_state_untouched() {
         ("signature", Some(&bad_signature), None, false, "SIGNATURE INVALID"),
         ("unannounced", Some(&unannounced), None, false, "no 'trial staged' line"),
         ("trailing", Some(&trailing), None, false, "trailing bytes"),
+        ("empty-image", Some(&empty), None, false, "staged image size 0 does not fit the rollback slot"),
+        ("oversized-image", Some(&oversized), None, false, "does not fit the rollback slot"),
     ];
     for (name, header, slot, truncate_slot, reason) in cases {
         let f = card_with_staged_image(name);
@@ -93,14 +113,59 @@ fn staged_refusals_leave_card_and_install_state_untouched() {
         }
         let mut card = f.card();
         let original_slot = card.read(SLOT_LBA, slot_len).unwrap();
-        let refusal = receive(&f, &mut card, &path, &[pk()]).unwrap_err();
-        assert!(refusal.contains(reason), "{name}: {refusal}");
+        let error = refusal(receive(&f, &mut card, &path));
+        assert!(error.contains(reason), "{name}: {error}");
         assert_eq!(&f.magic(), b"KRNL", "{name}");
         assert_eq!(f.region(Region::Recovery), bootimg(1), "{name}");
         assert_eq!(card.read(SLOT_LBA, slot_len).unwrap(), original_slot, "{name}");
         assert_eq!(f.st(), before, "{name}");
-        kexec::record_staged_refusal(&f.state(), &refusal).unwrap();
-        assert_eq!(f.st(), State { kexec: None, event: refusal, ..before }, "{name}");
+        kexec::record_staged_refusal(&f.state(), &error).unwrap();
+        assert_eq!(f.st(), State { kexec: None, event: error, ..before }, "{name}");
+    }
+}
+
+#[test]
+fn staged_receive_refuses_without_a_usable_recovery_image_for_rollback() {
+    let mut damaged = bootimg(1);
+    damaged[3000] ^= 1;
+    assert!(check_image(&damaged).unwrap_err().contains("id mismatch"));
+    for (name, recovery) in [
+        ("empty-recovery", vec![0; bootimg(1).len()]),
+        ("damaged-recovery", damaged),
+        ("identical-recovery", bootimg(2)),
+    ] {
+        let f = card_with_staged_image(name);
+        f.poke(RECOVERY_LBA, &recovery);
+        let mut before = f.st();
+        before.previous = Some(entry(3, OLD));
+        before.save(&f.state()).unwrap();
+        let mut card = f.card();
+        let opt = InstallOpt { force: true, ..RUN };
+        let error = refusal(kexec::install_staged(&mut card, &f.state(), &valid_header(&f), NEW, &[pk()], &opt));
+        assert!(error.contains("different, valid image in recovery"), "{name}: {error}");
+        assert_eq!(card.read(RECOVERY_LBA, recovery.len()).unwrap(), recovery, "{name}");
+        assert_eq!(f.region(Region::Slot), bootimg(2), "{name}");
+        assert_eq!(&f.magic(), b"KRNL", "{name}");
+        assert_eq!(f.st(), State { previous: None, slot_incomplete: true, ..before }, "{name}");
+    }
+}
+
+#[test]
+fn staged_receive_refuses_an_open_trial_or_a_model_mismatch() {
+    for (name, trial, running_model, reason) in [
+        ("staged-open-trial", Some(1), RUN.running_model, "wait for confirmation"),
+        ("staged-model-mismatch", None, "DHO804", "running device model 'DHO804': refused"),
+    ] {
+        let f = card_with_staged_image(name);
+        let before = State { trial, staged: Some(entry(2, NEW)), slot_incomplete: true, ..f.st() };
+        before.save(&f.state()).unwrap();
+        let opt = InstallOpt { running_model, ..RUN };
+        let error = refusal(kexec::install_staged(&mut f.card(), &f.state(), &valid_header(&f), NEW, &[pk()], &opt));
+        assert!(error.contains(reason), "{name}: {error}");
+        assert_eq!(f.st(), before, "{name}");
+        assert_eq!(f.region(Region::Recovery), bootimg(1), "{name}");
+        assert_eq!(f.region(Region::Slot), bootimg(2), "{name}");
+        assert_eq!(&f.magic(), b"KRNL", "{name}");
     }
 }
 
@@ -116,13 +181,22 @@ fn staged_slot_cut_keeps_the_previous_recovery_and_allows_reinstall() {
     let f = card_with_staged_image("staged-slot-cut");
     let mut card = f.card();
     card.cut = Some(Region::Slot);
-    assert_eq!(receive(&f, &mut card, &valid_header(&f), &[pk()]).unwrap_err(), "power cut");
+    assert_eq!(
+        receive(&f, &mut card, &valid_header(&f)).unwrap_err(),
+        kexec::StagedError::WriteFailed("power cut".into())
+    );
     assert_eq!(&f.magic(), b"KRNL");
     assert_eq!(f.region(Region::Recovery), bootimg(1));
     assert_ne!(f.region(Region::Slot), bootimg(1));
     assert_eq!(
         f.st(),
-        State { current: Some(entry(1, OLD)), kexec: Some(NEW.into()), event: SLOT_WRITING.into(), ..State::default() }
+        State {
+            current: Some(entry(1, OLD)),
+            kexec: Some(NEW.into()),
+            event: SLOT_WRITING.into(),
+            slot_incomplete: true,
+            ..State::default()
+        }
     );
     drop(card);
     assert!(kexec_missed(&f.state(), false).unwrap().unwrap().contains("not installed"));
@@ -136,7 +210,10 @@ fn staged_recovery_cut_keeps_stock_selected_and_can_restore_the_previous_image()
     let f = card_with_staged_image("staged-recovery-cut");
     let mut card = f.card();
     card.cut = Some(Region::Recovery);
-    assert_eq!(receive(&f, &mut card, &valid_header(&f), &[pk()]).unwrap_err(), "power cut");
+    assert_eq!(
+        receive(&f, &mut card, &valid_header(&f)).unwrap_err(),
+        kexec::StagedError::WriteFailed("power cut".into())
+    );
     assert_eq!(&f.magic(), b"KRNL");
     assert!(check_image(&f.region(Region::Recovery)).is_err());
     assert_eq!(f.region(Region::Slot), bootimg(1));

@@ -8,7 +8,7 @@
 //!                                          (--quick: headers only, no SHA-256 over the images)
 //!   oos-update install FILE.oosupd [--execute] [--downgrade] [--force] [--any-model] [--no-kexec | --new-dt]
 //!                                          check the signature and the image (dry run without --execute), then start
-//!                                          the new image by kexec with nothing written; that start
+//!                                          the new image by kexec while recovery stays intact; that start
 //!                                          installs it (rollback slot, recovery, read back, OOS armed),
 //!                                          then restarts automatically for the trial. --no-kexec, --new-dt and
 //!                                          packages without 'trial kexec' write it directly;
@@ -264,12 +264,12 @@ fn install(a: &Args) {
     let by_kexec = !test_card && !a.flag("--no-kexec") && !a.flag("--new-dt") && announced;
     if !by_kexec {
         if !test_card && !a.flag("--no-kexec") && !a.flag("--new-dt") {
-            out!("the package has no 'trial kexec' line (an older build): written directly, without the kexec trial start");
+            out!("the package does not announce a kexec receiver (an older build): written directly, without the kexec trial start");
         }
         if a.flag("--new-dt") {
             out!("--new-dt: written directly; a kernel or device tree that hangs before rcS starts again at every power-on");
         }
-        match update::install(&mut c, &sp, &p, &keys, &opt) {
+        match update::install_confirmed(&mut c, &sp, &p, &keys, &opt) {
             Ok(r) => {
                 r.lines.iter().for_each(|l| out!("{}", l));
                 if r.written && c.boot_magic().ok() == Some(*b"OOSK") {
@@ -284,7 +284,8 @@ fn install(a: &Args) {
     let running = update::running_build();
     // another device tree can be tried with kexec-tools, from the tree the running kernel got
     let running_tree = Path::new(kexec::TOOL).exists().then(|| std::fs::read(kexec::RUNNING_TREE).ok()).flatten();
-    match update::kexec_stage(&mut c, &sp, &p, &keys, &opt, booted.as_deref(), running.as_deref(), running_tree.as_deref()) {
+    let trees = kexec::BootTrees::new(booted.as_deref(), running.as_deref(), running_tree.as_deref());
+    match update::kexec_stage(&mut c, &sp, &p, &keys, &opt, trees) {
         Err(e) if e.contains("device tree") => die(&format!(
             "{}. Try the image on a card you can take out; then --new-dt writes it directly, without the kexec trial start",
             e
@@ -294,7 +295,7 @@ fn install(a: &Args) {
         Ok((r, Some(s))) => {
             r.lines.iter().for_each(|l| out!("{}", l));
             drop(p);
-            start_kexec(&sp, s, kexec::Flags { downgrade: opt.downgrade, force: opt.force, any_model: opt.any_model });
+            start_kexec(&sp, s);
         }
     }
 }
@@ -376,17 +377,18 @@ fn restore(q: &Quiet) {
     }
 }
 
-/// Load the staged image and start it. Returns only after a failure, which leaves everything as before the install.
+/// Load the prepared payload and start it. The running recovery image survives a failed start.
 #[cfg(target_os = "linux")]
-fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
+fn start_kexec(sp: &Path, s: update::Staged) {
     let short = update::short(&s.build).to_string();
+    let payload = s.payload_size();
     // stopped: None before oos-ui and the devices were stopped
     let undo = |why: &str, stopped: Option<&Quiet>| -> ! {
         kexec::undo::warn("unload kexec image", kexec::unload());
         if stopped.is_some() {
             kexec::undo::remount_writable();
         }
-        let event = format!("kexec start of build {} failed ({}): nothing installed", short, why);
+        let event = format!("kexec start of build {short} failed ({why}): nothing installed");
         kexec::undo::warn("clear kexec state", update::kexec_clear(sp, &event));
         if let Some(q) = stopped {
             restore(q);
@@ -396,7 +398,7 @@ fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
         notice(&messages::failed_before_start(&short, why));
         std::process::exit(1)
     };
-    let cmd = kexec::cmdline(&kexec::running_cmdline(), f);
+    let cmd = s.cmdline(&kexec::running_cmdline());
     let loaded = match &s.tree {
         Some(t) => kexec::load_with_tree(&s.kernel, &s.initrd, t, &cmd),
         None => kexec::load(&s.kernel, &s.initrd, &cmd),
@@ -406,7 +408,7 @@ fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
     }
     let changed_tree = s.tree.is_some();
     drop(s);
-    tell(&format!("build {} loaded; restarting into it by kexec, where it installs itself", short));
+    tell(&format!("build {short} loaded ({payload} bytes payload). Restarting into it by kexec."));
     // under the update lock: a write of the start-up watcher (a rollback, the persist arm) finishes first, then the
     // watcher is stopped, so no card write runs into the restart
     let lock = kexec::lock_for_start(sp).unwrap_or_else(|e| undo(&e, None));
@@ -426,7 +428,7 @@ fn start_kexec(sp: &Path, s: update::Staged, f: kexec::Flags) {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn start_kexec(sp: &Path, s: update::Staged, _: kexec::Flags) {
+fn start_kexec(sp: &Path, s: update::Staged) {
     let _ = update::kexec_clear(sp, "kexec runs on the unit only");
     die(&format!("kexec start of build {}: on the unit only", s.build));
 }
@@ -440,8 +442,13 @@ fn kexec_check(a: &Args) {
     let (h, img) = pkg::verify(&p, &keys).unwrap_or_else(|e| die(&e));
     let (k, rd, dt) = kexec::parts(img).unwrap_or_else(|e| die(&e));
     let key = keys.iter().find(|k| pkg::key_id(k) == h.manifest.key).unwrap_or_else(|| die("no key"));
-    let initrd = kexec::initrd(rd, &p, key, dt);
-    let cmd = kexec::cmdline(&kexec::running_cmdline(), kexec::Flags::default());
+    let flags = kexec::Flags::default();
+    let (source, initrd) = if kexec::announced_staged(&h.manifest) {
+        (kexec::Receive::Staged(flags), kexec::staged_initrd(rd, &p[..h.data_offset], key, dt))
+    } else {
+        (kexec::Receive::Legacy(flags), kexec::initrd(rd, &p, key, dt))
+    };
+    let cmd = source.cmdline(&kexec::running_cmdline());
     if kexec::loaded() {
         die("a kexec kernel is loaded already: left alone");
     }
@@ -459,7 +466,7 @@ fn kexec_check(a: &Args) {
         Err(_) => "running one unknown",
     };
     out!(
-        "build {}: kernel {} bytes, initramfs {} bytes loaded in {} ms ({}), unloaded again; announced 'trial kexec': {}; device tree {}",
+        "build {}: kernel {} bytes, initramfs {} bytes loaded in {} ms ({}), unloaded again; announced kexec receiver: {}; device tree {}",
         update::short(&h.manifest.build),
         k.len(),
         initrd.len(),
@@ -644,45 +651,7 @@ fn status(a: &Args) {
     if let Err(e) = c.check_layout() {
         out!("layout       {}", e);
     }
-    for r in [card::Region::Recovery, card::Region::Slot] {
-        match c.header(r) {
-            Ok(Some(h)) if a.flag("--quick") => {
-                let known = [&st.current, &st.previous]
-                    .iter()
-                    .filter_map(|e| e.as_ref())
-                    .find(|e| e.len == h.len as u64)
-                    .map_or("untracked".to_string(), |e| format!("same size as build {}", e.build));
-                out!(
-                    "{:<12} '{}', {} bytes, {}, loader id {}",
-                    if r == card::Region::Recovery { "recovery" } else { "rollback" },
-                    h.name,
-                    h.len,
-                    known,
-                    &hex(&h.id)[..16]
-                );
-            }
-            Ok(Some(h)) => {
-                let (b, sha) = c.read_image(r, h.len).unwrap_or_else(|e| die(&e.to_string()));
-                let ok = card::check_image(&b).map_or_else(|e| format!("DAMAGED: {}", e), |_| "loader id ok".into());
-                let known = [&st.current, &st.previous]
-                    .iter()
-                    .filter_map(|e| e.as_ref())
-                    .find(|e| e.sha256 == sha)
-                    .map_or("untracked".to_string(), |e| format!("build {}", e.build));
-                out!(
-                    "{:<12} '{}', {} bytes, {}, {}, sha256 {}",
-                    if r == card::Region::Recovery { "recovery" } else { "rollback" },
-                    h.name,
-                    h.len,
-                    known,
-                    ok,
-                    &hex(&sha)[..16]
-                );
-            }
-            Ok(None) => out!("{:<12} no image", if r == card::Region::Recovery { "recovery" } else { "rollback" }),
-            Err(e) => out!("{:?}: unreadable: {}", r, e),
-        }
-    }
+    oos_update::slot_status::show(&mut c, &st, a.flag("--quick"));
     match st.trial {
         Some(n) => out!("trial        on trial, {} start(s) without confirmation", n),
         None => out!("trial        none"),

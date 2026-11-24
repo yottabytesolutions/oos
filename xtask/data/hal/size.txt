@@ -7,7 +7,6 @@
 712 file hal/src/dho/selfcal.rs
 870 file hal/src/dho/tpu.rs
 451 file hal/src/model.rs
-509 file hal/src/update/mod.rs
 66 fn hal/src/dho/acq.rs configure_la
 65 fn hal/src/dho/afg.rs Wave::table
 250 fn hal/src/dho/boot/mod.rs Ctx::run
@@ -19,8 +18,6 @@
 72 fn hal/src/dho/selfcal.rs run_all_with
 64 fn hal/src/update/fdt.rs Fdt::to_bytes
 117 fn hal/src/update/first.rs first_install
-105 fn hal/src/update/mod.rs install
-63 fn hal/src/update/mod.rs kexec_stage
 65 fn hal/src/update/pkg.rs verify_header
 16 struct hal/src/dho/boot/sim.rs Unit
 54 struct hal/src/dho/lmx2582.rs Fields

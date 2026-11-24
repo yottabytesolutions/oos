@@ -92,7 +92,7 @@ fn pack_signs_the_staged_capability_and_still_offers_a_legacy_trial() {
     let (header, payload) = pkg::verify(&bytes, &[test_key()]).expect("older parser accepts extra signed lines");
     assert_eq!(payload, image());
     // The pre-bridge sender tests only the legacy capability. The parser preserves other signed lines.
-    assert!(kexec::announced(&header.manifest));
+    assert!(header.manifest.extra.iter().any(|(key, value)| key == kexec::LINE.0 && value == kexec::LINE.1));
     let line = b"\ntrial staged\n";
     let at = bytes[..header.data_offset].windows(line.len()).position(|part| part == line).expect("staged line");
     bytes[at + line.len() - 2] = b'D';

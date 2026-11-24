@@ -158,12 +158,20 @@ pub fn check_image(b: &[u8]) -> Result<ImageInfo, String> {
     Ok(info)
 }
 
+#[cfg(test)]
+pub(super) enum WriteFault {
+    PowerCut,
+    ReadBackMismatch,
+}
+
 /// The card (or, in tests, a file laid out like it).
 pub struct Card {
     storage: writer::Storage,
     /// tests: the next write of this region stops half way, as in a power cut
     #[cfg(test)]
     pub cut: Option<Region>,
+    #[cfg(test)]
+    pub(super) write_fault: Option<(Region, WriteFault)>,
 }
 
 impl Card {
@@ -181,6 +189,8 @@ impl Card {
             storage: writer::Storage::open(path, write, removable)?,
             #[cfg(test)]
             cut: None,
+            #[cfg(test)]
+            write_fault: None,
         })
     }
 
@@ -247,12 +257,14 @@ impl Card {
         if img.len() > r.max() {
             return Err(format!("{} bytes do not fit {}", img.len(), r.name()));
         }
-        let mut data = img.to_vec();
-        data.resize(img.len().div_ceil(SECTOR as usize) * SECTOR as usize, 0);
         let off = r.lba() * SECTOR;
         let area = if r == Region::Recovery { "recovery" } else { "backup" };
-        self.write_checked(area, off, &data)?;
-        Ok(())
+        if img.len().is_multiple_of(SECTOR as usize) {
+            return self.write_checked(area, off, img);
+        }
+        let mut data = img.to_vec();
+        data.resize(img.len().div_ceil(SECTOR as usize) * SECTOR as usize, 0);
+        self.write_checked(area, off, &data)
     }
 
     pub fn boot_magic(&mut self) -> std::io::Result<[u8; 4]> {

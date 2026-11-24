@@ -1,8 +1,9 @@
 // Copyright (C) 2026 Julian Decker
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-//! Growth ceiling for the kexec watchdog gap. Measured at 85 MB; raised to 90 MiB without a new measurement
-//! (docs/update.md). A watchdog reset during a kexec start means this ceiling is too high.
+//! Payload guard for the kexec watchdog gap. Slot staging removes the doubled image, so the card limits
+//! staged image growth. Legacy packages still carry the full image across the jump. Measured at 85 MB
+//! and raised to 90 MiB without a new measurement (docs/update.md).
 
 const MAX_PAYLOAD: usize = 90 << 20;
 

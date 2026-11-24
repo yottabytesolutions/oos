@@ -50,39 +50,52 @@ when the running image's old command line had a panic restart timeout. The inher
 reset a failed kexec start into the installed fallback. An image written to `recovery` and selected with
 `OOSK` that hangs in the kernel would start again at every power-on. So `install --execute` does not write it:
 
-1. All checks of the install, nothing written. The package must say `trial kexec` (a signed header line that
-   `oos-update pack` writes: its image knows how to finish such a start), and the image must bring the same device
-   tree (`second`) as the one the scope started with. Every start saves that tree to `/tmp/oos-booted.dt`
-   (`oos-update boot`, before anything writes `recovery`).
-2. The state names the build (`kexec <build>`). The boot selection stays as it is: `recovery` still holds the running
-   build.
-3. Its kernel and initramfs are loaded with `kexec_file_load`, or, when the image brings another device tree, with
-   `kexec_load` through kexec-tools (`/bin/kexec -c -i --dtb`, see "Another device tree" below). A second, uncompressed
-   archive in the initramfs carries the package (`/oos-kexec.oosupd`), the key that verified it (`/oos-kexec.key`:
-   the new build may trust other keys) and the device tree section the start runs with (`/oos-kexec.dt`); the command line gets `oos.kexec=install` and `initramfs_async=0`
-   (the archive is unpacked before any driver probes). Under the update lock the start-up watcher and oos-ui are
-   stopped. Then what writes to memory on its own stops: every network link goes down (the Ethernet controller has
-   no shutdown hook, its receive DMA would write packets into memory of the next kernel) and the display subsystem is
-   unbound (it lets go of the VOPs and their IOMMUs, which the next kernel cannot take over otherwise). `/oos` is
-   remounted read only, then the kernel starts.
-4. The new image's rcS: `oos-oneshot`, `/oos` mounted, then `oos-update boot` finds the word and the package and
-   runs the ordinary install from there: rollback slot, `recovery`, read back, `OOSK`. This start is no trial start:
-   its device tree and loader path are the old build's, and the display comes up from another state. The watcher
-   judges nothing in it. After a successful install it restarts the scope (a warm restart, as `reboot`) into the
-   first trial start, which confirms or rolls back as for any trial. It restarts only with the boot magic `OOSK`
-   (written by the install after the read-back, so the restart cannot drop to stock) and the installed build on
-   trial. It restarts once per build: the mark `kexec-restart` beside the state names the build, and the next
-   ordinary start removes it. Otherwise the panel asks for a power-cycle. If the install fails after it began
-   writing, the previous build is written back at once. A package that fails its
-   check stays at `/oos-kexec.oosupd` (RAM) until the next start, for a look at what damaged it.
+1. Verify the signature, image hash, loader limits, board and model, downgrade, card layout, and device tree.
+   Wait for confirmation if an update is still on trial.
+2. For a package with the signed `trial staged` line, reserve the rollback slot for the
+   candidate. Clear the previous rollback entry and save `staged <build> <sha256> <len>` before the write.
+   Write the original signed image bytes, sync and read them back while the UI and watchdog supervisor keep
+   running. The boot magic and `recovery` stay as they were. Record `kexec <build>` and the payload byte count
+   once staging succeeds.
+3. Load the kernel and initramfs with `kexec_file_load`, or use kexec-tools (`kexec_load`) when supplying a
+   changed tree. The initramfs gets a small archive with the signed header through its terminating empty line
+   (`/oos-kexec.hdr`), the verifying key (`/oos-kexec.key`) and the booted tree section (`/oos-kexec.dt`).
+   The command line gets `oos.kexec=install,staged` and `initramfs_async=0`. The archive unpacks before driver
+   probes. Under the update lock the watcher and oos-ui stop, the network links go down and the display unbinds
+   to stop their DMA. The updater syncs, attempts to remount `/oos` read only, takes over the watchdog and jumps.
+4. The candidate's rcS runs `oos-oneshot`, mounts `/oos` and runs `oos-update boot`. The receiver verifies
+   the header with its built-in release key, checks `trial staged` and the exact running build id, reads the
+   signed length from the slot and verifies its SHA-256. The ordinary install checks board, model and loader
+   again, saves the previous recovery image in the slot, then writes and verifies the candidate in `recovery`
+   and arms `OOSK`. After a successful install, it warm-restarts into the trial. It checks for `OOSK` and
+   the installed build on trial before restarting. The `kexec-restart` mark limits it to one restart per build
+   and is cleared on the next ordinary start. Otherwise the panel asks for a power-cycle.
 
-If the kernel hangs in step 4, the scope is power-cycled and the previous OOS build starts (stock in one-shot mode,
-as after every OOS start). The next OOS start finds the mark in the state and says that the update did not finish; so
-does a power cut during the install in step 4 (then stock starts, `KRNL` was set before the write). A failed load or
-start (step 3) puts everything back and starts oos-ui again.
+Staging gives up the older rollback image at step 2. `status` reports a staged candidate or no rollback image,
+and `rollback` refuses until a verified rollback image is available. A failed read-back aborts before loading.
+After an interrupted stage or a jump that never finishes, the next ordinary OOS start reports the unused
+candidate once and clears the pending state. The updater retains slot ownership so the next install can reuse
+it even if its header was torn.
+A failed load or returned jump restores the running services. A refused handoff leaves the image regions as
+they were at rcS and reports the reason. In **one-shot** mode the next power-on starts stock Android because
+`oos-oneshot` selected `KRNL`. In **persist** mode the watcher re-arms `OOSK` for a valid recovery image with
+no open trial, so the next power-on then starts that image. Until the re-arm succeeds, the next power-on starts
+stock Android. If the install fails after it begins writing `recovery`, it attempts to restore the previous
+image from the slot.
+
+A package with `trial kexec` alone uses the legacy kexec path. Its full signed package rides in
+`/oos-kexec.oosupd` in place of the header, and its command line gets `oos.kexec=install`. Both senders use the
+same watchdog payload guard. The legacy receiver still reads the passed key and can leave a refused package in
+RAM for inspection until restart. Older senders, including the bridge, use this path even for staged-capable
+packages. The staged receiver trusts only the release keys compiled into the receiving build and ignores the
+carried key. Ship a release that replaces the old key once over legacy kexec, signed with the old key and
+announcing only `trial kexec`. Later releases can use staged kexec with the new key. A package with neither
+capability takes the direct install path.
 
 What it does not cover:
 
+- A downgrade to the bridge receiver can discard new state fields when it saves a refusal. If the slot header
+  is also damaged, a subsequent install can refuse the slot for inspection.
 - A device tree change before 0.1.7: those builds have no kexec-tools and refuse an image with another tree for this
   path (`--new-dt` writes it directly, without a safety net before rcS). Install 0.1.7 first.
 - A kernel that runs from kexec but hangs before rcS from a cold start (the kexec start runs on warm hardware) starts
@@ -93,25 +106,6 @@ What it does not cover:
 - A start whose device tree is unknown (`/tmp/oos-booted.dt` missing: started before a build with this, or
   recovery unreadable at start-up) takes the tree from `recovery` only while the state names the running build
   there; otherwise power-cycle once or use `--new-dt`.
-
-### Staged receive (bridge release)
-
-The bridge receives `oos.kexec=install,staged`. The small initramfs archive carries the signed package header
-through its terminating empty line as `/oos-kexec.hdr` and the booted tree as `/oos-kexec.dt`. The unmodified
-signed image is read from the rollback slot, using the signed length bounded by the slot size.
-
-Before install, the receiver verifies the header with its built-in release key, requires the signed
-`trial staged` line and an exact match to its `/etc/oos-build`, and checks the slot bytes against the
-signed SHA-256. The ordinary install then applies the same board, model and loader checks and writes the
-previous image to the slot before writing the candidate to `recovery` on trial.
-
-A refused handoff leaves the card's image regions and boot selection as they were when the receiver ran.
-The panel notice and `oos-update status` last event give the reason. The receiver requests no restart.
-The previous image remains in `recovery`. Boot magic `KRNL` selects stock.
-
-`pack` includes both signed capabilities. The bridge and older senders still carry the full package in the
-initramfs using `oos.kexec=install`. Bridge verification is host-only. The legacy jump's watchdog margin
-still needs measurement on the unit before release.
 
 ### Another device tree
 
@@ -158,9 +152,10 @@ harmless tree property difference and `-i` succeeded, with the same kernel. The 
 
 Payload: kernel 27,159,040 bytes, staged initrd 57,611,256 bytes, merged DTB 94,618 bytes (about 85 MB total).
 
-The staged initrd is the compressed initramfs plus the whole package, so the package's kernel and initramfs count
-twice: one byte more in a binary costs about two bytes of payload after compression. `oos-update` refuses a kexec
-start above the ceiling in `hal/src/update/kexec/budget.rs`.
+The measured legacy payload carries the compressed initramfs and the whole package. The kernel and initramfs
+count twice on this path. The slot-based path carries the kernel and ramdisk once plus the small handoff
+archive. The image regions limit its image size. A changed-tree start also supplies the merged DTB. Both paths
+keep the ceiling in `hal/src/update/kexec/budget.rs` and log each start's payload size.
 
 Ceiling history:
 
@@ -181,7 +176,6 @@ Ceiling history:
   failed start), record the payload size here and lower the ceiling below it.
 - Stripping the release binaries would free 0.7 MB of payload but cost 16 % record rate at 1 ch 5 ns/div on the
   unit. Do not strip.
-- The lasting fix is to stop staging the package in the initrd.
 Kernel, initrd, DTB and purgatory segments were at `0x40000000`, `0x41aa0000`, `0x45192000` and `0x451aa000`.
 The working root cause is watchdog exhaustion during uncached hashing plus relocation, with MMU/D-cache off.
 The successful bypass and the pre-supervision history support this; purgatory's checks-on duration was not
@@ -242,20 +236,18 @@ The local pinned kernel sources were checked, rather than assuming the upstream 
 
 Margin rule: keep at least 5 s between new-kernel watchdog takeover and hardware expiry. Allowing 1 s for the
 last ping's age gives `1 + 12.1 + 5 = 18.1 s < 21.5 s` for the measured payload; the registration ping actually
-precedes the observed userspace open, so using open is conservative. Both loaders refuse staged payloads above
+precedes the observed userspace open, so using open is conservative. Both loaders refuse payloads above
 **90 MiB (94,371,840 bytes)** before loading: kernel file plus staged initrd plus the supplied DTB, if any.
-The staged initrd includes the trial package, so image growth also grows that embedded copy: the effective image
-headroom at the measured payload is about **4.7 MB** (2 MB at the earlier 85 MiB ceiling). Boundary/overflow tests pin this ceiling. Applying it to
-the same-tree file-load path is a conservative guard; the measurement above used the changed-tree path.
-It limits growth, but is not a timing proof: any kernel, initramfs, DTB, segment memory-size/padding, CPU-clock
+Legacy image headroom at the measured payload is about **4.7 MB** (2 MB at the earlier 85 MiB ceiling).
+The boundary and overflow tests pin the guard. The measurement above used the changed-tree path.
+Any kernel, initramfs, DTB, segment memory-size/padding, CPU-clock
 or shutdown-path change requires checking the 5 s margin on the unit before release, even below the ceiling. The raise to
 90 MiB was made without that measurement (ceiling history above). Do not raise it further without one. The explicit `--no-kexec` route skips the trial start: a hanging kernel restarts at
 every power-on until the card is pulled. It must not be treated as an equivalent safe fallback for a larger image.
 
-Acceptance still needs the fixed updater running first, the supervisor exercised under BusyBox ash, then one
-changed-tree and one same-tree signed-package install under the coordinator's unit procedure and owner go.
-Record the final ping-to-jump bound and watchdog registration/open times, successful install/trial confirmation and retained evidence. No such fixed-build unit
-confirmation is claimed yet. Bounded legacy evidence and both preparation/jump timestamps remain in place.
+Slot staging is host-tested. Unit acceptance needs same-tree and changed-tree staged installs, a cut during
+staging followed by a successful retry, and a measured watchdog margin of at least 5 s. The bridge's legacy
+jump margin also needs measurement.
 
 `oos-update kexec-check FILE` loads a package's kernel and initramfs and unloads them again, nothing written, no
 restart: it shows that the running kernel takes the image for a kexec start.
@@ -273,16 +265,18 @@ into a test file. Model comparison and `--any-model` retain their normal meaning
 | 122880 | 1 sector | `boot` magic `KRNL` / `OOSK` | yes (to `KRNL` before `recovery` is written, to `OOSK` after) |
 | 188416 | 64 MiB | `recovery`: running OOS image | yes |
 | 319488 | 32 MiB | `backup` start: stock boot copy (the loader's last fallback) | never |
-| 385024 | 64 MiB | `backup` + 32 MiB: **rollback slot**, the previous OOS image | yes |
+| 385024 | 64 MiB | `backup` + 32 MiB: **rollback slot**, a previous OOS image or a staged candidate | yes |
 | 516096 | 16 MiB | `backup` end: /oos data partition | never (state file through the file system) |
 
 The slot is all zero on an original card (the whole `backup` is, see `boot.md`). Before the first write the tool
-checks that the slot is either empty or holds an Android boot image; anything else stops the install. Every image
-write is padded to whole sectors, synced, the cached pages dropped, and the region read back from the card.
+checks that the slot is either empty or holds an Android boot image. An incomplete slot the updater already
+owns can also be overwritten. Every image write is padded to whole sectors and synced. The updater drops
+the cached pages and reads the region back from the card.
 
-The state is written before the `recovery` write, after a write test of the state file before any card write. The slot
-entry is cleared while the slot is written. A rollback changes the state only after its write, and "already holds" reads
-the card, so an interrupted rollback does not look finished.
+The state is written before the `recovery` write, after a write test of the state file before any card write. The
+rollback entry is cleared before a slot write. `slot.incomplete yes` records that the slot belongs to the updater
+even if a cut damages its header, until a verified rollback image is saved. A rollback changes the state after
+its write. The updater reads the card to verify "already holds", so an interrupted rollback can be retried.
 
 ## Package `.oosupd`
 
@@ -402,8 +396,9 @@ For host card-file tests, `install --card FILE --model NAME` supplies the simula
 The scope restarts into the new build by kexec, which installs itself (about a minute), then restarts once more into
 the trial start; System > Update shows the result. Do not restart by hand within the next minute: the trial start
 re-arms `OOSK` only after its confirmation, and a restart before that starts stock. If the screen stays dark after the
-kexec restart, power-cycle: the previous build starts if the install did not finish. A package without `trial kexec`, `--no-kexec` and `--new-dt`
-write the image directly: then power-cycle to start it on trial.
+kexec start, the next power-on follows the boot magic. `OOSK` starts the image in `recovery`, which is still the
+previous build if the updater never wrote `recovery`. `KRNL` starts stock Android. A package without a kexec
+capability, `--no-kexec` and `--new-dt` write the image directly. Power-cycle to start that image on trial.
 
 | command | |
 |---|---|
@@ -448,9 +443,10 @@ Logs: `/tmp/oos-update.log` (start count, watcher), `/tmp/oos-update.job` (GUI /
   190 seconds after the UI starts, with a warning that the stock system may start. The active-update lock still
   gates the action. The watcher completes the power gate after any kexec persist arm and skips the trial verdict.
 
-Install keeps the image in `recovery` as the rollback image only when it is confirmed or was put there by hand
-(`untracked-<sha>`); over an image still on trial the slot keeps the last good one. `--force` with the image already in
-`recovery` does not overwrite the rollback image.
+Install requests wait for the current trial to be confirmed. The receiver keeps the confirmed or hand-installed
+image in `recovery` as the rollback image (`untracked-<sha>` for a hand-installed image). Slot staging needs a
+different, valid image in `recovery` to keep for rollback. A forced rewrite of identical recovery bytes is
+available through direct install and keeps the existing rollback image.
 
 ## Boot mode
 

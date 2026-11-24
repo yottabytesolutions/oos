@@ -64,7 +64,7 @@ Done (branch `ci/t0092-pipeline` on main 441adcb6, not pushed):
 - xtask `step` command; ignore reason and flaky issue rule; privacy sign-off exemption.
 - pr.yml, pr-meta.yml, codex-review.yml, main.yml, image.yml (arm64 only, reusable), release.yml, canary.yml,
   stale.yml, labeler.yml; privacy.yml hardened and merge-queue aware; ci.yml removed.
-- deny.toml, cliff.toml, dependabot.yml, CODEOWNERS (@ichnograph on risk paths, replaces the placeholders),
+- deny.toml, cliff.toml, dependabot.yml, CODEOWNERS (maintainer review on risk paths),
   issue forms, one PR template (`pull_request_template.md`; the upper-case copy is removed), labels.yml,
   labeler.yml, ruleset, settings script.
 - privacy.yml no longer fetches or excludes upstream (hard fork); its tests follow.
@@ -111,7 +111,7 @@ The maintainer cannot approve his own PRs, so agents work under their own identi
 1. Organisation settings > Developer settings > GitHub Apps > New. Name `yottabyte-oos-agent`, no webhook.
    Repository permissions: Contents read/write, Pull requests read/write, Issues read/write, Workflows read/write,
    Checks, Statuses and Actions read, Metadata read. No Administration. Install on `oos` only.
-2. Do not give the app bypass in the ruleset. Its PRs pass the same checks; risk paths still need @ichnograph.
+2. Do not give the app bypass in the ruleset. Its PRs pass the same checks; risk paths still need maintainer approval.
 3. With the Workflows permission the app can push changes to `.github/workflows/`; they are CODEOWNERS paths and
    still need the maintainer's approval.
 4. Agents get an installation token per session (`gh` with a token from the app's private key, kept in the local

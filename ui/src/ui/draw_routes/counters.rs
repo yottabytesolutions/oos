@@ -62,7 +62,7 @@ fn perf_guard_pipeline_counters() {
         for tdiv in [1e-6, 10e-6] {
             let _scope = Scope::new();
             let counters = drawpipe::counters();
-            // Both sides reuse the same workers, buffers and maps; allocation placement must not decide the staged guard.
+            // Both sides reuse the same workers, buffers and maps; allocation placement must not decide the comparison.
             let build = std::cell::RefCell::new(Build::new(false, channels, tdiv, 0));
             let baseline = || {
                 counters.diagnostics_disabled.store(true, std::sync::atomic::Ordering::Relaxed);
@@ -82,14 +82,10 @@ fn perf_guard_pipeline_counters() {
             let build = build.borrow();
             println!("PIPELINE_COUNTERS channels={channels} tdiv={tdiv} frames={}", build.frames);
             pair.report("perf_guard_pipeline_counters");
-            // ADR 0031: temporary F0 staging headroom; restore 1.01 at F3 frame cutover.
+            // ADR 0031: compare the matched worker CPU cost at the cutover limit.
             let ratio = pair.best.1.as_secs_f64() / pair.best.0.as_secs_f64();
-            println!(
-                "COUNTERS_CPU_MATCHED ratio={ratio:.9} target=1.01 target_pass={} temporary_limit=1.02 temporary_pass={}",
-                ratio <= 1.01,
-                ratio <= 1.02
-            );
-            assert!(ratio <= 1.02, "{pair:?}");
+            println!("COUNTERS_CPU_MATCHED ratio={ratio:.9} limit=1.01");
+            assert!(ratio <= 1.01, "{pair:?}");
             pair.check_tail(1.515);
             assert_eq!(build.route.ui.batch_picture.frames as usize, build.frames);
             assert_eq!(build.route.ui.wfm_total - before, (2 * crate::perfguard::ROUNDS * 16 * build.frames) as u64);

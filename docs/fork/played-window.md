@@ -1,7 +1,7 @@
 # Played windows for live compression
 
 `acq.play_window = on` enables cropped playback of live-compressed Normal batches up to 1 M
-stored points per channel. The switch defaults to `off`. A singleton grant and a multi-slot arm
+stored points per channel. The switch defaults to `on`. A singleton grant and a multi-slot arm
 that fills fewer slots both use the admitted crop. Applied capture reduction and its full-rate
 reference use whole stored records with playback compression off.
 

@@ -8,12 +8,12 @@
 ## Context
 
 Regular upstream intake required a special ratchet rebaseline path and still failed the gate during integration 30,
-which was aborted. Sending changes back required porting them to upstream's different layout and rules. The owner chose
-a hard fork on 2026-11-17 so the tree could enforce one set of rules without intake exceptions.
+which was aborted. Sending changes back required porting them to upstream's different layout and rules. A hard
+fork allows the tree to enforce one set of rules without intake exceptions.
 
 ## Decision
 
-This tree is a hard fork of OOS by Julian Decker, at tag `hard-fork-20261117`. `yottabytesolutions/oos` is the source of
+This tree is a hard fork of upstream OOS at tag `hard-fork-20261117`. `yottabytesolutions/oos` is the source of
 truth. `main` is the only long-lived branch. Upstream is neither merged nor tracked. No pull requests go upstream.
 
 A single upstream commit can enter by cherry-pick. It keeps its author, carries `Cherry-picked-from: upstream <full

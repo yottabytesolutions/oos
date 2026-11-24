@@ -3,8 +3,8 @@
 The register plan compares intended software writes. Hardware effects inferred from fixture changes are
 **assumed**.
 
-Every merge of an upstream release into `dho804`. Policy and history: private RE notes `docs/oos-fork.md`, "Upstream
-sync". Nothing here touches the unit.
+Historical checklist for merges of upstream releases into `dho804`. [ADR 0001](../adr/0001-hard-fork.md)
+specifies the current upstream policy.
 
 1. Branch `sync/<version>` from `dho804`; `git merge upstream/main` (no rebase).
 2. Image builds are generic (ADR 0015). Keep shared defaults and dependency assembly in `boot/build-dev-image.sh`;
@@ -35,7 +35,7 @@ sync". Nothing here touches the unit.
    the selected output and receipts. Upstream's device frame-rate test still needs the unit.
 9. `tools/plan-matrix.sh` with the old and the new `oos-fpgad`, `diff`: the register sequences must not change unless
    the merge meant to.
-10. Record the sync in `docs/fork/unit-dho804.md` and private RE notes `docs/oos-fork.md`; fast-forward `dho804`.
+10. Record the sync in the [unit log](unit-dho804.md) before fast-forwarding `dho804`.
 
 ## What the guards protect
 

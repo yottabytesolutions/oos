@@ -4,7 +4,7 @@
 //! Hardware segmented memory with trigger timestamps. One arm records N
 //! frames into the frame ring, the FPGA re-arms itself between them; the host transfers nothing until the end. Then
 //! every segment is played on its own for its stamp (latch 0x40b0/0x40b4 and header words 5..7), and read in batches
-//! like the live frames. Unit 2026-11-13 (private RE notes docs/logs/oos_unitlab_20261113.md, B3): the latch counts
+//! like the live frames. Unit verification on 2026-11-13 showed that the latch counts
 //! 0.8 ns, the header of segment k carries the latch value of segment k - 1, and 0x4034 shows bits of 0x2320 while
 //! the FPGA still records.
 //!

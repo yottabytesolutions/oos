@@ -616,8 +616,6 @@ reply, snapshot and upload admission. The explicit loopback multicast responder 
   UI and xtask suites passed in debug and test-release profiles, including integration tests;
   final SCPI and IO regression reruns passed in both profiles. Earlier fmt, architecture, size
   and clippy failures were fixed. The ratchet retains reductions only for the changed SCPI file.
-  Evidence and the draft PR body are in ignored build output under `target/m15a-evidence/`
-  and `target/m15a-pr-body.md`; the coordinator must preserve these before retiring this worktree.
   Production LOC: UI 70,935 to 71,552 (+617). The aarch64 normal dependency closure is
   5 to 15 packages, including root/local crates; the all-target lockfile is 26 to 35 packages.
   The aarch64 release link passed: 6,872,992 to 7,073,464 bytes (+200,472, 2.9%).

@@ -6321,7 +6321,7 @@ impl Ui {
     /// Switches the trigger type and sets starting values that trigger on the demo signals.
     /// Force trigger (front-panel key, `:TFORce`): RUN when stopped; on the hardware one pulse of the FPGA's force bit
     /// (`Shared::force`), which releases Normal and Single without a trigger crossing. Roll and scan stream without a
-    /// trigger: nothing to force there. Ported from deckerjulian/oos#8, 3479a58 by wasimlhr.
+    /// trigger: nothing to force there. Ported from upstream PR #8, commit 3479a58.
     pub(crate) fn force_trigger(&mut self) {
         if self.m.run == RunState::Stop && self.m.trig_mode == TrigMode::Single {
             self.scpi_arm_operation();

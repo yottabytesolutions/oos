@@ -174,7 +174,7 @@ Builds for the unit: `--target aarch64-unknown-linux-musl` (static, rust-lld).
 ## Platform tuning
 
 Candidates from the kernel and driver study (2026-11-15, read-only: the fork, the stock DTB, stock dmesg, kallsyms and
-rc files), then measured on the unit the same day (unit repo: `docs/logs/oos_tuning_20261115.md` and `_phase1.txt`).
+rc files), followed by measurements on the unit the same day.
 A candidate becomes a decision only with its measurement. The architecture's budgets ([Performance
 budgets](README.md#performance-budgets)) are provisional until the open rows are measured.
 

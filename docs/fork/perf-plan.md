@@ -4,8 +4,8 @@ This is a historical performance plan. Acquisition, trigger and play register ef
 are **assumed**.
 
 Goal: the highest waveform rate per time base and channel count, and a responsive UI, on this DHO804. Inputs: the
-fork at 0.1.11 + fork features, `fpga.md` (private RE notes), specs 01-10, `upstream-audit.md` (P1). Static
-analysis plus host timings. Nothing here is measured on the unit yet.
+fork at 0.1.11, FPGA analysis, [offload specifications](specs/README.md) and the
+[upstream audit](upstream-audit.md). Evidence consists of static analysis and host timings. Nothing here is measured on the unit yet.
 
 ## Where the time goes today
 

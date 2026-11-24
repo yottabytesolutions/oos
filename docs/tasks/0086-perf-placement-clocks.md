@@ -15,9 +15,8 @@ changes or governor changes. Review tier: unit. Hardware behavior is not yet ver
 
 ## Plan
 
-On `sweep/p1b-clock-floor-followups`, verify clock writes by read-back, add a
-shared critical-trip guard, and switch between display and RUN GPU minima in
-the existing controller. Use virtual time for the host memory-hold retry test.
+Verify clock writes by read-back, add a shared critical-trip guard, and switch
+between display and RUN GPU minima in the existing controller. Use virtual time for the host memory-hold retry test.
 
 Reserved paths: `docs/tasks/0086-perf-placement-clocks.md`, `ui/src/placement.rs`,
 `ui/src/placement/`, `ui/src/http.rs` (accept-thread placement only),
@@ -30,9 +29,7 @@ Reserved paths: `docs/tasks/0086-perf-placement-clocks.md`, `ui/src/placement.rs
 `hal/tests/rootfs_safe_start.rs` (clock recovery test only),
 `ui/src/ui/host/tests/clocks.rs` (memory hold and non-hardware port tests),
 `docs/architecture/README.md` (Threads, Placement and DMA only),
-`docs/architecture/system.md`, `docs/spec/state-query.md`,
-`target/t0086-evidence/`, `target/p1b-clock-floor-followups/`, `target/COMMIT_MSG.txt`.
-The owner's explicit task assignment authorizes this claim on the supplied base.
+`docs/architecture/system.md` and `docs/spec/state-query.md`.
 
 1. Read P5/P8 and the 2026-11-15 unit evidence. Keep the GPU helper on cpu4,
    acquisition on cpu5, all existing governors and interrupt modes. Move web
@@ -168,193 +165,42 @@ done
 
 ## Status
 
-- 2026-11-24: clock-floor review follow-up on `sweep/p1b-clock-floor-followups`,
-  base `f8e62078`. Read-back confirms floor writes and failed applications retry
+- 2026-11-24: Clock writes are verified by read-back. Failed applications retry
   on the guard cadence. Critical trips protect both floors with 5 °C of headroom
-  and 5 °C re-arm hysteresis. The sole controller selects 400 MHz while drawing
-  in STOP or Demo and 600 MHz in hardware RUN. Host tests cover the unit's
-  thermal layout, frequency transitions, recovery and virtual-time memory hold.
-  Format and both debug clock suites passed, with 44 tests per suite. The
-  default and private-picture-counts release suites passed 2377 and 2384 tests
-  respectively, including the CPU goldens. Strict standalone Clippy stopped
-  in HAL and DSP on both targets (exit 101). The fast gate passed all 12 steps
-  and the ratcheted Clippy and perf steps passed (exit 0). Evidence is under
-  `target/p1b-clock-floor-followups/`. Hardware verification and cross-vendor
-  review remain pending.
+  and 5 °C re-arm hysteresis. The controller selects 400 MHz while drawing in
+  STOP or Demo and 600 MHz in hardware RUN. Host tests cover the unit's thermal
+  layout, frequency transitions, recovery and virtual-time memory hold. Formatting
+  and both debug clock suites passed (44 tests each). The default and
+  `private-picture-counts` release suites passed 2,377 and 2,384 tests, including
+  the CPU goldens. Strict Clippy stopped in HAL and DSP on both targets (exit 101).
+  The fast gate passed all 12 steps, and the ratcheted Clippy and perf steps
+  passed (exit 0). Hardware verification and cross-vendor review remain pending.
 
-- 2026-11-16: round 3 author handoff ready, uncommitted. P2 and P3.1-P3.6
-  addressed, including throttling repeated memory-hold restoration. Final debug
-  and release commands all exit 0: clocks 32, host 17, lifecycle 4 and supervisor
-  30 per profile, no failed or ignored tests. Clock/host groups overlap by three
-  host clock tests. Evidence: `target/t0086-evidence/round3-final-{debug,release}-{clocks,host,lifecycle}.{command,log,exit}`
-  and `round3-{debug,release}-supervisor.{command,log,exit}`. The intermediate
-  release host run also reproduced the failing-before memory-hold regression
-  (16 passed, one failed, exit 101); the final rerun above supersedes it.
-  Exact unchanged xtask `steps::clippy` passes, exit 0, six host/five ARM crates,
-  no new findings: hal 93 entries/177 total, dsp 115/262, core 3/46,
-  ui 246/666, fpgad 7/19, xtask 0/0. Final fast gate exits 0 and prints exactly
-  `partial gate passed (not done): 8 steps in 41 s`.
-  All eight steps pass: fmt, size, architecture, mutable-statics, unsafe,
-  method-exceptions, known-failures and agent-rules. Evidence:
-  `round3-final-{clippy,fast}.{command,log,exit}`, the unchanged clippy step
-  runner and complete logs under `target/check-logs/`. Relevant shell syntax
-  and final diff whitespace checks pass, exit 0. All 22 Rust/script fingerprints
-  in `round3-source-sha256.json` match the tested source. Task Status and
-  `target/COMMIT_MSG.txt` are updated. Intentional Git changes are task 0086
-  source, tests and docs. No commits, pushes, unit access, hook changes,
-  dependencies or ratchet edits. Keep this active worktree for renewed Claude
-  review, coordinator full/image gates and owner-released unit acceptance.
-  Hardware behavior remains unverified.
+- 2026-11-16: Failed floor restores retain their receipt and retry at one-second
+  intervals, with one log on first failure and one on recovery per device. STOP
+  and teardown still attempt restoration immediately. The memory-hold regression
+  went from 102 writes over 100 held frames to one. Supervisor recovery runs
+  after every exit. Invalid CPU/GPU switch values log a diagnostic and disable
+  the corresponding floor. Thermal transitions report the zones, readings or
+  errors. The web accept thread uses the A53 background placement. Debug and
+  release each passed 32 clock, 17 host, four lifecycle and 30 supervisor tests,
+  with three clock tests shared by the clock and host filters. Ratcheted Clippy
+  and all eight then-selected fast-gate steps passed (exit 0).
 
-- 2026-11-16: round 3 implementation complete; final validation running.
-  P2: failed restores retain their receipt, retry at one-second guard cadence
-  during polling and log only the first failure and eventual per-device success.
-  STOP and teardown still attempt restoration immediately. The recurring
-  memory-hold path uses the throttled STOP update, leaving forced restoration
-  to teardown and panic recovery. Its regression failed before the lifecycle
-  fix with 102 writes across 100 held frames and passes after with one.
-  Evidence: `target/t0086-evidence/round3-red-memory-hold.{command,log,exit}`
-  (exit 101 before). P3.1: supervisor
-  recovery runs after every exit, including clean exits with a pending receipt.
-  P3.2: CPU/GPU switches accept only on/off, default on when absent, and log
-  unknown values while disabling the corresponding floor. P3.3: thermal drop
-  logs identify each blocking zone and reading or error; re-arm logs both zones
-  and readings. P3.4: applied-floor logs use eprintln. P3.5: the headless-host
-  test uses a fixture rather than constructing a system controller and asserts
-  clocks are absent. P3.6: remove HTTP from the SCHED_OTHER listener row.
-  Failing-before evidence: `round3-red-review` exits 101 with four regressions
-  (retry cadence, switch acceptance, switch diagnostics, thermal diagnostics);
-  `round3-red-supervisor` exits 101 on clean-exit recovery. Complete commands,
-  logs and exits are under `target/t0086-evidence/`. The existing applied-log
-  test covers P3.4; P3.5 changes the test construction itself and P3.6 is docs.
-  Debug clocks (31), host (16) and supervisor (30) all pass, exit 0. No unit
-  access, commits, dependencies or ratchet edits. Renewed Claude review and
-  integrated full/image gates remain pending.
+- 2026-11-16: The clock adapter records previous minimums in an atomic tmpfs
+  receipt before a raise. Startup and the supervisor recover them, including
+  after process death. Recovery clears the receipt only after verified restore.
+  An invalid receipt or failed startup recovery disables new floors. The receipt
+  uses at most two entries (50 bytes). The guard samples the lowest passive trip
+  of each named CPU/GPU zone once per second, drops both minima 5 °C below a
+  trip, and re-arms below a further 5 °C of hysteresis. Missing or unreadable
+  zones or trips inhibit floors. The panic hook uses a nonblocking lock attempt.
+  Debug and release each passed 72 focused tests, including 30 supervisor tests.
+  Ratcheted Clippy and all eight then-selected fast-gate steps passed (exit 0, 36 s for fast).
 
-- 2026-11-16: round 3 active on the existing accepted claim and uncommitted
-  round-2 work. Address Claude round-2 P2 and P3.1-P3.6; run touched debug
-  and release tests, exact clippy and the fast gate. No commits, ratchet
-  changes or unit access. Renewed review and integrated gates remain pending.
-
-- 2026-11-16: round 2 author handoff ready, uncommitted, on
-  `t0086-perf-placement-clocks`. B1, S1, S2 and O1-O3 are addressed below.
-  Final debug and release focused tests all exit 0: clocks 26, placement 4,
-  switches 3, lifecycle 4, shutdown 5; the complete rootfs supervisor suite
-  passes 30 in each profile. Total 72 tests per profile, none failed or ignored.
-  Commands are preserved in `target/t0086-evidence/round2-*.command`; complete
-  logs and actual exits in matching `.log` and `.exit` files. The final debug
-  runner is `round2-final-checks.py`; `round2-tests.py` covers both profiles,
-  with release clocks/placement refreshed by `round2-release-final.py` after
-  the final source change. Source identity: `round2-source-sha256.json`, all
-  21 Rust/script fingerprints verified unchanged after testing.
-  Exact unchanged xtask `steps::clippy` passes, exit 0, with counts unchanged:
-  hal 93 entries/177 total, dsp 115/262, core 3/46, ui 246/666, fpgad 7/19,
-  xtask 0/0. No ratchet edits. Evidence:
-  `target/t0086-evidence/round2-clippy-final.{command,log,exit}`, unchanged
-  `clippy-step.py` runner, and complete logs under `target/check-logs/`.
-  Final `cargo xtask check --fast` exits 0 and prints exactly
-  `partial gate passed (not done): 8 steps in 36 s`. All selected steps pass:
-  fmt, size, architecture, mutable-statics, unsafe, method-exceptions,
-  known-failures and agent-rules. Evidence:
-  `target/t0086-evidence/round2-fast-final.{command,log,exit}`. The initial
-  failed fast-gate steps are recorded in the preceding implementation entry.
-  Relevant shell syntax and final `git diff --check` pass, exit 0.
-  `target/COMMIT_MSG.txt` is updated. All build output uses this worktree's
-  `target`; no commits, pushes, hook changes, dependencies or hardware access.
-  Intentional remaining Git changes are task 0086 source, tests and docs.
-  Keep the worktree for coordinator-arranged renewed Claude unit review,
-  integrated full/image gates and owner-released unit acceptance. Thermal
-  behavior, live GPU cooling maps, clock read-backs and web/upload latency
-  remain explicitly unverified on hardware. Task status remains active.
-
-- 2026-11-16: round 2 implementation complete, final validation running.
-  B1: atomic tmpfs receipt precedes every raise; startup restores and logs the
-  true saved minima before reading a new baseline, regardless of opt-outs.
-  Abnormal supervisor exits restore even without restart. Only verified
-  restoration clears receipts; invalid or failed startup recovery retains the
-  receipt and disables new floors. Recovery tests simulate a death without
-  destructors, retry failures, corrupt receipts and staging-write failure.
-  Staging uses exclusive creation after unlinking stale entries, with a
-  symlink regression. The generated receipt has at most two entries (50 bytes).
-  S1: one-second guard samples named CPU/GPU zones against each lowest passive
-  trip minus 5 C, drops both minima, logs transitions and re-arms below another
-  5 C of hysteresis. Missing trips/zones or unreadable temperatures inhibit
-  floors. Lifecycle polling continues on rejected preparations. Hardware
-  temperatures and live GPU cooling bindings remain unverified; the 10-minute
-  RUN check now defines an abort temperature and the required live DT capture.
-  S2: setup B page and 5 MiB rejected-upload response checks require p95 <= 1 s,
-  maximum <= 2 s and no timeouts. O1: panic hook uses try_lock, with a locked
-  panic/death recovery test. O2: each applied IRQ/CPU pair and empty plan logs
-  at startup, with captured-output checks. O3: absent floors are filtered at
-  construction and logged once, with a repeated-RUN captured-output check.
-  The supervisor regression lives in `hal/tests/rootfs_safe_start.rs`; no
-  edits remain in task 0055's reserved `hal/tests/safe_start/mod.rs`.
-  The initial fast gate exited 1: size, architecture, mutable-statics, unsafe,
-  method-exceptions and known-failures all rejected a redundant test #[path]
-  attribute. Removing it restored default module discovery. That failed run
-  is preserved as `target/t0086-evidence/round2-fast-initial.{log,exit}`.
-
-- 2026-11-16: round 2 review fixes in progress, same accepted branch and
-  uncommitted claim. B1: atomic tmpfs recovery journal before writes, verified
-  startup and abnormal-exit recovery. S1: named SoC thermal zones, passive-trip
-  margin and hysteresis. S2: explicit web/upload latency acceptance. O1-O3:
-  nonblocking panic hook, successful/empty IRQ logging, absent-floor filtering.
-  Re-run debug/release tests, exact clippy and fast gate. No commits or hardware
-  access; renewed independent review and integration/unit gates remain pending.
-
-- 2026-11-16: author handoff ready, uncommitted. Final exact `steps::clippy`
-  passes, exit 0, across six host and five ARM crates, with zero new findings.
-  Printed counts: hal 93 entries/177 total, dsp 115/262, core 3/46,
-  ui 246/666, fpgad 7/19, xtask 0/0. The runner compiles unchanged xtask
-  modules and calls the actual gate function; no substitute lint flags or
-  ratchet changes. Evidence: `target/t0086-evidence/clippy-step-final.{log,exit}`,
-  `clippy-step.py`, plus complete command logs under `target/check-logs/`.
-  Final `cargo xtask check --fast` passes, exit 0, printing exactly
-  `partial gate passed (not done): 8 steps in 62 s`. All eight selected
-  steps pass: fmt, size, architecture, mutable-statics, unsafe,
-  method-exceptions, known-failures and agent-rules. Evidence:
-  `target/t0086-evidence/fast-gate.{log,exit}`. `git diff --check` passes;
-  the 15 changed Rust files are fingerprinted in `source-sha256.json`.
-  `target/COMMIT_MSG.txt` has one plain-subject section and `Task: 0086`.
-  Intentional remaining Git changes are this task's source/tests and docs.
-  No commits, pushes, hardware access, dependencies, hook changes or ratchet
-  edits. Keep this worktree for coordinator-arranged Claude unit review,
-  the full integration gate and the exact unit checks above. Hardware
-  performance, restoration and thermal behavior are not yet verified.
-
-- 2026-11-16: focused tests pass in debug and release, exit 0 for every
-  command: final `clocks` filter 16 passed (14 controller/adapter tests plus
-  two UI host tests); `placement::` three; `sysconf::switches::` three;
-  `ui::lifecycle::` four; `system::shutdown::` five. Total 31 per profile,
-  no failed or ignored tests. Commands use `cargo test --locked -p oos-ui
-  --bin oos-ui FILTER -- --test-threads=1`, adding `--release` for release.
-  Evidence: `target/t0086-evidence/{debug,release}-clocks-final.{log,exit}`
-  and `{debug,release}-{placement,switches,lifecycle,shutdown}.{log,exit}`.
-  The earlier clock-only logs cover a smaller suite and are superseded by
-  `clocks-final`. Only two explanatory comments changed after the final
-  behavioral tests; clippy and the fast gate cover the final source.
-
-- 2026-11-16: expanded clock coverage to subprocess panic-hook restoration
-  without unwinding, structured once-only success logs, read-back mismatch,
-  unavailable restoration values and the memory watchdog early-return path.
-  Headless/demo RUN cannot request hardware floors. Signal cleanup follows
-  the existing orderly device teardown. No hardware, commits or ratchet edits.
-
-- 2026-11-16: implemented the platform clock port, accepted-state RUN/STOP
-  wiring, memory-hold/teardown/guard cleanup and pre-abort panic hook. Initial
-  clock tests pass: 8 passed, exit 0 (`debug-clocks.log`, subsequently replaced
-  by expanded final-suite output). Initial fast gate failed, exit 1:
-  `gate FAILED in 89 s: size`, reporting `http.rs` 1264 -> 1272. Evidence:
-  `target/t0086-evidence/fast-initial.{log,exit}`. Extracted listener startup
-  into its own module rather than changing a ratchet. Final checks running.
-  CPU0 as the busy deposit core is an assumption from the crowded baseline,
-  not a per-worker measurement; owner clarification requested. The IRQ plan
-  takes an explicit busiest-core argument and excludes it; startup currently
-  supplies cpu0, selecting XDMA cpu3 and eth0 cpu2. Actual deposit affinity is
-  the whole A53 mask, so placement does not guarantee exclusive worker cores.
-
-- 2026-11-16: accepted owner assignment, branch `t0086-perf-placement-clocks`,
-  base `8fafc719`, initially clean. Plan recorded before code. Read repository
-  delivery, architecture and unit tuning evidence. This oscilloscope task is
-  outside the OptiSource-only model. Cross-vendor unit review, coordinator full
-  gate and hardware checks remain pending; no hardware access authorized here.
+- 2026-11-16: The IRQ plan takes an explicit busiest-core argument. Startup
+  supplies cpu0, selecting cpu3 for XDMA and cpu2 for eth0. That argument is
+  based on the baseline workload. Deposit workers can run on the whole A53
+  mask. The focused debug and release suites each passed 31 tests. Ratcheted
+  Clippy and all eight then-selected fast-gate steps passed (exit 0, 62 s for fast).
+  Live IRQ and GPU cooling-device mappings remain to be verified.

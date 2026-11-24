@@ -41,7 +41,7 @@ the mode is average.
 ### 1.3 Memory layout
 
 The averaging memory needs twice the bursts of a normal segment plus a fixed margin. Series parameters for
-DHO800/900 (`HDO900Conf`, read with `docs/re/libscope/scripts/series_params.py` in the analysis repo):
+DHO800/900 (`HDO900Conf` in the stock driver):
 10 points per DDR burst, 16,777,216 bursts SPU memory, average segment burst 32, average base 5,242,880 bursts.
 
 Segment size for `n = points * ratio`:
@@ -226,9 +226,6 @@ counts above 1024.
 
 ## 8. Unit results 2026-11-13 (B1)
 
-Unit log: private RE notes `docs/logs/oos_unitlab_20261113.md` (B1 in rounds 1 and 4), dumps in
-`docs/logs/unitlab_b1/`.
-
 | finding | cause | state |
 |---|---|---|
 | averaged frames all zero above 62.5 MSa/s | 0x1004 bit 2 ("AvgSinc") clear. With bit 2 set every rate averages (312.5 MSa/s: 1.08 -> 0.46 mV at N = 16; 1.25 GSa/s 100k: 3.24 -> 1.2 mV); without it every rate above 62.5 MSa/s is zero (156, 312, 625, 1250 tested) | fixed: `acq::configure_la` sets bit 2 in average mode at every rate |
@@ -243,7 +240,7 @@ running at fast time bases where OOS sets it to pass-through (`scu::passthrough`
 selects whether the averaged data bypasses the sinc chain; stock reaches the play output through the sinc chain with
 bit 2 clear, OOS with the chain bypassed needs bit 2 set.
 
-Dump analysis (62.5 MSa/s, 1 channel, 10k points, N = 2 and 16; `avg.debug_raw` of the b1-raw build, since removed):
+Dump analysis (62.5 MSa/s, 1 channel, 10k points, N = 2 and 16; `avg.debug_raw` from a diagnostic build):
 
 - `seq` (0x1004 bit 3 cleared, fields in order): even and odd words both carry the signal; no field with low bits.
 - Both debug reads show an even/odd offset between neighbouring words: a steady -180 codes (16-bit scale) in `seq`,

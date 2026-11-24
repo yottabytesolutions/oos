@@ -318,11 +318,10 @@ The design called for salvaging the frames-per-picture metric, quantile ring, pe
 and idle-picture test. The repository snapshot establishes the implementation state. It does not
 establish the pull request's external status.
 
-## Owner decisions
+## Frame pipeline decisions
 
-**Partly implemented.** The owner approved source back-pressure, a three-deposit
-minimum-persistence cap, the replacement of #186, and Peak, pairs and zoom on deposits for
-eligible cases. Peak placement uses column spans where applicable. Ordinary Peak words are
-decoded as samples. Capture-side reduced Peak assumes consecutive minimum and maximum words.
+**Partly implemented.** The design uses source back-pressure, a three-deposit
+minimum-persistence cap, and deposits for eligible Peak, pairs and zoom views. Peak placement
+uses column spans where applicable. Ordinary Peak words are decoded as samples. Capture-side reduced Peak assumes consecutive minimum and maximum words.
 That word form has not been verified on hardware. Acceptance covers measured sustainable rates
 from the source. The 100 kHz direction carries no acceptance requirement.

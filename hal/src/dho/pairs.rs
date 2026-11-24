@@ -3,8 +3,7 @@
 //! What a frame read with the FPGA display compression holds (0x1170, `seq::Settings::compress` = k), and a check of
 //! a compressed read against a raw read of the same record (fork, docs/fork/compress.md).
 //!
-//! Unit evidence (unitlab round 2, 2026-11-13; private RE notes docs/logs/oos_unitlab_20261113.md) and the netlist
-//! simulation (private RE notes docs/re/netlist/blocks/datapath.md, "Read-out compression 0x1170"): pair i holds the
+//! Unit evidence (2026-11-13) and netlist simulation of 0x1170 agree: pair i holds the
 //! minimum and the maximum of the stored samples [2k i, 2k (i + 1)) from the first sample of the read window, **in the
 //! order they first occur** (the maximum first when it comes first). 100 % of the points for k = 3, 4, 15, 16, 64,
 //! 128, one and two channels. `check` still tries the other layouts, so a read that does not fit says which does.

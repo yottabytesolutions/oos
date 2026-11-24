@@ -3,7 +3,7 @@
 - Number: 0031
 - Category: code
 - State: target: M3-M12, F0-F7 and performance-gate follow-up in docs/architecture/migration.md#adr-baseline-follow-ups
-- Date: 2026-11-18
+- Date: 2026-11-24
 
 ## Context
 
@@ -27,38 +27,26 @@ immutable after read and shared by Arc; no sample copy under a lock. Lock-free p
 require a unit contention counter. Every budget has a number in architecture/README.md, a :SYSTem:STATe? counter and
 an assertion. Ratio-based host perf guards are required CI; unit budgets are required release evidence.
 
-Check: counting allocator tests, `perf` and unit release round; review. Production sleep ratchet and required host perf
+Check through counting allocator tests, `perf`, review and the unit release round. Production sleep ratchet and required host perf
 CI remain follow-ups.
 
-### Temporary F0 staging budget, 2026-11-19
+### Pipeline counter budget
 
-The owner explicitly authorized recoverable overhead before frame cutover: "Widen allowed overhead if this
-is the process before the cutover" and "add overhead only to recoup it later". In the private proposal,
-only `perf_guard_pipeline_counters` changes best elapsed from 1.01 to 1.02 until F3 frame cutover.
-CPU p99 remains 1.515, not 1.53. The six production-plan cases (1/2/4 channels at 1 and 10 us/div), 101
-alternating rounds, 16 pictures per sample, eight warmups, actual picture/record assertions and deterministic
-pixel/pacing equivalence remain. No sampler, instrumentation, profile, other guard or unit budget changes.
+The original host guard capped the best elapsed ratio at 1.01 for diagnostics on versus off.
+F0 staging raised it to 1.02 after repeated runs of the same binary reported ratios of
+0.99706, 1.01651 and 1.01684. The 1.02 limit left about 0.316 percentage points above the
+highest observation. The CPU p99 limit was 1.515 throughout.
 
-Repeated unchanged-binary observations include ratios 0.99706 and 1.01651; official attempt3 is 1.01684.
-The separate counter-owner candidate yields 1.01039 and 1.01130 but does not establish causal improvement.
-Two percent leaves about 0.316 percentage points above the official observation. A tighter 1.017 or 1.018
-would closely fit this small selected sample. Two percent is a bounded engineering staging allowance,
-not a confidence bound, noise correction or proof of no regression. Best-of-101 can hide sustained cost;
-CPU p99 is a separate work-tail check and cannot prove wall-latency or unit throughput. Unreached cases
-remain unverified. A >2 % result still fails; do not retry until green or widen again from these data.
+The current guard compares matched CPU time. It alternates diagnostics on and off after each
+picture and sums 16 pictures per side in each of 101 rounds. It selects the window spanning
+two thirds of those rounds with the lowest combined CPU time. Both sides reuse the same
+workers and buffers and wait for the same batch completion. This measures the CPU work of
+the caller, coordinator and workers with less sensitivity to host descheduling. At frame cutover,
+the matched CPU ratio returns to a cap of 1.01. The CPU p99 cap stays at 1.515.
 
-Restoration owner: task 0013's F3 implementer and accepting coordinator. Before F3 frame cutover acceptance,
-restore 1.01 in the Rust assertion, architecture row and contract fixtures. Run the six cases with
-CPU p99 <= 1.515 and retain the paired observations, picture and record counts. Account for the recovered
-budget in the task. Existing cross-vendor review, integrated gate, matched DHO804 A/B, M12 acceptance
-and route-deletion holds remain.
-
-The acquisition sweep alternates reference and candidate after each picture and sums 16 pictures
-per side in each round. It compares CPU in the lowest combined-cost window spanning two thirds of
-the matched rounds. Its limits remain
-1.02 for staging and 1.01 at cutover. Both sides include the coordinator, workers and caller, and wait
-for the same batch completion. This isolates the work from host descheduling. The original elapsed
-throughput and latency questions are part of unit acceptance.
+The six workloads use one, two and four channels at 1 and 10 µs/div. Keep eight warmups,
+picture and record counts, and deterministic pixel and pacing equivalence checks. Release
+acceptance measures elapsed throughput and latency on the unit.
 
 ## Alternatives
 

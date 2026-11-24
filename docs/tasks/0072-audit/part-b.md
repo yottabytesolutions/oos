@@ -1,9 +1,7 @@
 # Audit part b: second check
 
-Date: 2026-11-16. Input: `target/audit-b.md`. Each S1/S2 finding was checked against the cited doc line, the code,
-its tests and the unit logs. Extra evidence used for the serial and AUX findings: the netlist-simulation record of the
-FPGA in the private private RE notes repo (`docs/fpga.md`, sections "Serial trigger" and "AUX OUT"), which the fork
-pages were written from.
+Each S1/S2 finding was checked on 2026-11-16 against the cited documentation, the code, its tests
+and unit evidence. FPGA netlist simulation also informed the serial trigger and AUX OUT findings.
 
 ## Verdicts
 

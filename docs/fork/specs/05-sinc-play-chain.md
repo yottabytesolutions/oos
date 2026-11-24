@@ -22,8 +22,7 @@ to 0x1144 = bit 28 (write strobe) | unit << 24 | phase << 16 | coefficient [15:0
 and increments modulo f (unit 3: starts at 0). Coefficient index = row x f + phase; the table stores the full
 symmetric response (index i >= 8f reads 16f - 1 - i).
 
-Reference table (do not copy into the fork):
-`/path/to/analysis-repo/docs/re/libscope/tables/SinCoef.csv`.
+Use the stock coefficient table for analysis only.
 
 When:
 
@@ -54,7 +53,7 @@ If ever needed (e.g. a display-only fast path at 1..5 ns/div):
 
 - Write-sequence test of `load(0, 4, ..)`: 16 row selects, 64 coefficient writes, field layout.
 - Generator test: DC gain f, symmetry, passband ripple.
-- Outside the fork (analysis repo): compare the generated responses with the stock table numerically.
+- Compare the generated responses with the stock table numerically.
 
 ## 5. Hardware test checklist
 

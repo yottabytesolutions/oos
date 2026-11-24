@@ -87,7 +87,7 @@ The generic boot and kernel change are not yet verified on hardware.
    the password and the host key are unchanged after a power cycle and after an update; a key imported from a stick
    and one added with `ssh-copy-id` both log in; Password login > Off refused with no key, then keys only works; SSH >
    Off closes port 22 and ends sessions.
-7. Fallback path (risk 2 in `docs/oos-review.md`): unchanged by this work, still open.
+7. Fallback path remains open.
 
 ## Transfer efficiency (spec 10): verification on hardware
 
@@ -216,8 +216,7 @@ for the first 32 batches after every clear. Calibrator square on CH1 unless stat
 
 **Verified on the unit (DHO804, 2026-11-13)** for the completed observations in the dated rounds below.
 
-Build 20261113-170512 (dho804 d1f76c6, default DTB). Full numbers, per-run tables and method: private RE notes
-`docs/logs/oos_unitlab_20261113.md`. Source: the 1 kHz probe-comp square, Auto, rising edge, so at most 1000
+Build 20261113-170512 (dho804 d1f76c6, default DTB). Source: the 1 kHz probe-comp square, Auto, rising edge, so at most 1000
 triggers/s; rates are the fraction of triggers captured. Install: kexec install, then a software `reboot` was the trial
 start and confirmed itself; a warm reboot counts.
 
@@ -249,8 +248,6 @@ Found on the way:
 
 ### Round 2 on dho804 47223f9 (build 20261113-181907)
 
-Details: private RE notes `docs/logs/oos_unitlab_20261113.md`, "Round 2".
-
 | Item | Verdict | Evidence |
 |---|---|---|
 | Live compression | keep opt-in | `compress-check` FAILs for every k, but every read matches a min/max pair per 2k samples **in time order** (min first only when the minimum comes first): k 3..128, 1 and 2 channels, 100 %. k 256 at 1 M: C2H read of 7824 bytes times out (twice). 2 ch 10 us/div 341 -> 409 frames/s, drops 18 -> 0; A53 load ~92 % -> ~20 %; 1 ch 1 us and 100 us/div 7-9 % fewer frames. STOP record raw, measurements equal |
@@ -265,7 +262,7 @@ on CH1 and CH2, DVM with a DC reference or a signal on CH3/CH4.
 
 ### Round 3 on dho804 69b3d43 (build 20261113-184600)
 
-Details: private RE notes `docs/logs/oos_unitlab_20261113.md`, "Round 3". `oos-irq-place` fix confirmed (`irq 78 ->
+The `oos-irq-place` fix was confirmed (`irq 78 ->
 cpus 0xf`); rates equal round 1.
 
 | Item | Verdict | Evidence |
@@ -278,8 +275,6 @@ cpus 0xf`); rates equal round 1.
 
 ### Round 4 (builds 20261113-184600 and -190733): image defaults, B3, B1
 
-Details and the raw dumps: private RE notes `docs/logs/oos_unitlab_20261113.md` "Round 4", `docs/logs/unitlab_b1/`.
-
 | Item | Verdict | Evidence |
 |---|---|---|
 | Image defaults | pass | without `/oos/system.conf`: batch, placement, prearm, MSI all in force; the fresh file carries them |
@@ -289,8 +284,6 @@ Details and the raw dumps: private RE notes `docs/logs/oos_unitlab_20261113.md` 
 | B1 raw fields | no hidden low field | `seq`: odd word = next sample; `wide`: words from 10240 on are a quieter region (51 vs 125 codes), not a repeat |
 
 ### Round 5 on dho804 da8e2a0 (build 20261113-193501)
-
-Details: private RE notes `docs/logs/oos_unitlab_20261113.md` "Round 5".
 
 | Item | Verdict | Evidence |
 |---|---|---|
@@ -304,8 +297,6 @@ Details: private RE notes `docs/logs/oos_unitlab_20261113.md` "Round 5".
 
 ### Rounds 6 and 7 (builds 20261113-193501 and -201611)
 
-Details: private RE notes `docs/logs/oos_unitlab_20261113.md` "Round 6", "Round 7".
-
 | Item | Verdict | Evidence |
 |---|---|---|
 | Core offsets, open input | as modelled | 62.5 MSa/s Normal even-odd +-11..25 codes, sign changing per frame; HW 16 fixed -15..-19. 1.25 GSa/s Normal: one of 8 phases +185 codes, moving; HW 16: p2 and p6 +67..87 fixed |
@@ -314,8 +305,6 @@ Details: private RE notes `docs/logs/oos_unitlab_20261113.md` "Round 6", "Round 
 | IPv6 | pass, address not stable | SLAAC global + link-local, `onlink6` = the RA prefix, web/SCPI/SSH over IPv6 from the LAN, mDNS AAAA. Both addresses change at every boot (stable-privacy secret not kept) |
 
 ### Round 8 (builds 20261113-204100 and -210854, dho804 8453168 and 4fc44f8)
-
-Details: private RE notes `docs/logs/oos_unitlab_20261113.md` "Round 8".
 
 | Item | Verdict | Evidence |
 |---|---|---|

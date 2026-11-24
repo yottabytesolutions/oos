@@ -4,10 +4,9 @@ One file per feature. Each file: what the stock firmware does (register order, v
 as references), what OOS does today (file:line), the proposed change, a host test plan, a hardware checklist, and
 confidence with open questions.
 
-Sources: static analysis of the stock driver library `libscope-auklet.so` (firmware 00.01.05.00.01) in the private
-analysis repo (`/path/to/analysis-repo/docs/re/libscope/`), the OOS sources and protocol docs of this
-fork, and `lspci -vvv` of the unit. Nothing in these specs ran on hardware. No stock code or coefficient table is copied
-here; tables are referenced by their location in the analysis repo.
+Sources include static analysis of the stock driver library `libscope-auklet.so` (firmware 00.01.05.00.01),
+OOS sources and protocol docs, and `lspci -vvv` output from the unit. These specifications record the proposed
+work. Dated results identify subsequent hardware verification. Stock code and coefficient tables stay out of the fork.
 
 ## Ranked list
 

@@ -46,7 +46,7 @@ Reading:
 - The two cores of the 62.5 and 312.5 MSa/s paths (cores 0 and 1 of the register model) differ by 0.7 to 1
   step. The far core is not one of them. It shows only where all eight cores are used.
 - The core's register index n is not known: the model's core numbers are not mapped to RT8847 registers
-  (rt8847.md open item 8). The step procedure below finds it.
+  for ordinary acquisition. The step procedure below finds it.
 - The offsets OOS writes for CH3 alone are the stored mode-2 offsets of the Rigol file (`seq::State::configure`
   writes them on the change to mode 2): one signed value per core, eight in all, in ADC steps. A copy of the unit's
   file from November and one from August differ in most of the eight values, so the cores were recalibrated since.
@@ -172,8 +172,6 @@ The core offsets have two components:
   -1.9 / -4.7). Core 5 scatters too, about +-3 around its bias. The trims follow it: core 0 25 -> 30 -> 26, core 2
   38 -> 33 -> 34 over three boots. No stored value covers this part. It is also why the stock calibration's offsets
   do not match this unit.
-
-Round 17 table: private RE notes docs/logs/oos_unitlab_20261113.md, "Round 17".
 
 So the trim runs every session, and the file only takes a result where some core moved by more than 4 register
 steps (`SAVE_MIN_STEPS`). At about 0.6 ADC step per register step, the 2 to 6 step scatter is 3 to 10 register

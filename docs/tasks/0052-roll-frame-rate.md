@@ -184,8 +184,7 @@ section. No full gate, commits or hardware access in this sandbox follow-up.
   P2 span labels use the real Nyquist range; P3 full-frame Bandwidth branch is
   documented as necessary for equivalent-time phase coverage.
   Final focused tests exit 0: 32 passed in debug and 32 in release, with 2 manual
-  Eye checks ignored per profile. Commands and full logs:
-  `target/task0052-r1/review.md`, `target/task0052-r1/final-*-{debug,release}.log`.
+  Eye checks ignored per profile.
   Correctness pins 1 MHz at 1 MHz in a deep record, a 115200 Bd UART eye at
   1 ms/div, five whole 50 Hz cycles and an early inrush peak, and 5000-bin
   Bandwidth from the full raw frame. In 36 measured main steps per profile
@@ -229,8 +228,7 @@ section. No full gate, commits or hardware access in this sandbox follow-up.
   `git diff --check` passes. Commit-message privacy scan: 0 findings; tree audit
   retains 151 findings outside changed paths and none in changed paths. Complete
   audit `target/task0052/privacy-tree-fix.log`.
-  `target/COMMIT_MSG.txt` and `target/task0052/review.md` are prepared. All remaining
-  source, documentation and new Eye references are intentional; no held paths,
+  Changes cover source, documentation and new Eye references; no held paths,
   ratchets, dependencies, commits, pushes, merges or hardware access. Codex owns
   follow-up fixes. Next action: coordinator arranges standard cross-vendor review,
   runs the full integration gate, then obtains the task's unit release to confirm

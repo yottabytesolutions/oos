@@ -10,7 +10,7 @@ Five explicit actual-file tests passed at the preceding `5471043` checkpoint in 
 
 ## TekScope baseline
 
-The user's knowledge MCP supplied primary TekScope and DPOJET definitions. A separate, explicitly targeted local TekScope PC session was then queried through that MCP. Its REF1/REF2 records matched the supplied Gen7 n/p files in point count, interval and all 128 checked sequential samples; this is not a full-record content hash. Full-record Vpp and RMS agree with existing OOS-loaded metrics within floating-point rounding. TekScope timing/rate readings carried warning 540, Low amplitude, so they are not treated as a clean timing-accuracy oracle. Every temporary measurement was removed; the original reference list and transfer selector were restored. No physical instrument was configured.
+The comparison used TekScope and DPOJET definitions and a separate TekScope PC session. Its REF1/REF2 records matched the supplied Gen7 n/p files in point count, interval and all 128 checked sequential samples; this is not a full-record content hash. Full-record Vpp and RMS agree with existing OOS-loaded metrics within floating-point rounding. TekScope timing/rate readings carried warning 540, Low amplitude, so they are not treated as a clean timing-accuracy oracle. Every temporary measurement was removed; the original reference list and transfer selector were restored. No physical instrument was configured.
 
 The catalog's NRZ Data Rate now estimates bit rate from measured UI rather than PRBS cycle frequency. NRZ Clock Rate is separately labeled; both use bit/s units and state their assumptions. Rise/fall retain the configured threshold definition and expose qualified-pair counts in row settings. General 10/90 averages on shaped, de-emphasized PRBS are not equivalent to the SIM knob's isolated pre-filter 20/80 transition. These are signal-analysis measurements, not a PCIe/DPOJET compliance certificate.
 
@@ -20,6 +20,5 @@ Host benchmarks measured 3.715x for four-worker conversion/statistics, 3.644x fo
 
 ARM64 Rust checking does not build the firmware image or link Dropbear: this host lacks Docker/an ARM C toolchain, and no SSH service, keys or image were installed on hardware. C-PHY remains single-trio six-state electrical/synchronized-word decoding without CSI/DSI payload interpretation, multi-trio merging or eighteen-state coding. VXI pending-read waiting and backpressured bulk sends retain the limitations in the SCPI manual.
 
-All validation reported here ran locally. Integration pushes and merge commits use `[skip ci]`; no workflow, Actions setting or tag was changed. Incoming PR41 already had CI runs on its own branch when inspected; this integration did not start or rerun them.
-
-Local ignored evidence is under `local/ref-integration`: `final-ui-all.log`, `final-dsp-all.log`, `final-arm-check.log`, `final-source-build.log`, `final-scpi-validation.json`, `private-scpi-provenance.json`, `tekscope-owned-measurements/report.md`, and `pcie4-measurement-audit.md`. See [reference workflows](reference-analysis.md), the [SCPI manual](scpi.md) and [SSH provisioning](ssh.md).
+See the [reference workflows](reference-analysis.md), the [SCPI manual](scpi.md) and
+[SSH provisioning](ssh.md).

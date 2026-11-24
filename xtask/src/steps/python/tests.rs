@@ -3,17 +3,29 @@ use super::*;
 use crate::steps::host::tests::Fixture;
 
 #[test]
-fn shared_python_runner_is_isolated_and_propagates_failure_without_building() {
+fn runner_builds_the_host_updater_in_the_selected_target_and_propagates_failure() {
     let f = Fixture::new("python-run");
-    f.output("build");
+    f.output("");
     for status in [0, 7] {
         f.write(
             "tools/python_tests.py",
-            &format!("import sys\nassert sys.flags.isolated\nprint('runner output')\nsys.exit({status})\n"),
+            &format!(
+                "import os, sys\nfrom pathlib import Path\nassert sys.flags.isolated\n\
+                 updater = Path.cwd() / 'selected target/debug/oos-update'\n\
+                 assert Path(os.environ['OOS_RELEASE_TEST_UPDATER']) == updater\n\
+                 print('runner output')\nsys.exit({status})\n"
+            ),
         );
         let result = run(&Default::default(), &f.0);
         assert_eq!(result.is_ok(), status == 0);
-        assert_eq!(result.unwrap_or_else(|lines| lines), ["runner output\n"]);
-        assert!(!f.0.join("commands").exists(), "Python tests must not build or verify Rust binaries");
+        assert_eq!(result.unwrap_or_else(|lines| lines).last().unwrap(), "runner output\n");
     }
+    let commands = std::fs::read_to_string(f.0.join("commands")).unwrap();
+    assert_eq!(commands, "build -p oos-fpgad --bin oos-update\ntarget\n".repeat(2));
+    f.output("build");
+    assert!(run(&Default::default(), &f.0).unwrap_err().join("\n").contains("failed build"));
+    assert_eq!(
+        std::fs::read_to_string(f.0.join("commands")).unwrap(),
+        commands + "build -p oos-fpgad --bin oos-update\n"
+    );
 }

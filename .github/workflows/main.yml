@@ -98,15 +98,15 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install
       # script-syntax checks the one mksh script with mksh.
       - name: mksh
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends mksh
       - name: Script syntax and Python tests (tools/tests, tools/privacy, ui/tools)
-        run: |
-          python3 -I tools/script_syntax.py
-          python3 -I tools/python_tests.py
+        run: cargo xtask step script-syntax python-tests
 
   deny:
     if: github.event_name != 'pull_request'

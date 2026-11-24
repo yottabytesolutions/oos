@@ -78,6 +78,29 @@ class PythonTests(unittest.TestCase):
                 with self.assertRaises((ValueError, subprocess.CalledProcessError)):
                     python_tests.run_root(self.root, directory)
 
+    def test_only_release_artifact_skips_fail_the_gate(self):
+        directory = 'tools/tests'
+        skip = ("import unittest\nclass Tests(unittest.TestCase):\n"
+                "    @unittest.skip('fixture unavailable')\n"
+                "    def test_skip(self):\n        \"Test with a description.\"\n")
+        self.write(f'{directory}/test_other.py', skip)
+        self.write(f'{directory}/test_release_artifacts.py', PASS)
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            python_tests.run_root(self.root, directory)
+        self.assertIn('test_release_artifacts: 0 skipped', output.getvalue())
+        self.assertIn('2 executed; 1 skipped', output.getvalue())
+
+        self.write(f'{directory}/test_release_artifacts.py',
+                   PASS + skip.replace('class Tests', 'class SkippedTests') +
+                   "class SkippedClass(unittest.TestCase):\n"
+                   "    @classmethod\n    def setUpClass(cls):\n        raise unittest.SkipTest('fixture unavailable')\n"
+                   "    def test_skip(self): pass\n")
+        with contextlib.redirect_stdout(io.StringIO()) as output:
+            with self.assertRaises(subprocess.CalledProcessError):
+                python_tests.run_root(self.root, directory)
+        self.assertIn('test_release_artifacts: 2 skipped', output.getvalue())
+        self.assertIn('OOS_RELEASE_TEST_UPDATER', output.getvalue())
+
     def test_failed_count_and_selection_execution_mismatch_fail(self):
         selection = subprocess.CompletedProcess([], 0, stdout='2\n', stderr='')
         result = subprocess.CompletedProcess([], 0, stdout='', stderr='Ran 1 test in 0s\nOK\n')

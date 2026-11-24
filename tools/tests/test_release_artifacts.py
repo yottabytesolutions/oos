@@ -137,16 +137,19 @@ esac
         path.write_text(public + "\n", encoding="ascii")
         return path, key_id
 
-    def write_image(self):
+    def write_image(self, *, staged=False):
         boot = release.boot_module()
         kernel = bytearray(4096)
         kernel[0x38:0x3c] = b"ARM\x64"
         # Version 17 header, empty reservation table and a root node with no properties.
         dtb = struct.pack(">10I", 0xD00DFEED, 72, 56, 72, 40, 17, 16, 0, 0, 16)
         dtb += bytes(16) + struct.pack(">4I", 1, 0, 2, 9)
-        archive = boot.cpio([("etc/oos-build", 0o100644, BUILD.encode() + b"\n"),
-                             ("etc/oos-models", 0o100644, MODELS.encode() + b"\n"),
-                             ("bin/oos-update", 0o100755, UPDATER_BYTES)])
+        entries = [("etc/oos-build", 0o100644, BUILD.encode() + b"\n"),
+                   ("etc/oos-models", 0o100644, MODELS.encode() + b"\n"),
+                   ("bin/oos-update", 0o100755, UPDATER_BYTES)]
+        if staged:
+            entries.append(("etc/oos-staged-keys", 0o100644, self.release_public.read_bytes()))
+        archive = boot.cpio(entries)
         with contextlib.redirect_stderr(io.StringIO()):
             self.image.write_bytes(boot.build(bytes(kernel), dtb, gzip.compress(archive, mtime=0)))
 
@@ -164,12 +167,14 @@ esac
                                                        side_effect=[COMMIT.encode() + b"\n", b""]):
             release.main(argv)
 
-    def check_package(self, package, key, public):
+    def check_package(self, package, key, public, *, trials=(b"kexec",)):
         header, image = package.read_bytes().split(b"\n\n", 1)
+        lines = header.splitlines()
         self.assertEqual(image, self.image.read_bytes())
-        self.assertIn(b"models " + MODELS.encode(), header.splitlines())
-        self.assertIn(b"trial kexec", header.splitlines())
-        self.assertIn(b"key " + key.encode(), header.splitlines())
+        self.assertIn(b"models " + MODELS.encode(), lines)
+        self.assertCountEqual([line for line in lines if line.startswith(b"trial ")],
+                              [b"trial " + trial for trial in trials])
+        self.assertIn(b"key " + key.encode(), lines)
         result = subprocess.run([self.updater, "verify", package, "--keys", public],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -269,6 +274,12 @@ esac
             self.make_release(out)
         self.assertIn("must name a new release directory", err.getvalue())
         self.assertEqual((out / "SHA256SUMS").read_bytes(), sums)
+
+    def test_release_accepts_a_package_with_kexec_and_staged_trials(self):
+        self.write_image(staged=True)
+        out = self.root / "staged-release"
+        self.make_release(out)
+        self.check_package(out / PACKAGE_NAME, self.release_id, self.release_public, trials=(b"kexec", b"staged"))
 
     def test_production_signer_refuses_untrusted_release_key(self):
         out = self.root / "untrusted"

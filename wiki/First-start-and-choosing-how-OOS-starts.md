@@ -1,19 +1,21 @@
-What the first start of OOS looks like, and how to choose whether the next power-on starts OOS or the stock system.
+Check the first OOS start, choose which system boots next and check the card's speed.
 
 ## First start
 
-1. Eject the card, put it into the scope, close the instrument, connect Ethernet and switch on.
-2. You see the Rigol logo from the stock loader, then the OOS start-up screen with a checklist.
-3. The scope screen appears. Each failed step is named on the screen. A missing calibration file is a warning: the
-   scope then runs on defaults and is less accurate.
+1. After installing from USB or ADB, power-cycle the scope once the installer has selected OOS. If you
+   installed on a second card, eject it from the computer, put it into the scope and close the instrument
+   before switching on. Connect Ethernet if you want network access.
+2. Watch for the Rigol logo, then the OOS start-up checklist and the scope screen. The checklist names any failed
+   steps. With a missing calibration file, the scope runs on defaults and is less accurate.
+3. Check that your calibration and saved settings are available. On a DHO924S with modified stock, both were
+   preserved through a GEL reinstall on 2026-11-24.
 
-The IP address comes from DHCP and is shown in the top bar. Without DHCP the scope takes a link-local address
-(169.254.x.y, as computers do): a computer connected straight to the scope reaches it without any set-up.
+The top bar shows the IP address. The scope uses DHCP if available and a link-local address otherwise.
 
 ## Choose how OOS starts
 
-By default OOS is **one-shot**: every start of OOS restores the stock boot, so the **next power-on starts the stock
-system**. This is the safe mode for a new installation.
+A fresh installation starts in **one-shot** mode. OOS restores the stock boot selection during startup, so the
+next power-on starts stock.
 
 To start OOS once more, run this in an SSH session (or on the serial console) and power-cycle the scope:
 
@@ -22,7 +24,7 @@ oos-boot-oos-again
 ```
 
 When OOS works for you, make it the normal system: set **System > Boot mode** to **Persist**, or run
-`oos-update mode persist`. It counts from the next power-on. One-shot goes back, and the next power-on starts stock.
+`oos-update mode persist` in the OOS shell. To switch back, select **One-shot** and power-cycle.
 
 Even then, a start that does not complete leaves the stock boot in place, so the next power-on starts the stock system.
 
@@ -43,3 +45,22 @@ stateDiagram-v2
 ```
 
 To leave OOS, see [[Going back to stock]].
+
+## SD card speed after a GEL install
+
+Expect the card to run in High Speed (HS) after a GEL install. If the image requests SDR104 and the card
+negotiates HS, OOS shows “SD card is in slow mode”. A full power-off followed by a cold start restored SDR104
+on the DHO924S on 2026-11-24. If you are in one-shot mode, select OOS for the next start first.
+
+To select SDR104 for an installed OOS image, use the OOS shell.
+See [SSH setup](https://github.com/yottabytesolutions/oos/blob/main/docs/network.md#7-ssh).
+
+1. Check `oos-update status`. Restaging requires a tracked, confirmed image. If the GEL install left it
+   untracked, install a newer signed `.oosupd` and wait for confirmation.
+2. Set `sd.mode = sdr104` in `/oos/system.conf`.
+3. Run `oos-update sd-mode` to preview the change, then `oos-update sd-mode --execute` to stage it.
+   Power-cycle to try the new mode.
+
+See [Signed updates with rollback](https://github.com/yottabytesolutions/oos/blob/main/docs/update.md) and
+[Device boot card mode](https://github.com/yottabytesolutions/oos/blob/main/docs/boot.md#device-boot-card-mode)
+for trial confirmation, fallback and retry.

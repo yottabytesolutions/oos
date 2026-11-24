@@ -1,21 +1,25 @@
-Ready-made files from a GitHub release, without building anything.
-
-The [latest release](https://github.com/yottabytesolutions/oos/releases/latest) has ready-made files. You need no Rust and no
-Docker for them:
+Download ready-made files from the [latest release](https://github.com/yottabytesolutions/oos/releases/latest).
+For the USB install from stock, download both the GEL and `SHA256SUMS` from that release.
 
 | File | What it is for |
 |---|---|
-| `DHO800_DHO900_OOS_Install.GEL` | install from a USB stick through the stock system, without opening the scope: go on at [From a USB stick](Install-without-opening-the-scope#from-a-usb-stick) |
-| `oos-<version>.img` | install on a second card: follow [[Install on a second card]] with `--image oos-<version>.img`, and skip the build |
-| `oos-<version>.oosupd` | update a scope that already runs OOS: open `http://<scope>:8080/update` and choose the file, then switch off at the mains, wait 30 seconds and switch on. From 0.1.6 or older, first `oos-0.1.7.oosupd` from the [0.1.7 release](https://github.com/yottabytesolutions/oos/releases/tag/v0.1.7): later builds bring another device tree, which only 0.1.7 and later can try before they install it |
-| `SHA256SUMS` | the checksums of all of them |
+| `DHO800_DHO900_OOS_Install.GEL` | [Install from a USB stick](Install-without-opening-the-scope#from-a-usb-stick) through stock |
+| `oos-<version>.img` | [[Install on a second card]] with `--image oos-<version>.img` and skip the build |
+| `oos-<version>.oosupd` | [Update a running OOS installation](https://github.com/yottabytesolutions/oos/blob/main/docs/install.md#update-a-running-oos-installation) |
+| `SHA256SUMS` | Check the files you downloaded from this release |
 
-Check what you downloaded. The number has to be the same as in the file's line of `SHA256SUMS`:
+## Verify the download
 
-```sh
-shasum -a 256 DHO800_DHO900_OOS_Install.GEL      # macOS
-sha256sum DHO800_DHO900_OOS_Install.GEL          # Linux
-certutil -hashfile DHO800_DHO900_OOS_Install.GEL SHA256      # Windows
-```
+1. Open a terminal in the download folder. Run the command for your computer. Replace the filename if you
+   downloaded a different release file.
 
-The ADB install needs your own build: [[Building OOS]].
+   | Computer | Command |
+   |---|---|
+   | macOS | `shasum -a 256 DHO800_DHO900_OOS_Install.GEL` |
+   | Linux | `sha256sum DHO800_DHO900_OOS_Install.GEL` |
+   | Windows | `certutil -hashfile DHO800_DHO900_OOS_Install.GEL SHA256` |
+
+2. Open `SHA256SUMS` in a text editor. Find the line with that filename and compare the full hash.
+   If it differs, stop and download the file again from the same release.
+
+Continue with the install route in the table. For ADB, see [Over ADB](Install-without-opening-the-scope#over-adb).

@@ -51,7 +51,7 @@ Reserved paths: `docs/tasks/0080-measure-clear-item.md`, `ui/src/scpi.rs`, `ui/s
 - 2026-11-16: Previous host evidence before this review round: 9 measurement and 8 SCPI helper tests passed in
   debug/release; all 11 gate clippy commands passed with zero new/raised findings. Fast gate printed
   `partial gate passed (not done): 8 steps in 179 s`, exit 0 (`target/t0080/fast-final-with-golden.log`).
-  Golden captures and updater tests from that round are superseded by the owner's instruction to drop them.
+  The regression tests supersede that round’s golden captures and updater tests.
 - 2026-11-16: Failing-before evidence: four initial SCPI regressions failed on the unchanged implementation
   (`target/t0080/tests-before.log`, exit 101). Indexed removal uses one-based screen order, rejects invalid rows
   with -224 without mutation, and shares the statistics reset. SCPI eviction removes the first screen row

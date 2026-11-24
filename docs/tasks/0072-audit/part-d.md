@@ -1,7 +1,6 @@
 # Audit part d, second check
 
-Input: `target/audit-d.md` (snapshot a451a3fa). Every S1 and S2 finding was checked against the cited doc line, the code,
-its tests and the unit records. Corrections were derived from the code, not from the auditor's text.
+The audit verified every S1 and S2 finding against the cited documentation, the code, its tests and the unit evidence.
 
 ## Verdicts
 

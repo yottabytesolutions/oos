@@ -144,8 +144,7 @@ fn bytes(header: bool, ratio: u32, points: u32) -> usize {
     2 * ratio as usize * points as usize + if header { 16 } else { 0 }
 }
 
-/// Largest compression factor: 0x1170 holds k in bits 13:0, a larger value wraps (netlist simulation, private RE notes
-/// docs/re/netlist/blocks/datapath.md).
+/// Largest compression factor. Netlist simulation shows that 0x1170 holds k in bits 13:0 and larger values wrap.
 pub const COMPRESS_K_MAX: u32 = 16383;
 
 /// The written compression factor, bounded by the register field and the number of eight-point groups in the window.

@@ -1,8 +1,7 @@
 # DVM from the FPGA block
 
-Status: opt-in. Result layout and units measured on the unit (2026-11-13, round 2: private RE notes
-`docs/logs/oos_unitlab_20261113.md`); decode checked against the software DVM in round 5 (below). Spec:
-`specs/08-counter-dvm.md` section 1.2.
+Status: opt-in. Result layout and units were measured on the unit on 2026-11-13. The decode
+was checked against the software DVM (see below). See the [DVM specification](specs/08-counter-dvm.md).
 Next-round table row 2.5.
 
 ## What it does

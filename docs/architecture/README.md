@@ -581,17 +581,16 @@ across the serial test process. Unit frame-event quantiles are measured separate
 | perf_guard_fast_interpolation | 1.1 | 1.65 | seven sparse timebase/channel cases; fast / exact | deposit kernel |
 | perf_guard_compressed_frame | 0.5 | 0.75 | 100 k point square, k=15; compressed / raw decode and draw | deposit kernel |
 | perf_guard_codes_per_frame | 0.9 | 1.35 | five channel/trigger cases; codes / decode and draw | deposit kernel |
-| perf_guard_pipeline_counters | 1.02 | 1.515 | identical warmed Batch pipelines, counters on / off; 1/2/4 channels at 1 and 10 us/div, full production-plan batches | temporary F0 staging CPU overhead <= 2 %; restore 1.01 at F3 cutover (ADR 0031) |
+| perf_guard_pipeline_counters | 1.01 | 1.515 | identical warmed Batch pipelines, counters on / off; 1/2/4 channels at 1 and 10 us/div, full production-plan batches | matched CPU overhead <= 1% (ADR 0031) |
 | perf_guard_deposit_worker_per_frame | 1.5 | 2.25 | three depths, measurements off; one worker / frames mode | worker orchestration |
 | perf_guard_deep_record_reuse | 0.8 | 1.0 | 4 channels, 10M depth (625k pairs each); actual hw_record + reused draw / hw_record + independent draw_frame conversion | main-view conversion and draw |
 | perf_guard_framestats | 0.7 | 1.05 | 125 k points, cheap set; fused / reference statistics | measure primitive |
 
-The F0 counter row caps overhead at 2 % until F3 frame cutover. The paths alternate after each
-picture and each sample sums 16 pictures per side. For the best comparison, sum both sides over windows spanning two thirds of the alternating rounds and choose the window with
-the lowest combined CPU time. The selected window compares the same rounds on the shared workers. At cutover restore 1.01
-in the executable assertion, this table and its contract fixtures, with all six workloads measured.
-Keep CPU p99 <= 1.515 and preserve the picture and record counts and pixel/pacing equivalence assertions.
-Measure four-channel 30 FPS and scheduling latency on the unit.
+The pipeline counter guard alternates paths after each picture and sums 16 pictures per side in
+each round. It compares matched rounds on shared workers in the window spanning two thirds of the
+rounds with the lowest combined CPU time. The guard checks picture and record counts. A separate
+deterministic test checks pixel and pacing equivalence. Release acceptance measures four-channel
+30 FPS and scheduling latency on the unit.
 
 Allocation probes require at least 64 allocation-free warmed frames for deposit spans/dots/codes,
 cheap measurements and both core-matching probes. HAL checks five warmed batches for one transfer

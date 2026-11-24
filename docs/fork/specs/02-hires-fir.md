@@ -64,13 +64,12 @@ Conclusion: in this firmware the FIR is dormant. It is not tied to high resoluti
 
 ### 1.4 Coefficient tables in the library
 
-Do not copy these into the fork. Locations in the analysis repo:
+The stock driver has 12 filter sets of 16 taps, keyed 0..11. The coefficients stay out of the fork.
 
-- `/path/to/analysis-repo/docs/re/libscope/tables/filterCoef.csv`: 12 sets x 16 taps, keyed 0..11,
-  symmetric, DC gain 2^22. Measured -3 dB points (fraction of the input rate): 0.035 to 0.455. Likely bandwidth
-  limiters per channel mode. The selection key is the dormant `index` field.
-- `.../tables/spu_12bit_fir_coef.csv` .. `spu_16bit_fir_coef.csv`: 5 sets x 32 taps, symmetric, DC gain 2^22,
-  -3 dB at 0.200, 0.100, 0.051, 0.035 and 0.031 of the input rate. Names suggest high-res filters for 12..16 bits.
+- Those filters are symmetric, with DC gain 2^22. The measured -3 dB points span 0.035 to 0.455 of the input
+  rate. These are likely bandwidth limiters per channel mode. The selection key is the dormant `index` field.
+- Five further sets use 32 symmetric taps, with DC gain 2^22. Their -3 dB points are 0.200, 0.100, 0.051, 0.035
+  and 0.031 of the input rate. Their names suggest high-resolution filters for 12 to 16 bits.
   No code references them. 32 symmetric taps fit the 16-coefficient load if the hardware mirrors them, which is not
   proven.
 

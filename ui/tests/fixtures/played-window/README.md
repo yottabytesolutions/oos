@@ -1,6 +1,6 @@
 # Played-window raw fixture excerpts
 
-Recorded on build `20261123-231319` on 2026-11-24 in the J0 window capture round. The CH1 signal
+Recorded on build `20261123-231319` on 2026-11-24 in the window capture round. The CH1 signal
 was the 1 kHz probe-compensation square wave. FPGA compression was off and the 16-byte frame
 header was enabled. The payload is little-endian interleaved 16-bit ADC words. Each retained
 record contains every stored point. Frame indices and timestamp words are original.
@@ -14,7 +14,7 @@ record contains every stored point. Frame indices and timestamp words are origin
 | 1 ch, 10 µs/div, 1 M | 007 | 0 | 1,000,000 | 2,000,016 |
 
 The `oos-batch.v2` sidecars retain the captured view and geometry. Counts and submitted ranges
-describe the excerpt. The wide-search count recorded by J0 is for the original batch. The
+describe the excerpt. The wide-search count is for the original capture. The
 played-window comparison uses the samples and captured view directly.
 
 ## Cropped trigger refinement

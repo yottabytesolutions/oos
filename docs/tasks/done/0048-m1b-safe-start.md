@@ -219,7 +219,7 @@ Planned names below are acceptance targets, not evidence of tests already run.
   trial rollback test. The two introduced regressions also pass in both profiles. Scope check/clippy, host sh
   syntax and diff whitespace pass. Source fingerprint stayed unchanged during the final gate.
   Commit-message privacy and added/new-line privacy each have zero findings; whole-tree scan still has 153
-  pre-existing findings. Messages/file lists: `target/COMMIT_MSG.txt`; handoff: `target/PART2_REVIEW.md`.
+  pre-existing findings.
   No part 2 commits, staging, pushes, device access, held-path edits or xtask ratchet edits. Task remains active:
   independent Claude review, allowed-runner full gate/coverage, M1 crash-notice golden capture, image BusyBox
   execution and coordinator round 0 remain outstanding. Acquisition cancellation remains M3.0/M5.

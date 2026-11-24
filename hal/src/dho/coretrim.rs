@@ -13,7 +13,7 @@
 //! mid-scale (core gain differences would then move the core means) or that clip are left as they are.
 //!
 //! Which measure slot shows which core register is found by nudging each core in turn (`order`), as self-cal does in
-//! core-order mode; the mapping of the normal acquisition modes is not known otherwise (rt8847.md open item 8).
+//! core-order mode. This procedure establishes the mapping for ordinary acquisition modes.
 
 use crate::dho::levels::Slot;
 

@@ -2,9 +2,8 @@
 
 > Historical unit-image references below are superseded by ADR 0015; use generic images and device state.
 
-Input: `target/audit-a.md` (revision a451a3fa). Every S1 and S2 finding was checked against the cited doc lines, the
-code and the unit logs (`docs/fork/unit-dho804.md`, `docs/fork/hwmask.md`, `docs/fork/flicker.md`). Corrections were
-written from the code, not from the auditor's text. The upstream fix 4d43d3fa (TPU tick units, 0x10e4 unit) is
+The audit verified every S1 and S2 finding against the cited documentation, the code and the unit evidence
+(`docs/fork/unit-dho804.md`, `docs/fork/hwmask.md`, `docs/fork/flicker.md`). The upstream fix 4d43d3fa (TPU tick units, 0x10e4 unit) is
 applied in `docs/hardware/fpga.md`; its "10 points per channel stream" wording was replaced per A02.
 
 ## Verdicts

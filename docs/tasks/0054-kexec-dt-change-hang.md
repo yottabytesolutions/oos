@@ -40,7 +40,7 @@ Scratch checks, logs and the single proposed commit message belong in ignored `t
 
 The analysis and diagnostic procedure below are historical, superseded by the permanent-fix Status entry.
 
-Unit evidence (2026-11-15, private RE notes docs/logs/oos_pcie_gen1_20261115/ and oos_unit_round0_20261115.md): twice the kexec_load path (kexec-tools with --dtb, taken when the image's tree differs) hung after the old kernel printed "Bye!", before any new ramoops registration; the hardware watchdog reset the SoC about 20 s later and the previous build came back. The same-tree path (kexec_file_load) works. Capture UART2 (115200) during a kexec start on the unit (needs the owner to attach the serial adapter), compare the loader-change merge of the tree (hal/src/update/fdt.rs with_loader_changes) with the running tree, and check memory placement of the dtb/initrd in kexec_load. Until fixed, DT-changing updates install with --no-kexec and a reboot.
+Unit evidence (2026-11-15): twice the kexec_load path (kexec-tools with --dtb, taken when the image's tree differs) hung after the old kernel printed "Bye!", before any new ramoops registration; the hardware watchdog reset the SoC about 20 s later and the previous build came back. The same-tree path (kexec_file_load) works. Capture UART2 (115200) during a kexec start on the unit (needs the owner to attach the serial adapter), compare the loader-change merge of the tree (hal/src/update/fdt.rs with_loader_changes) with the running tree, and check memory placement of the dtb/initrd in kexec_load. Until fixed, DT-changing updates install with --no-kexec and a reboot.
 
 ### Host analysis, 2026-11-15
 

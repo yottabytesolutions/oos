@@ -21,8 +21,7 @@ Reserved paths: none (no source changes). Unit: scope lease with cap reboot.
 Build a signed image of overhaul eaa5590, install it as a trial through /update, run the round 0 checks
 (boot, panic=10, watchdog kicker, frame-rate counters against the dho804 baseline, roll and STOP with bounded RSS,
 :ACQuire:MDEPth? in roll and normal, web UI, sustained SCPI), then reboot without confirming so the unit returns
-to the dho804 build. No panic or watchdog-kill tests in this round. Results:
-private RE notes docs/logs/oos_unit_round0_20261115.md. M1b adds its own round 0 checks later.
+to the dho804 build. This round excludes panic and watchdog-kill tests. M1b adds its own round 0 checks.
 
 ## Status
 

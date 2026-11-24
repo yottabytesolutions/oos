@@ -123,10 +123,9 @@ Fixed:
 
 ## 0.1.13
 
-Merged from the forks on GitHub (PR #7 by ichnograph, DHO804; PR #8 by W4R/wasimlhr, OOS Plus), with main since
-0.1.12. Their work is credited in the commits. PR #9 to #13 (W4R/wasimlhr, topics cut from PR #8) are merged as
-well: their functions were in the tree with PR #8, new from them are the Cursor B source row and the power
-measurement tests. From PR #8's second round (2026-11-15) the fixes are in, its Studio layout is not.
+Merged from the DHO804 and OOS Plus forks (PRs #7 and #8), with main since 0.1.12. Git history
+records the contributions. PRs #9 through #13 were split from PR #8 and also merged. They added the Cursor B
+source row and power measurement tests to the functions already present from PR #8. From PR #8's second round (2026-11-15) the fixes are in, its Studio layout is not.
 
 New:
 

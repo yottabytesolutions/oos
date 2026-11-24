@@ -171,10 +171,8 @@ Stock behaviour for comparison was not measured.
 **Verified on the unit (2026-11-13)** for the status behavior identified below. Other status-bit
 interpretations are **assumed**.
 
-0x4034 bits 6 and 7, traced in the netlist of the 00.01.05.00.01 bitstream (private RE notes
-`docs/re/netlist`: `regmap/read_sim.tsv` gives the source FF of each read bit; the cones were dumped with
-`regmap/nl.py` over the pickled netlist, register FFs named from `regmap/regmap_adc.tsv` and
-`blocks/scu_regs.tsv`):
+Tracing the source flip-flops for 0x4034 in the 00.01.05.00.01 bitstream gave the following interpretation
+of bits 6 and 7:
 
 - Bit 6 is set when the trigger unit (TPU) fires into the acquisition state machine; bit 7 when the state machine
   accepts a trigger while waiting (bit 4 of 0x4034), from the TPU, the auto-trigger timeout (0x4060, 0x4064 with the

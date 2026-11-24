@@ -50,7 +50,7 @@ Only bits 9:0 and 15 of 0x1184 reach the comparator logic. Records above 1023 x 
 **Verified on the unit (DHO804, 2026-11-13)** for the recorded mapping-sweep readbacks and verdicts.
 Comparator interpretations are **assumed**.
 
-Round 2 (private RE notes `docs/logs/oos_unitlab_20261113.md`): slot 0 and the frame count are right (171/s against
+On 2026-11-13, slot 0 and the frame count matched (171/s against
 171/s), but every frame fails on a clean signal while the software passes; it passes only at X 1 div and Y 3 div. So
 the value mapping and the column layout are both off. Two likely causes:
 - The record at 200 us/div, Auto depth is 2.5 Mpts: 2500 samples per column, but only bits 9:0 and 15 of 0x1184 reach

@@ -2,8 +2,7 @@
 
 ## Maintainer
 
-OOS has one maintainer, GitHub user [@ichnograph](https://github.com/ichnograph). The maintainer decides what is
-merged, sets the rules of the tree and cuts the releases.
+OOS has one maintainer who decides what is merged, sets the rules of the tree and cuts the releases.
 
 ## Decisions
 

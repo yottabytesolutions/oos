@@ -3,13 +3,11 @@
 ## Plan
 
 Upstream review of PR #18 found two doc errors that would make a host program the hardware wrong (TPU event-limit
-unit, 0x10e4 unit). Owner asked for a sweep of the hardware and feature docs.
+unit, 0x10e4 unit). Audit the hardware and feature docs.
 
-1. Four Codex audits (parts a-d) compare every concrete claim with the code: S1 wrong, S2 inconsistent, S3 unclear.
-   Reports: target/audit-{a,b,c,d}.md.
-2. One Claude agent per part verifies each S1/S2 finding against code, tests and unit logs, applies corrections in its
-   part's files only, and lists code findings and unit checks: target/audit-{a,b,c,d}-verified.md.
-3. Coordinator pass: cross-part fixes, one commit, fast gate, integrate.
+1. Compare the claims with the code in four parts. Classify findings as wrong (S1), inconsistent (S2) or unclear (S3).
+2. Independently verify S1 and S2 against code, tests and unit evidence. Record code findings and unit checks.
+3. Reconcile cross-part fixes and run the fast gate before integration.
 4. Port the docs/hardware/fpga.md and shared-protocol corrections to upstream PR #18.
 5. Code findings become task 0073; unit checks go to the next unit round.
 

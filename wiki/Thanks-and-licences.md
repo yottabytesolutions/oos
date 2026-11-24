@@ -2,23 +2,22 @@ The projects OOS builds on, and the licences of OOS and its parts.
 
 ## Thanks
 
-This tree is a hard fork of **[OOS](https://github.com/dekajoule/oos)** by Julian Decker and its contributors, at
-upstream commit 15b819e2 ([ADR 0001](https://github.com/yottabytesolutions/oos/blob/main/docs/adr/0001-hard-fork.md)). Their copyright and
-the GPL-2.0-or-later licence stay with every file they wrote.
+This tree is a hard fork of **[OOS](https://github.com/dekajoule/oos)** at
+upstream commit 15b819e2 ([ADR 0001](https://github.com/yottabytesolutions/oos/blob/main/docs/adr/0001-hard-fork.md)). The original copyright notices and GPL-2.0-or-later
+licence stay with the inherited files.
 
 OOS builds on the work of these projects. Thank you to everyone behind them:
 
 - **[NovaOS](https://github.com/Bradyok/novaos-kernel-source)** by Olympian LED, Inc., for publishing the GPL source of
   its Linux port to this hardware, which showed what a kernel needs here and where OOS started. The patches, device tree
   and configuration of the OOS kernel are written anew today. Its install notes also helped with the loader's image format.
-- **[Norbert Kiszka](https://github.com/norbertkiszka)**, for the modified firmware for these scopes and the findings
-  shared in public, which showed how much more this hardware can do.
+- Published reverse-engineering findings and modified firmware demonstrated more of the hardware's capabilities.
 - **[Linux](https://kernel.org)**, the kernel underneath everything, and **[Rockchip](https://github.com/rockchip-linux/kernel)**
   for the board support it runs on here.
 - **[Xilinx XDMA driver](https://github.com/Xilinx/dma_ip_drivers)**, which connects the SoC to the FPGA over PCIe.
 - **[BusyBox](https://busybox.net)**, the userland of the image.
-- **[e2fsprogs](https://e2fsprogs.sourceforge.net)** by Theodore Ts'o, which checks the data partition at every start.
-- **[wpa_supplicant](https://w1.fi/wpa_supplicant/)** by Jouni Malinen and contributors, for WLAN.
+- **[e2fsprogs](https://e2fsprogs.sourceforge.net)**, which checks the data partition at every start.
+- **[wpa_supplicant](https://w1.fi/wpa_supplicant/)**, for WLAN.
 - **[linux-firmware](https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git)** and Realtek, for the
   firmware of the WLAN stick.
 - **[Rust](https://www.rust-lang.org)** and the **[libc](https://github.com/rust-lang/libc)** crate, the only dependency

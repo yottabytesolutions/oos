@@ -6,6 +6,7 @@ hardware" (written down or coded, never run on a scope).
 
 ## System
 
+- [Known issues](known-issues.md) records measured limits and workarounds.
 - [Architecture](architecture/README.md): target layers, ownership and data flow.
 - [System](architecture/system.md): how the SD card, kernel, Rust crates and GUI fit together.
 - [development.md](development.md): the gate (`cargo xtask check`), what it enforces, the ratchets, hooks and CI.

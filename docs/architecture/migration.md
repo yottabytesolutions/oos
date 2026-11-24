@@ -233,8 +233,8 @@ scope explicitly changes behaviour. No step claims implementation or unit accept
   - Retain existing drop counters while legacy overload routes remain. F3 enforces the target
     [conservation rule](frames.md#back-pressure-and-conservation).
   - Empty pictures count zero records; state reports the live route.
-  - Temporary F0 counter guard: best elapsed <= 1.02, CPU p99 <= 1.515 with all six original workloads and
-    actual picture/record checks, per ADR 0031. This staging allowance does not waive matched unit acceptance.
+  - F0 staging used a best elapsed limit of 1.02 and a CPU p99 limit of 1.515 across all six workloads.
+    The picture and record checks and matched unit acceptance apply throughout (ADR 0031).
   - Slice rings replace per-record timing calls at the covered sites.
 - **Remove:** replaced framecost per-record parts.
 - **Delta:** +60..+100 production lines.
@@ -298,9 +298,8 @@ scope explicitly changes behaviour. No step claims implementation or unit accept
 - **Files:** `ui/src/board/dho/hw.rs`, `ui/src/board/dho/hw/batch.rs`, drawpipe buffer return,
   state counters and trigger-status display.
 - **Acceptance:**
-  - Restore the F0 counter guard to best elapsed <= 1.01 in code, architecture table and fixtures before
-    frame cutover acceptance. Task 0013 owns recovery evidence for all six original cases; CPU p99 stays
-    <= 1.515, actual picture/record checks and matched unit acceptance remain required (ADR 0031).
+  - The cutover counter guard requires matched CPU <= 1.01 and CPU p99 <= 1.515 across all six
+    workloads, with actual picture/record checks (ADR 0031). Matched unit acceptance remains required.
   - Scripted buffer exhaustion performs no extra read, wakes on return/STOP/settings, and conserves records
     after drain. No overload bucket exists.
   - Authorized unit round shows zero losses under load, visible capture rate and the
@@ -412,8 +411,8 @@ Risk is low for docs, medium for observable UI/protocol behaviour; acquisition t
 
 <a id="m12a"></a>
 
-**M12a, evidence and acceptance.** The owner selected Batch with the shared difference kernel on 2026-11-18
-([decisions](frames.md#owner-decisions)). Scope: retain Standard as oracle through F2/F3, establish equal
+**M12a, evidence and acceptance.** Batch uses the shared difference kernel
+([decisions](frames.md#frame-pipeline-decisions)). Retain Standard as oracle through F2/F3, establish equal
 pictures where behaviour is preserved, and accept the deposit path before deletion.
 Files: `ui/tests/`, `tools/perf-guard.sh`, drawing task evidence and architecture reports.
 Acceptance: raw/codes at 1/2/4 channels, plus pairs/dots/zoom/deep/roll/scan/STOP/SINGLE/replay characterisation;
@@ -426,8 +425,7 @@ Parallel: evidence preparation only alongside draw-path changes; acceptance is o
 
 <a id="m12b"></a>
 
-**M12b, approved deletion.** Exactly F4 above. The selected route is no longer an open owner question.
-M12 completes after accepted evidence and F4 deletion. F5 follows immediately; F6/F7 complete the target.
+**M12b, approved deletion.** Exactly F4 above. M12 completes after accepted evidence and F4 deletion. F5 follows immediately; F6/F7 complete the target.
 
 ### E1: dispatch extraction before parallel families
 
@@ -680,7 +678,7 @@ unit verification. A full rebuild was rejected because it delayed all shipping b
 Rebuilding menus/parser from specs avoids preserving accidental legacy behaviour; the legacy parser remains a
 host differential oracle until deletion. Every difference needs a recorded spec decision or a fix.
 
-The owner selected the [frame pipeline](frames.md) on 2026-11-18. F0-F3 establish counters, shared kernel,
+The [frame pipeline](frames.md) was selected on 2026-11-18. F0-F3 establish counters, shared kernel,
 whole-deposit publication and source waiting while Standard remains the oracle. M12a accepts the measured
 route; F4 is M12b deletion. F5 follows with Peak/pairs/zoom; F6 supplies grade/replace and F7 picture ownership.
 The [minimum-persistence contract](frames.md#minimum-persistence-and-gpu-hand-off) defines the deposit window (ADR 0035).

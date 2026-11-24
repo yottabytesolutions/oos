@@ -48,23 +48,23 @@ class PerfBudgets(unittest.TestCase):
         with self.assertRaises(ValueError):
             BUDGET.check(self.rows, '\n'.join(lines))
 
-    def test_pipeline_counter_staging_overhead_is_required_and_capped_at_two_percent(self):
+    def test_pipeline_counter_overhead_is_required_and_capped_at_one_percent(self):
         name = 'perf_guard_pipeline_counters'
-        self.assertEqual(self.rows[name], (1.02, 1.515))
+        self.assertEqual(self.rows[name], (1.01, 1.515))
         missing = [line for line in self.lines if not line.startswith(f'CPU_BUDGET {name} ')]
         with self.assertRaises(ValueError):
             BUDGET.check(self.rows, '\n'.join(missing))
-        for candidate in [1021, 1030]:
+        for candidate in [1011, 1020]:
             with self.assertRaises(ValueError):
                 BUDGET.check(self.rows, '\n'.join(self.lines + [f'CPU_BUDGET {name} 1000 {candidate} 1000 1000']))
-        for candidate in [1010, 1017, 1020]:
+        for candidate in [1000, 1007, 1010]:
             BUDGET.check(self.rows, '\n'.join(self.lines + [f'CPU_BUDGET {name} 1000 {candidate} 1000 1515']))
         with self.assertRaises(ValueError):
-            BUDGET.check(self.rows, '\n'.join(self.lines + [f'CPU_BUDGET {name} 1000 1020 1000 1516']))
+            BUDGET.check(self.rows, '\n'.join(self.lines + [f'CPU_BUDGET {name} 1000 1010 1000 1516']))
 
-    def test_pipeline_staging_limit_matches_executable_and_keeps_work_checks(self):
+    def test_pipeline_limit_matches_executable_and_keeps_work_checks(self):
         source = (ROOT / 'ui/src/ui/draw_routes/counters.rs').read_text()
-        self.assertIn('assert!(ratio <= 1.02', source)
+        self.assertIn('assert!(ratio <= 1.01', source)
         self.assertIn('pair.check_tail(1.515)', source)
         for contract in ['for channels in [1, 2, 4]', 'for tdiv in [1e-6, 10e-6]',
                          'for _ in 0..8', 'measure_matched_workers(crate::perfguard::ROUNDS, 16, baseline, counted)',
@@ -77,9 +77,9 @@ class PerfBudgets(unittest.TestCase):
 
     def test_each_pipeline_case_still_rejects_best_or_cpu_tail_regression(self):
         name = 'perf_guard_pipeline_counters'
-        good = f'CPU_BUDGET {name} 1000 1020 1000 1515'
+        good = f'CPU_BUDGET {name} 1000 1010 1000 1515'
         for case in range(6):
-            for values in ['1000 1021 1000 1515', '1000 1020 1000 1516']:
+            for values in ['1000 1011 1000 1515', '1000 1010 1000 1516']:
                 cases = [good] * 6
                 cases[case] = f'CPU_BUDGET {name} {values}'
                 with self.subTest(case=case, values=values), self.assertRaises(ValueError):

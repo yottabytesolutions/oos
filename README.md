@@ -36,6 +36,7 @@ The user guide is in the [wiki](https://github.com/yottabytesolutions/oos/wiki):
 - [Home](https://github.com/yottabytesolutions/oos/wiki): what OOS is and an index of all pages
 - [Installation](https://github.com/yottabytesolutions/oos/wiki/Installation): on a second card, from a USB stick or
   over ADB
+- [Known issues](docs/known-issues.md)
 - [Troubleshooting](https://github.com/yottabytesolutions/oos/wiki/Troubleshooting): what you see and what to do
 - [Going back to stock](https://github.com/yottabytesolutions/oos/wiki/Going-back-to-stock): for one start or for good
 
@@ -65,11 +66,11 @@ to the release.
 
 ## Thanks
 
-This tree is a hard fork of **[OOS](https://github.com/dekajoule/oos)** by Julian Decker and its contributors, at
-upstream commit 15b819e2 ([ADR 0001](docs/adr/0001-hard-fork.md)). Their copyright and
-the GPL-2.0-or-later licence stay with every file they wrote.
+This tree is a hard fork of **[OOS](https://github.com/dekajoule/oos)** at
+upstream commit 15b819e2 ([ADR 0001](docs/adr/0001-hard-fork.md)). The original copyright notices
+and GPL-2.0-or-later licence stay with the inherited files.
 
-OOS also builds on [NovaOS](https://github.com/Bradyok/novaos-kernel-source) by Olympian LED, Inc., whose published
-kernel source showed where to start; the findings of [Norbert Kiszka](https://github.com/norbertkiszka); and Linux,
-Rockchip's board support, the Xilinx XDMA driver, BusyBox, e2fsprogs, wpa_supplicant, linux-firmware, Rust and Roboto.
+The published [NovaOS](https://github.com/Bradyok/novaos-kernel-source) kernel source from Olympian LED, Inc.
+and public reverse-engineering findings helped establish where to start. OOS builds on Linux, Rockchip's board
+support, the Xilinx XDMA driver, BusyBox, e2fsprogs, wpa_supplicant, linux-firmware, Rust and Roboto.
 The full list with what each contributed: [Thanks](https://github.com/yottabytesolutions/oos/wiki/Thanks-and-licences).

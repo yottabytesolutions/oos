@@ -12,15 +12,15 @@ depends: []
 
 ## Goal
 
-Bring upstream's work since our scrubbed PR 7 into `overhaul`: the PR 7 merge, PR 8 and upstream `main`. Keep our
+Bring upstream changes since PR 7 into `overhaul`: the PR 7 merge, PR 8 and upstream `main`. Keep our
 acquisition correctness work and both draw paths. Review tier: Unit (acquisition and start-up code change).
 
 ## Plan
 
 Reserved paths: whole tree on branch `integ-20-upstream` (integration merge), this task.
 
-1. Bridge: `git merge -s ours` of upstream's PR 7 head, the scrubbed copy of our private branch at a commit that is
-   already an ancestor of `overhaul`. The tree does not change; it gives upstream and `overhaul` a merge base.
+1. Merge upstream's PR 7 head with `git merge -s ours` to give upstream and `overhaul` a merge base while
+   preserving the tree. PR 7 corresponds to an existing ancestor of `overhaul`.
 2. Three step merges: the PR 7 merge, the PR 8 merge, upstream `main`. Each upstream point is first formatted with
    our `rustfmt.toml` on a temporary local branch, so conflicts show content changes only. One merge commit per step
    with its notable resolutions.
@@ -30,7 +30,7 @@ Reserved paths: whole tree on branch `integ-20-upstream` (integration merge), th
    each case and the upstream commit.
 6. `cargo xtask check --fast` after each step, `cargo xtask check` at the end.
 
-Owner decisions applied:
+Integration decisions
 
 - Both draw paths stay: upstream's Standard (multi-core fast path) and our Batch path (default since 2026-11-18), with
   upstream's "Acquire > Draw path" setting. The draw-path acceptance plan in migration M9/M12: removal superseded,
@@ -39,8 +39,8 @@ Owner decisions applied:
   Gen1, self-heal, update hardening, SCPI empty reply and compound fixes). Where upstream fixed the same, one
   implementation stays; the Status names which.
 - Upstream's module registries (decoders, measurements, analysers; their ADR code/0002) stay as they are.
-- Modify/delete: upstream deleted fork specs, the unit doc and the unit rootfs files; ours stay (private, scrubbed
-  at publish). Overhaul deleted per-crate `Cargo.lock` files and `docs/architecture.md`; overhaul's side stays.
+- Keep the fork specifications, unit document and unit rootfs files. Keep `overhaul`'s removal of
+  per-crate `Cargo.lock` files and the superseded architecture document.
 - Open owner questions are recorded below and resolved conservatively (keep both).
 
 ## Status

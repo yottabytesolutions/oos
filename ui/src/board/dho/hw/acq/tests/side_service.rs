@@ -268,6 +268,69 @@ fn trim_after_restore() -> Outcome {
     Outcome::snapshot(&mut trace, &g, io.clock.now().duration_since(started))
 }
 
+#[test]
+fn trim_due_during_single_waits_for_run_and_its_new_configuration_to_settle() {
+    let outcome = twice(trim_after_single);
+    let trace = &outcome.events;
+    let wake = trace.iter().position(|event| *event == Event::SourceWake).unwrap();
+    let first_run_arm = wake + trace[wake..].iter().position(is_arm).unwrap();
+    let trim = trace.iter().position(|event| *event == Event::Trim(1)).unwrap();
+    let next_run_arm = trim + trace[trim..].iter().position(is_arm).unwrap();
+    assert!(wake < first_run_arm && first_run_arm < trim && trim < next_run_arm);
+    assert_eq!(trace.iter().filter(|event| matches!(event, Event::Trim(_))).count(), 1);
+}
+
+fn trim_after_single() -> Outcome {
+    use super::super::super::trim::TRIM_HOLD;
+
+    const SINGLE_POLL: Duration = Duration::from_millis(2);
+    let _scope = Scope::new();
+    let want = Settings { auto: false, single: true, tdiv: 0.2, depth: 14_000, ..settings() };
+    let out = requested(&want, Identity::default(), false);
+    let (mut source, (mut io, trace)) = sim_source(&want, &out, "cal.core_offset = tight");
+    io.clock.stop_triggers();
+    io.cal_adc = adc::CalAdc::from_payload(vec![0; 0x738]);
+    let started = io.clock.now();
+    let shared = out.clone();
+    let mut single_triggered = false;
+    let mut single_polls = 0;
+    let mut run_triggered = false;
+    let mut run_published = false;
+    io.clock.drive(move |clock, pause| match pause {
+        Pause::Wait(SINGLE_POLL) if single_polls == 0 => single_polls += 1,
+        Pause::Wait(SINGLE_POLL) => {
+            lock(&shared).queue.clear();
+            clock.stop();
+        }
+        Pause::Wait(HELD_POLL) => {
+            lock(&shared).want.as_mut().unwrap().single = false;
+            clock.release();
+        }
+        Pause::Wait(_) if clock.capture_armed() && !single_triggered => {
+            single_triggered = true;
+            clock.advance(TRIM_HOLD);
+            clock.record_triggers(1);
+        }
+        Pause::Wait(_) if clock.capture_armed() && run_published => {
+            lock(&shared).record_flow.shutdown = true;
+        }
+        Pause::Wait(_) if clock.capture_armed() && single_polls > 0 && !run_triggered => {
+            run_triggered = true;
+            clock.advance(TRIM_HOLD);
+            clock.record_triggers(u32::MAX);
+        }
+        Pause::Park => {
+            let mut g = lock(&shared);
+            assert!(!g.queue.is_empty());
+            g.queue.clear();
+            run_published = true;
+        }
+        Pause::Wait(_) => {}
+    });
+    source.run(&mut io);
+    snapshot(&out, &io, &trace, started)
+}
+
 fn sim_source(want: &Settings, out: &HwShared, conf: &str) -> (AcqLoop<FixedPacing>, sim::Fixture) {
     let fixture = sim::fixture(want, out.clone(), (Run::Selection, 4, false), None);
     let switches = Switches::parse(&|_| None, conf, "acq.frame0 = keep", Default::default());

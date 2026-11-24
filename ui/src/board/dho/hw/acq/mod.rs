@@ -17,7 +17,7 @@ use super::{
     Settings,
 };
 use crate::{
-    board::{counters::Outcome, HwShared, Slow, Spawn},
+    board::{counters::Outcome, identity::CaptureStatus, HwShared, Slow, Spawn},
     sysconf::Switches,
 };
 use oos_core::change::Identity;
@@ -125,9 +125,21 @@ struct BatchState {
     cap: crate::pacing::FrameCap,
     avg: Option<(avg::Tracker, u64, u32)>,
     prearm_timing: Option<(Instant, Duration)>,
-    single_done: Option<(u64, u64)>,
+    single_done: Option<SingleCompletion>,
     first: FirstRecord,
     record_wait: publication::RecordWait,
+}
+
+struct SingleCompletion {
+    pair: (u64, u64),
+    handoff: SingleHandoff,
+}
+
+#[derive(Clone, Copy)]
+enum SingleHandoff {
+    AwaitingUi(Instant),
+    TimedOut,
+    TakenOver,
 }
 
 #[derive(Default)]
@@ -272,12 +284,21 @@ fn disarm(state: &mut seq::State, bar: &mut impl Bus, clock: &impl Clock, out: &
         seq::CaptureStop::Recorded => Outcome::Recorded,
     };
     crate::drawpipe::counters().acquisition.disarms().observe(outcome);
-    if let Some(error) = report.error() {
+    let stop_status = matches!(outcome, Outcome::Unknown)
+        .then(|| {
+            let mut g = crate::perfguard::deep::acq_lock(out);
+            let publication = g.acquisition;
+            g.hold.then(|| g.status.report(publication, CaptureStatus::StopUnconfirmed, report.error()))
+        })
+        .flatten();
+    if let Some(message) = stop_status {
+        eprintln!("oos-ui hw: {message}");
+    } else if let Some(error) = report.error() {
         status(out, format!("disarm: {error}"));
     }
 }
 
 fn status(out: &HwShared, message: String) {
     eprintln!("oos-ui hw: {}", message);
-    crate::perfguard::deep::acq_lock(out).status = message;
+    crate::perfguard::deep::acq_lock(out).status.set(message);
 }

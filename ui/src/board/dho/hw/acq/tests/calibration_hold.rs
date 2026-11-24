@@ -216,7 +216,7 @@ fn configure_error_after_calibration() -> Outcome {
         }
         Pause::Wait(CONFIGURE_RETRY) => {
             let mut g = lock(&shared);
-            assert_eq!(g.status, "settings: channel mask 1..0xf with the trigger source enabled");
+            assert_eq!(g.status.latest(), "settings: channel mask 1..0xf with the trigger source enabled");
             assert_eq!(g.final_ack, 7);
             assert!(g.replay.is_none());
             failures += 1;

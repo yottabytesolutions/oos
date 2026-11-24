@@ -19,6 +19,7 @@ mod ring_validity;
 mod run_order;
 mod side_service;
 mod sim;
+mod single_handoff;
 mod stopped_pass;
 mod stopped_raw;
 mod stopped_slots;

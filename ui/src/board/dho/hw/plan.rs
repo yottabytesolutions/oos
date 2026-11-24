@@ -15,24 +15,31 @@ use oos_hal::dho::{afe, auxout, hz, tpu, uarttrig};
 mod capture_tests;
 
 impl super::super::Dho {
-    /// Capture mode and stored depth confirmed by a frame of the current hardware settings.
+    /// Capture geometry confirmed by a current frame, plus a pending source diagnostic.
     pub(crate) fn capture_state(&self, source: &crate::wave::Source) -> String {
         use oos_hal::dho::acq::Mode;
         let crate::wave::Source::Hw { shared, .. } = source else {
             return " acq.capture=unavailable acq.capture.stored_points=0".into();
         };
-        let (mode, points) = {
+        let (mode, points, status) = {
             let g = crate::perfguard::deep::ui_lock(shared);
             let id = g.acquisition.identity();
             let frame = &g.frame;
             let current = frame.seq != 0 && (frame.cfg, frame.stamp) == (id.gen(), id.epoch());
-            (g.want.as_ref().filter(|_| current).map(|want| want.mode), frame.acq.1)
+            // Device-specific error details stay in the source log.
+            let status = g.status.diagnostic(g.acquisition);
+            (g.want.as_ref().filter(|_| current).map(|want| want.mode), frame.acq.1, status)
         };
-        match mode {
+        let mut text = match mode {
             Some(Mode::Reduced(capture)) => format!(" acq.capture={capture} acq.capture.stored_points={points}"),
             Some(_) => format!(" acq.capture=full acq.capture.stored_points={points}"),
             None => " acq.capture=pending acq.capture.stored_points=0".into(),
+        };
+        if let Some(status) = status {
+            use std::fmt::Write;
+            write!(text, " acq.status={:?}", status.message()).expect("writing to a String cannot fail");
         }
+        text
     }
 }
 

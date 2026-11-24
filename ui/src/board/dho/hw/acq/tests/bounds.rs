@@ -7,6 +7,8 @@ const STATUS: u32 = 0x4034;
 const DONE: u32 = 0x4080;
 const WAITING: u32 = 0x12;
 const HELD_POLL: Duration = Duration::from_millis(5);
+const SINGLE_POLL: Duration = Duration::from_millis(2);
+const SINGLE_LIMIT: Duration = Duration::from_secs(3);
 const RETRY: Duration = Duration::from_millis(200);
 
 #[test]
@@ -46,6 +48,12 @@ fn stop_without_ack() -> Outcome {
             let mut g = lock(&shared);
             assert_eq!(g.final_ack, 7);
             held_polls += 1;
+            if held_polls == 1 {
+                let message = "stop not confirmed by the hardware";
+                assert_eq!(g.status.take_latest(), message);
+            } else {
+                assert!(g.status.latest().is_empty(), "the held pass repeated the stop status");
+            }
             g.record_flow.shutdown = held_polls == 2;
         }
         Pause::Wait(_) if !stopped => {
@@ -141,6 +149,111 @@ fn missing_trigger(single: bool) -> Outcome {
         }
         Pause::Wait(_) => {}
         Pause::Park => panic!("the trigger never arrived"),
+    })
+}
+
+#[test]
+fn completed_single_waits_for_ui_hold_then_acknowledges_without_another_read() {
+    let outcome = twice(|| completed_single(true));
+    let trace = &outcome.events;
+    let dma = trace.iter().position(|event| matches!(event, Event::Dma(_))).unwrap();
+    let stop = trace.iter().position(|event| *event == Event::Stop).unwrap();
+    assert_eq!(trace.iter().filter(|event| matches!(event, Event::Dma(_))).count(), 1);
+    assert_eq!(waiting_time(&trace[dma + 1..stop]), Duration::from_millis(50));
+    assert_eq!(trace[dma + 1..stop].iter().filter(|event| **event == Event::Wait(SINGLE_POLL)).count(), 25);
+    assert_eq!(outcome.latest, Some(Frame::stamp(1, 0)));
+    assert_eq!(outcome.final_ack, 7);
+}
+
+#[test]
+fn completed_single_stays_unarmed_when_the_ui_never_takes_over() {
+    let outcome = twice(|| completed_single(false));
+    let trace = &outcome.events;
+    let dma = trace.iter().position(|event| matches!(event, Event::Dma(_))).unwrap();
+    let held = trace.iter().position(|event| *event == Event::Wait(HELD_POLL)).unwrap();
+    assert_eq!(waiting_time(&trace[dma + 1..held]), SINGLE_LIMIT);
+    assert_eq!(trace.iter().filter(|event| is_arm(event)).count(), 1);
+    assert!(!trace[dma + 1..].iter().any(|event| matches!(event, Event::Dma(_) | Event::Stop)));
+    assert_eq!(outcome.latest, Some(Frame::stamp(1, 0)));
+    assert_eq!(outcome.queue, [Frame::stamp(1, 0)]);
+    assert_eq!(outcome.final_ack, 0);
+}
+
+fn completed_single(take_over: bool) -> Outcome {
+    let _scope = Scope::new();
+    let want = Settings { auto: false, single: true, ..settings() };
+    let out = requested(&want, Identity::default(), false);
+    let fixture = sim::fixture(&want, out.clone(), (Run::Selection, 1, false), None);
+    let shared = out.clone();
+    let mut polls = 0;
+    let mut held_polls = 0;
+    drive(&out, fixture, move |clock, pause| match pause {
+        Pause::Wait(SINGLE_POLL) => {
+            assert_eq!(lock(&shared).final_ack, 0);
+            polls += 1;
+            if take_over && polls == 25 {
+                assert!(lock(&shared).queue.pop_front().is_some());
+                clock.stop();
+            }
+            assert!(polls < 1600, "the completed SINGLE never parked");
+        }
+        Pause::Wait(HELD_POLL) => {
+            assert!(!clock.capture_armed());
+            let mut g = lock(&shared);
+            assert_eq!(g.hold, take_over);
+            held_polls += 1;
+            if take_over {
+                assert!(g.status.latest().starts_with("configured:"));
+            } else if held_polls == 1 {
+                let message = "SINGLE completed but the UI did not take over";
+                assert_eq!(g.status.take_latest(), message);
+            } else {
+                assert!(g.status.latest().is_empty(), "the held pass repeated the SINGLE status");
+            }
+            g.record_flow.shutdown = held_polls == 2;
+        }
+        Pause::Wait(_) => {}
+        Pause::Park => panic!("completed SINGLE must wait for hold, not queue admission"),
+    })
+}
+
+#[test]
+fn armed_single_can_wait_past_the_completion_limit_and_still_be_canceled() {
+    let outcome = twice(cancel_armed_single);
+    let trace = &outcome.events;
+    let arm = trace.iter().position(is_arm).unwrap();
+    let stop = trace.iter().position(|event| *event == Event::Stop).unwrap();
+    assert!(waiting_time(&trace[arm..stop]) > SINGLE_LIMIT);
+    assert_eq!(trace.iter().filter(|event| is_arm(event)).count(), 1);
+    assert!(!trace.iter().any(|event| matches!(event, Event::Dma(_))));
+    assert_eq!(outcome.final_ack, 7);
+}
+
+fn cancel_armed_single() -> Outcome {
+    let _scope = Scope::new();
+    let want = Settings { auto: false, single: true, tdiv: 0.2, depth: 14_000, ..settings() };
+    let out = requested(&want, Identity::default(), false);
+    let fixture = sim::fixture(&want, out.clone(), (Run::Selection, 0, false), None);
+    let shared = out.clone();
+    let mut armed_waits = 0;
+    drive(&out, fixture, move |clock, pause| match pause {
+        Pause::Wait(HELD_POLL) => {
+            assert!(!clock.capture_armed());
+            lock(&shared).record_flow.shutdown = true;
+        }
+        Pause::Wait(_) if clock.capture_armed() => {
+            armed_waits += 1;
+            if armed_waits == 1 {
+                clock.advance(SINGLE_LIMIT + Duration::from_millis(200));
+            } else if armed_waits == 2 {
+                let g = lock(&shared);
+                assert!(!g.hold && g.queue.is_empty() && g.status.latest().starts_with("configured:"));
+                drop(g);
+                clock.stop();
+            }
+        }
+        Pause::Wait(_) => {}
+        Pause::Park => panic!("no record is available to park"),
     })
 }
 

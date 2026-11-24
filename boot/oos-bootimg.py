@@ -22,11 +22,8 @@ Format (see docs/boot.md):
   oos-bootimg.py mini-ramdisk OUT               a ramdisk with only /dev, /dev/console, /root (kernel mounts root=)
 """
 import argparse, gzip, hashlib, os, struct, sys
-import os as _os, sys as _sys
-_sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import boardconf
-
-DEFAULT_NAME = boardconf.load()["OOS_IMAGE_NAME"]
 
 PAGE = 2048
 KERNEL_ADDR = 0x00280000
@@ -167,7 +164,7 @@ def dtb_bootargs(dtb):
 
 
 def build(kernel, dtb, ramdisk, name=None, cmdline=None):
-    name = name or DEFAULT_NAME
+    name = name or boardconf.load()["OOS_IMAGE_NAME"]
     check_kernel(kernel)
     # The loader hashes with the RK3399 crypto engine, which works on 32-bit words: a ramdisk whose length is not a
     # multiple of 4 gives a wrong hash and the image is refused (tested 2026-11-02). Zeros after a gzip initramfs are

@@ -1,6 +1,6 @@
 # The unsigned image is built: kernel, initramfs and boot image. Natively on
 # a GitHub-hosted arm64 runner. Called by main.yml (nightly) and release.yml (tags); by hand from the Actions tab.
-# Releases publish the unsigned image and build id; the project signs and packages releases offline.
+# Releases publish the unsigned image and metadata; the project signs and packages releases offline.
 name: Image
 on:
   workflow_call:
@@ -52,6 +52,8 @@ jobs:
         run: |
           test -s "$CARGO_TARGET_DIR/image/oos-dev.img"
           test -s "$CARGO_TARGET_DIR/image/oos-dev.build"
+          test -s "$CARGO_TARGET_DIR/image/oos-dev.models"
+          test -s "$CARGO_TARGET_DIR/image/manifest.txt"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: oos-image
@@ -59,7 +61,7 @@ jobs:
             ${{ env.CARGO_TARGET_DIR }}/image/oos-dev.img
             ${{ env.CARGO_TARGET_DIR }}/image/oos-dev.img.sha256
             ${{ env.CARGO_TARGET_DIR }}/image/oos-dev.build
-            ${{ env.CARGO_TARGET_DIR }}/image/oos-dev.unit
+            ${{ env.CARGO_TARGET_DIR }}/image/oos-dev.models
             ${{ env.CARGO_TARGET_DIR }}/image/busybox.version
             ${{ env.CARGO_TARGET_DIR }}/image/manifest.txt
             kernel/out/base/SHA256SUMS

@@ -363,6 +363,7 @@ fn image_workflow_publishes_unsigned_image_for_offline_signing() {
     let build = workflow.find("run: boot/build-dev-image.sh").expect("test setup");
     assert!(!workflow.contains("boot/sign-dev-image.sh"));
     assert!(!workflow.contains("boot/build-gel.py"));
+    assert!(!workflow.contains("tools/build-release.py"));
     let check = workflow.find("      - name: Validate release artifacts\n        run: |\n").expect("test setup");
     let upload = workflow[check..].find("      - uses: actions/upload-artifact@").expect("test setup") + check;
     assert!(build < check && check < upload);
@@ -371,10 +372,14 @@ fn image_workflow_publishes_unsigned_image_for_offline_signing() {
         script.lines().map(|line| line.strip_prefix("          ").expect("test setup")).collect::<Vec<_>>().join("\n");
     let f = Fixture::new();
     std::fs::create_dir_all(f.path("selected target/image")).expect("test setup");
-    for (image, build) in [(false, false), (true, false), (false, true), (true, true)] {
-        for (name, present) in [("oos-dev.img", image), ("oos-dev.build", build)] {
+    let required = ["oos-dev.img", "oos-dev.build", "oos-dev.models", "manifest.txt"];
+    for name in required {
+        assert!(workflow[upload..].lines().any(|line| line.ends_with(&format!("/image/{name}"))), "{name}");
+    }
+    for missing in [None].into_iter().chain(required.map(Some)) {
+        for name in required {
             let path = f.path("selected target/image").join(name);
-            if present {
+            if missing != Some(name) {
                 std::fs::write(path, "artifact").expect("test setup");
             } else if path.exists() {
                 std::fs::remove_file(path).expect("test setup");
@@ -386,7 +391,12 @@ fn image_workflow_publishes_unsigned_image_for_offline_signing() {
             .env("CARGO_TARGET_DIR", f.path("selected target"))
             .output()
             .expect("test setup");
-        assert_eq!(out.status.success(), image && build, "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(
+            out.status.success(),
+            missing.is_none(),
+            "missing {missing:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 }
 

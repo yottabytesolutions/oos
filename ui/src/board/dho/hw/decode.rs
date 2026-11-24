@@ -7,14 +7,14 @@ use super::{
     super::{cores::Cores, matching, switches::HeaderProbe},
     header,
 };
-use crate::board::Frame;
+use crate::board::{Frame, TriggerAnchor};
 use oos_hal::dho::{
     hz,
     seq::{self, Settings},
 };
 use std::sync::Arc;
 
-/// Decodes a read-out of the whole record into a frame (tests: no header probe).
+/// Decodes one read-out into a frame (tests: no header probe).
 #[cfg(test)]
 pub fn decode(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64) -> Frame {
     decode_probed(bytes, s, p, seq, HeaderProbe::Off)
@@ -26,7 +26,7 @@ pub fn decode_into(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, f: &mut
     decode_into_probed(bytes, s, p, seq, f, HeaderProbe::Off)
 }
 
-/// Decodes a read-out of the whole record into a frame; with `probe` (`BoardSwitches::header_probe`, trigger.md 8)
+/// Decodes one read-out into a frame; with `probe` (`BoardSwitches::header_probe`, trigger.md 8)
 /// a frame read with its header has the header logged next to where the edge actually is.
 pub fn decode_probed(bytes: &[u8], s: &Settings, p: &hz::Params, seq: u64, probe: HeaderProbe) -> Frame {
     decode_with(bytes, s, p, seq, probe, None)
@@ -97,11 +97,11 @@ fn decode_matched(
         None => seq::decode_volts_into(bytes, s.mask, s.ch.map(|k| (k.scale, k.offset)), &mut f.ch),
     }
     let k = pair_step(s, p);
+    set_meta(s, p, seq, f, k);
     if !hdr.is_empty() && probe.on() {
         let tc = (s.trig_src.clamp(1, 4) - 1) as usize;
-        header::log(hdr, &f.ch[tc], s, (p.pre as usize / k, k), probe == HeaderProbe::OffTrigger);
+        header::log(hdr, &f.ch[tc], s, (f.pre, k), probe == HeaderProbe::OffTrigger);
     }
-    set_meta(s, p, seq, f, k);
 }
 
 fn capture_pairs(s: &Settings) -> bool {
@@ -119,13 +119,14 @@ pub(in crate::board::dho) fn pair_step(s: &Settings, p: &hz::Params) -> usize {
 
 /// Every field of a decoded frame but the channel vectors (kept as they are).
 fn set_meta(s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame, k: usize) {
-    // a window of the record (`batch_plan`): the trigger point counts from its first point
-    let (_, start) = seq::window(s, p);
+    let (n, start) = seq::window(s, p);
     let trigger_word = p.pre.saturating_sub(start) as usize;
     let pre = trigger_word / k;
     let ch = std::mem::take(&mut f.ch);
-    // at the full ADC rate the point is the trigger sample, with compression its pair (trig-gate.md)
-    let pre_exact = p.rate as i128 * p.ratio.max(1) as i128 == hz::CLOCK;
+    let mut trigger_anchor = TriggerAnchor::new(p.rate as i128 * p.ratio.max(1) as i128 == hz::CLOCK);
+    if k > 1 && n < p.memsel && p.memsel <= crate::compress::MAX_DEPTH && !capture_pairs(s) {
+        trigger_anchor = trigger_anchor.cropped_play(trigger_word, k);
+    }
     *f = Frame {
         seq,
         dt: k as f64 / p.rate as f64,
@@ -133,7 +134,7 @@ fn set_meta(s: &Settings, p: &hz::Params, seq: u64, f: &mut Frame, k: usize) {
         ch,
         envelope: k > 1,
         acq: (p.rate as f64, p.memsel as usize),
-        pre_exact,
+        trigger_anchor,
         fixed_ti: capture_pairs(s).then(|| trigger_word as f64 / k as f64),
         ..Frame::default()
     };
@@ -179,7 +180,7 @@ pub(in crate::board::dho) fn probe_codes(
     // The opt-in header log consumes volts on the trigger lane. Reuse the worker's decode buffer.
     let volts = &mut frame.ch[tc];
     volts.extend((0..codes.n).map(|i| codes.at(i)));
-    header::log(&bytes[..16], volts, s, (p.pre as usize / k, k), probe == HeaderProbe::OffTrigger);
+    header::log(&bytes[..16], volts, s, (frame.pre, k), probe == HeaderProbe::OffTrigger);
     volts.clear();
 }
 

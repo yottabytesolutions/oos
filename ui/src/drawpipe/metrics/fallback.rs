@@ -66,7 +66,8 @@ causes! {
     DirectRecord => "direct_record",
 }
 
-const _: () = assert!(LABELS.len() <= u64::BITS as usize);
+const SHORT_PLAY_WINDOW: u64 = 1 << LABELS.len();
+const _: () = assert!(LABELS.len() < u64::BITS as usize);
 
 // Each job takes its own marks. Placement joins column marks, then painting joins band marks.
 thread_local! { static MARKS: Cell<u64> = const { Cell::new(0) }; }
@@ -93,6 +94,10 @@ pub(crate) fn merge(bits: u64) {
     MARKS.set(MARKS.get() | bits);
 }
 
+pub(crate) fn short_play_window() {
+    merge(SHORT_PLAY_WINDOW);
+}
+
 pub(crate) fn capture<T>(work: impl FnOnce() -> T) -> (T, u64) {
     let outer = MARKS.replace(0);
     (work(), MARKS.replace(outer))
@@ -104,18 +109,25 @@ pub(crate) fn direct<T>(work: impl FnOnce() -> T) -> T {
     out
 }
 
-pub(crate) struct Counters([AtomicU64; LABELS.len()]);
+pub(crate) struct Counters {
+    causes: [AtomicU64; LABELS.len()],
+    short_windows: AtomicU64,
+}
 
 impl Default for Counters {
     fn default() -> Self {
-        Self([const { AtomicU64::new(0) }; LABELS.len()])
+        Self { causes: [const { AtomicU64::new(0) }; LABELS.len()], short_windows: AtomicU64::new(0) }
     }
 }
 
 impl Counters {
     pub(in crate::drawpipe) fn add(&self, mut causes: u64) {
+        if causes & SHORT_PLAY_WINDOW != 0 {
+            self.short_windows.fetch_add(1, Relaxed);
+            causes &= !SHORT_PLAY_WINDOW;
+        }
         while causes != 0 {
-            self.0[causes.trailing_zeros() as usize].fetch_add(1, Relaxed);
+            self.causes[causes.trailing_zeros() as usize].fetch_add(1, Relaxed);
             causes &= causes - 1;
         }
     }
@@ -127,8 +139,12 @@ impl Counters {
         }
     }
 
+    pub(in crate::drawpipe) fn short_windows(&self) -> u64 {
+        self.short_windows.load(Relaxed)
+    }
+
     pub(in crate::drawpipe) fn entries(&self) -> impl Iterator<Item = (&'static str, u64)> + '_ {
-        LABELS.iter().copied().zip(self.0.iter().map(|count| count.load(Relaxed)))
+        LABELS.iter().copied().zip(self.causes.iter().map(|count| count.load(Relaxed)))
     }
 }
 
@@ -138,10 +154,12 @@ fn duplicate_causes_across_workers_count_once_per_record() {
     use Cause::{BoxcarRounding, TriggerFromVolts};
     let (_, marks) = capture(|| {
         BoxcarRounding.mark();
+        short_play_window();
         let shard = std::thread::spawn(|| {
             capture(|| {
                 BoxcarRounding.mark();
                 TriggerFromVolts.mark();
+                short_play_window();
             })
             .1
         });
@@ -156,4 +174,8 @@ fn duplicate_causes_across_workers_count_once_per_record() {
     assert!(section.contains("boxcar_rounding=1 "));
     assert!(section.contains("trigger_from_volts=2 "));
     assert!(section.contains("no_words=0 "));
+    assert_eq!(
+        state.split_whitespace().filter(|field| field.starts_with("window.short=")).collect::<Vec<_>>(),
+        ["window.short=1"]
+    );
 }

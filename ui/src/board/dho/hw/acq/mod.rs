@@ -112,6 +112,7 @@ impl Replay {
 #[derive(Default)]
 struct Configured {
     current: Option<(Settings, hz::Params)>,
+    play_window: Option<(usize, Option<(u32, i64)>)>,
     mode: Slow,
     stream_pair: Option<(u64, u64)>,
     unit_blocked: bool,

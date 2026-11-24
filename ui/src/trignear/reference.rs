@@ -14,9 +14,9 @@ pub(super) fn search<S: Samples + ?Sized>(
         let super::SearchScratch { samples, edges, window, .. } = &mut scratch.trigger;
         let a = smoothed(v, source, (pre, span, l), (trigger.level, if near { -0.0 } else { 0.0 }), (samples, window))?;
         oos_dsp::edges::trigger_edges_into(samples, trigger.level, trigger.hysteresis, edges);
-        let want =
-            nearest(edges, a, pre, &|e| trigger.either || e.rising == trigger.rising, &fits).map(|e| a as f64 + e.t);
-        let any = nearest(edges, a, pre, &|_| true, &fits).map(|e| Edge { t: a as f64 + e.t, ..e });
+        let want = nearest(edges, a, pre as f64, &|e| trigger.either || e.rising == trigger.rising, &fits)
+            .map(|e| a as f64 + e.t);
+        let any = nearest(edges, a, pre as f64, &|_| true, &fits).map(|e| Edge { t: a as f64 + e.t, ..e });
         if near {
             let dist = (want? - pre as f64).abs();
             let (lo, hi) = (trigger.level - trigger.hysteresis, trigger.level + trigger.hysteresis);
@@ -99,7 +99,8 @@ pub(super) fn bounded<S: Samples + ?Sized>(
     let mut edges = Vec::new();
     let indexed = samples.iter().enumerate().map(|(i, &x)| (a + i - origin, x));
     oos_dsp::edges::trigger_edges_indexed_into(indexed, trigger.level, trigger.hysteresis, &mut edges);
-    let Some(want) = nearest(&edges, origin, pre, &|e| trigger.either || e.rising == trigger.rising, fits) else {
+    let Some(want) = nearest(&edges, origin, pre as f64, &|e| trigger.either || e.rising == trigger.rising, fits)
+    else {
         return wide();
     };
     let time = origin as f64 + want.t;
@@ -109,7 +110,7 @@ pub(super) fn bounded<S: Samples + ?Sized>(
     let past = samples.iter().copied().position(resets).is_some_and(|i| ((a + i) as f64) < pre as f64 - distance);
     let future = samples.iter().rposition(|x| x.is_finite()).is_some_and(|i| (a + i) as f64 > pre as f64 + distance);
     if past && future {
-        let any = nearest(&edges, origin, pre, &|_| true, fits).map(|e| Edge { t: origin as f64 + e.t, ..e });
+        let any = nearest(&edges, origin, pre as f64, &|_| true, fits).map(|e| Edge { t: origin as f64 + e.t, ..e });
         (Some(time), any)
     } else {
         wide()

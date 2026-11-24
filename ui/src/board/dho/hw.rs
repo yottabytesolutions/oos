@@ -63,9 +63,11 @@ pub use decode::{decode_probed, decode_with, la_record};
 #[cfg(any(target_os = "linux", test))]
 pub(super) use decode::{pair_step, probe_codes};
 pub(super) use plan::auto_rate_depth;
-pub use plan::{avg_hw_ok, seg_max, settings};
+#[cfg(test)]
+pub use plan::batch_plan;
 #[cfg(any(target_os = "linux", test))]
-pub use plan::{batch_plan, seg_read_plan};
+pub use plan::seg_read_plan;
+pub use plan::{avg_hw_ok, seg_max, settings};
 #[cfg(test)]
 pub use roll::roll_la_t0;
 pub use roll::{slow_mode, ROLL_TDIV};

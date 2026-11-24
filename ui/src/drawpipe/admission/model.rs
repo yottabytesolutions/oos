@@ -43,7 +43,7 @@ impl PoolPlan {
         }
     }
 
-    pub(super) fn seed(self) -> [u64; 2] {
+    pub(super) fn seed(self, played_points: Option<u64>) -> [u64; 2] {
         if self.route == Route::Average {
             return self.average_seed();
         }
@@ -58,7 +58,7 @@ impl PoolPlan {
             Route::Zoom => (20, 180),
             _ => (9, 80),
         };
-        let points = self.points.min(625_000);
+        let points = played_points.unwrap_or(self.points).min(625_000);
         [(points * point_ns + self.columns * column_ns) * self.channels, 100_000]
     }
 
@@ -93,13 +93,16 @@ impl Estimate {
     }
 
     #[cfg(any(target_os = "linux", test))]
-    pub(super) fn grant(self, bound: u32, budget: u128, workers: u32) -> super::Grant {
-        let available = budget.saturating_sub(u128::from(self.fixed));
+    pub(super) fn grant(self, bound: u32, budget: super::GrantBudget, workers: u32) -> super::Grant {
+        let fixed = u128::from(self.fixed);
+        let available = budget.work.as_nanos().saturating_sub(fixed);
         let work = u128::from(self.work);
-        if work > available {
+        let workers = u128::from(workers);
+        let work_limit = available * workers / work;
+        let limit = budget.cycle.map_or(work_limit, |cycle| work_limit.min(cycle.limit(work, fixed, workers)));
+        if work > available || limit == 0 {
             return super::Grant::Serial;
         }
-        let count = available.saturating_mul(u128::from(workers)) / work;
-        super::Grant::Overlapping(count.min(u128::from(bound.max(1))) as u32)
+        super::Grant::Overlapping(limit.min(u128::from(bound.max(1))) as u32)
     }
 }

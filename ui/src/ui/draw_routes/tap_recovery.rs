@@ -374,7 +374,7 @@ fn held_deep_measurement_uses_the_raw_taps_statistics_once() {
             route.ui.measure_in_background();
         }
         let Source::Hw { shared, .. } = &route.ui.src else { unreachable!() };
-        lock(shared).deep_ok = true;
+        lock(shared).read_geometry.deep_ok = true;
         let depth = 10_000_000;
         let raw = submit_charged(&mut route, 1, vec![0.25; 12_512], |f| f.acq.1 = depth).0;
         submit_charged(&mut route, 3, vec![0.75; 12_512], |f| {

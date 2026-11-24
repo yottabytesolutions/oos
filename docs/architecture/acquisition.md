@@ -189,6 +189,8 @@ One batch: arm, fill, read, post-read reads, publish. In order:
    - deep record: the screen window raw, at most every `deepmeas::PERIOD`.
 
    The two raw reads are `MeasRead`s (records.md).
+   With [played windows](../fork/played-window.md) enabled, the compressed display batch can play a crop.
+   Its newest-frame raw replay reads the entire stored record.
 9. Read trigger, mask and zone status for the batch result. Log hardware average progress when enabled.
 10. With `acq.prearm = on`, arm ahead where nothing needs this ring any more. The deposit route waits for the
     prior publication before submitting the completed read. See [admission and telemetry](frames.md#admission).

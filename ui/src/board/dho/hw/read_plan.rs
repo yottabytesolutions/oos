@@ -17,12 +17,16 @@ mod depth;
 mod window;
 
 #[cfg(test)]
+mod played_tests;
+#[cfg(test)]
 mod tests;
 
 #[cfg(any(target_os = "linux", test))]
 pub(super) use capture::auto_capture;
 pub(super) use capture::configure_capture;
 pub(super) use depth::{depth, use_screen_depth};
+#[cfg(any(target_os = "linux", test))]
+pub(super) use window::live_window;
 #[cfg(any(target_os = "linux", test))]
 pub use window::stop_plan;
 
@@ -70,7 +74,7 @@ impl<'a> ReadPlan<'a> {
 
     pub(super) fn replay_settings(&self, b: &Settings, deep: bool) -> Option<Settings> {
         if self.raw_newest() {
-            Some(seq::raw_settings(b))
+            Some(super::window::whole_raw_replay(b))
         } else if deep {
             self.deep_replay_settings(b)
         } else {

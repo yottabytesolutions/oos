@@ -149,7 +149,8 @@ fn grant_sizes_match_decoding_of_pairs_raw_replay_and_la() {
         let decode = |s: &seq::Settings| hw::decode(&vec![0; seq::frame_bytes(s, &params)], s, &params, 0);
         let count = |frame: &Frame| frame.ch.iter().map(Vec::len).sum::<usize>();
         let pairs = count(&decode(&settings));
-        let raw = count(&decode(&seq::raw_settings(&settings)));
+        // The live playback settings specify a crop; the raw reader is funded for the full record.
+        let raw = count(&decode(&seq::Settings { window: None, ..seq::raw_settings(&settings) }));
         assert_eq!(record_sizes(&settings, &params), (pairs, raw));
         let settings = seq::Settings { la: Some(la::Set::default()), ..settings };
         let n = la::window(&la::timing(&params, mask)).0 as usize;

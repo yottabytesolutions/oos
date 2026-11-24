@@ -64,6 +64,10 @@ impl SourceTiming {
         (self.read + self.readout).as_secs_f32() * 1e3
     }
 
+    pub(super) fn window_read(&self) -> (Duration, Duration) {
+        (self.arm + self.readout, self.read)
+    }
+
     pub(super) fn trigger_wait(&self) -> Duration {
         self.first_trigger + self.fill
     }

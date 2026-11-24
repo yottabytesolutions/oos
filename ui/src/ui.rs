@@ -9108,7 +9108,7 @@ mod tests {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         // the acquisition plans raw reads of the deep records (`Shared::deep_ok`)
-        shared.lock().unwrap().deep_ok = true;
+        shared.lock().unwrap().read_geometry.deep_ok = true;
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.measure_in_background();
         ui.m.run = RunState::Run;
@@ -9168,7 +9168,7 @@ mod tests {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         // the acquisition plans raw reads of the deep records (`Shared::deep_ok`)
-        shared.lock().unwrap().deep_ok = true;
+        shared.lock().unwrap().read_geometry.deep_ok = true;
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.measure_in_background();
         ui.m.run = RunState::Run;
@@ -9437,7 +9437,7 @@ mod tests {
         use super::*;
         let shared: crate::board::HwShared = Default::default();
         // the acquisition plans raw reads of the deep records (`Shared::deep_ok`)
-        shared.lock().unwrap().deep_ok = true;
+        shared.lock().unwrap().read_geometry.deep_ok = true;
         let mut ui = Ui::for_tests(Source::Hw { shared: shared.clone(), seen: 0 });
         ui.m.run = RunState::Run;
         for c in 1..NCH {
@@ -11043,7 +11043,7 @@ mod tests {
                 la: None,
                 fixed_ti: None,
                 hw_avg: false,
-                pre_exact: false,
+                trigger_anchor: crate::board::TriggerAnchor::new(false),
                 cfg: 0,
                 basic: Default::default(),
             }
@@ -11103,7 +11103,7 @@ mod tests {
                     la: None,
                     fixed_ti: None,
                     hw_avg: false,
-                    pre_exact: false,
+                    trigger_anchor: crate::board::TriggerAnchor::new(false),
                     cfg: 0,
                     basic: Default::default(),
                 }
@@ -11183,7 +11183,7 @@ mod tests {
                             la: None,
                             fixed_ti: None,
                             hw_avg: false,
-                            pre_exact: false,
+                            trigger_anchor: crate::board::TriggerAnchor::new(false),
                             cfg: 0,
                             basic: Default::default(),
                         }
@@ -11235,7 +11235,7 @@ mod tests {
                 la: None,
                 fixed_ti: None,
                 hw_avg: false,
-                pre_exact: false,
+                trigger_anchor: crate::board::TriggerAnchor::new(false),
                 cfg: 0,
                 basic: Default::default(),
             }

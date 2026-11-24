@@ -66,7 +66,7 @@ pub(crate) fn edge_smooth<S: crate::trignear::TriggerSamples + ?Sized>(
     l: usize,
     fits: impl Fn(f64) -> bool,
 ) -> (Option<f64>, Option<oos_dsp::edges::Edge>) {
-    crate::trignear::smooth_all(v, pre, trigger, span, l, &fits)
+    crate::trignear::smooth_all(v, pre as f64, trigger, span, l, &fits)
 }
 
 #[cfg(test)]

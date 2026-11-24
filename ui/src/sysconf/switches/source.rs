@@ -81,11 +81,12 @@ pub(crate) struct SourceOverhead {
     fifo: bool,
     work_budget: Option<Duration>,
     capture: Capture,
+    play_window: bool,
 }
 
 impl Default for SourceOverhead {
     fn default() -> Self {
-        Self { batch_settle: true, fifo: true, work_budget: None, capture: Capture::default() }
+        Self { batch_settle: true, fifo: true, work_budget: None, capture: Capture::default(), play_window: false }
     }
 }
 
@@ -99,9 +100,19 @@ impl SourceOverhead {
             }
             _ => true,
         };
+        let batch_settle = enabled("acq.write_gap", "OOS_ACQ_WRITE_GAP", "0", "10");
+        let fifo = enabled("acq.sched", "OOS_ACQ_SCHED", "fifo", "other");
+        let play_window = match conf_value(None, conf, "acq.play_window").as_deref() {
+            Some("on") => true,
+            Some("off") | None => false,
+            Some(value) => {
+                report("acq.play_window", value, "off");
+                false
+            }
+        };
         Self {
-            batch_settle: enabled("acq.write_gap", "OOS_ACQ_WRITE_GAP", "0", "10"),
-            fifo: enabled("acq.sched", "OOS_ACQ_SCHED", "fifo", "other"),
+            batch_settle,
+            fifo,
             work_budget: conf_value(text(env, "OOS_ACQ_WORK_BUDGET_MS").as_deref(), conf, "acq.work_budget_ms")
                 .and_then(|value| {
                     if let Ok(ms @ 4..=20) = value.parse::<u64>() {
@@ -111,6 +122,7 @@ impl SourceOverhead {
                     None
                 }),
             capture: Capture::parse(conf, &mut report),
+            play_window,
         }
     }
 
@@ -131,6 +143,10 @@ impl SourceOverhead {
     pub(crate) fn capture(self) -> Capture {
         self.capture
     }
+
+    pub(crate) fn play_window(self) -> bool {
+        self.play_window
+    }
 }
 
 impl fmt::Display for SourceOverhead {
@@ -139,10 +155,11 @@ impl fmt::Display for SourceOverhead {
         let sched = if self.fifo { "fifo" } else { "other" };
         write!(
             f,
-            "acq.write_gap={gap} acq.sched={sched} acq.work_budget_ms={} acq.capture.requested={} acq.capture.inferred={}",
+            "acq.write_gap={gap} acq.sched={sched} acq.work_budget_ms={} acq.capture.requested={} acq.capture.inferred={} acq.play_window={}",
             self.work_budget().as_millis(),
             self.capture,
             if self.capture.inferred { "on" } else { "off" },
+            if self.play_window() { "on" } else { "off" },
         )
     }
 }
@@ -158,8 +175,8 @@ mod tests {
         batch_settle: false,
         fifo: false,
         work_budget: None,
-
         capture: Capture { mode: CaptureMode::Full, inferred: false },
+        play_window: false,
     };
 
     #[test]
@@ -193,6 +210,23 @@ mod tests {
         });
         assert_eq!(source, SourceOverhead::default());
         assert_eq!(reported, ["acq.write_gap 5 -> 0", "acq.sched idle -> fifo"]);
+    }
+
+    #[test]
+    fn play_window_is_off_unless_explicitly_enabled() {
+        for (conf, expected, errors) in [
+            ("", false, 0),
+            ("acq.play_window = off", false, 0),
+            ("acq.play_window = on", true, 0),
+            ("acq.play_window = yes", false, 1),
+        ] {
+            let mut reports = Vec::new();
+            let switches = SourceOverhead::parse(&|_| None, conf, |key, value, fallback| {
+                reports.push(format!("{key} {value} -> {fallback}"));
+            });
+            assert_eq!(switches.play_window(), expected);
+            assert_eq!(reports.len(), errors);
+        }
     }
 
     #[test]

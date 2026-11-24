@@ -54,7 +54,7 @@ fn steps(n: usize, queued_raw: bool, sample: &mut Observer<'_>) {
         ch: std::array::from_fn(|_| vec![1.0; crate::compress::MAX_DEPTH as usize + 1]),
         ..(*frame).clone()
     });
-    lock(&shared).deep_ok = true;
+    lock(&shared).read_geometry.deep_ok = true;
     let name = if queued_raw {
         "queued_raw_before_pair"
     } else if n == 625_000 {

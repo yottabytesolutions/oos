@@ -77,26 +77,24 @@ pub(crate) fn edge_smooth_near<S: TriggerSamples + ?Sized>(
     l: usize,
     fits: impl Fn(f64) -> bool,
 ) -> SearchResult {
-    edge_smooth_near_with(v, (pre, span, l), EdgeSearch { level, hysteresis: hyst, rising, either }, &fits, true, None)
+    edge_smooth_near_with(v, (pre as f64, span, l), EdgeSearch { level, hysteresis: hyst, rising, either }, &fits, None)
 }
 
 pub(crate) fn edge_smooth_near_with<S: TriggerSamples + ?Sized>(
     v: &S,
-    (pre, span, l): (usize, usize, usize),
+    (pre, span, l): (f64, usize, usize),
     trigger: EdgeSearch,
     fits: &dyn Fn(f64) -> bool,
-    // The board adapter still passes its former end-rail policy.
-    _require_end_rail: bool,
     wide: Option<&mut WideRefine<'_>>,
 ) -> SearchResult {
     #[cfg(test)]
     if fixture::bypass_sparse() {
-        return (Some(pre as f64), None);
+        return (Some(pre), None);
     }
     let l = l.max(1);
     let near = near_span(l);
-    let bounds = sample_bounds(v.len(), (pre, span, l));
-    let local = if near >= span || bounds == sample_bounds(v.len(), (pre, near, l)) {
+    let bounds = sample_bounds(v.len(), (pre as usize, span, l));
+    let local = if near >= span || bounds == sample_bounds(v.len(), (pre as usize, near, l)) {
         Some(smooth_all(v, pre, trigger, span, l, fits))
     } else {
         near_proof(v, (0, v.len()), (pre, near, l), trigger, fits, bounds.map(|b| b.start))
@@ -110,7 +108,9 @@ pub(crate) fn edge_smooth_near_with<S: TriggerSamples + ?Sized>(
         }
     });
     #[cfg(test)]
-    fixture::compare(v, (pre, span, l), trigger, fits, fixture::Outcome::Refined(local.is_some(), result));
+    if pre.fract() == 0.0 {
+        fixture::compare(v, (pre as usize, span, l), trigger, fits, fixture::Outcome::Refined(local.is_some(), result));
+    }
     result
 }
 
@@ -122,7 +122,8 @@ pub fn near_window(pre: usize, len: usize, l: usize) -> (usize, usize) {
     (pre.saturating_sub(near + l), (pre + near + l).min(len))
 }
 
-fn near_span(l: usize) -> usize {
+/// Half-span of trigger refinement for a smoothing width of `l` played points.
+pub(crate) fn near_span(l: usize) -> usize {
     NEAR_COLS * l + NEAR_PAD
 }
 
@@ -149,7 +150,7 @@ pub(crate) fn edge_near_window<S: TriggerSamples + ?Sized>(
         return None;
     }
     let trigger = EdgeSearch { level, hysteresis: hyst, rising, either };
-    near_proof(v, (base, len), (pre, near, l), trigger, &fits, None)
+    near_proof(v, (base, len), (pre as f64, near, l), trigger, &fits, None)
 }
 
 /// The near search: Some only when its answer is the wide search's (module comment). `v` holds samples `base..` of
@@ -162,39 +163,32 @@ fn near_only<S: TriggerSamples + ?Sized>(
     trigger: EdgeSearch,
     fits: &dyn Fn(f64) -> bool,
 ) -> Option<(Option<f64>, Option<Edge>)> {
-    near_proof(v, source, geometry, trigger, fits, None)
+    near_proof(v, source, (geometry.0 as f64, geometry.1, geometry.2), trigger, fits, None)
 }
 
 fn near_proof<S: TriggerSamples + ?Sized>(
     v: &S,
     source: (usize, usize),
-    geometry: (usize, usize, usize),
+    (pre, span, l): (f64, usize, usize),
     trigger: EdgeSearch,
     fits: &dyn Fn(f64) -> bool,
     wide_origin: Option<usize>,
 ) -> Option<SearchResult> {
-    let pre = geometry.0;
     let (level, hyst) = (trigger.level, trigger.hysteresis);
-    search(v, source, geometry, trigger, wide_origin, |a, origin, scratch| {
+    search(v, source, (pre as usize, span, l), trigger, wide_origin, |a, origin, scratch| {
         let (time, any) = scratch.nearest(origin, pre, trigger, fits);
-        let dist = (time? - pre as f64).abs();
+        let dist = (time? - pre).abs();
         let (first, last) = scratch.proof_bounds(level - hyst, level + hyst, wide_origin.is_none())?;
         let first = (a + first) as f64;
         let last = (a + last) as f64;
-        (first < pre as f64 - dist && last > pre as f64 + dist).then_some((time, any))
+        (first < pre - dist && last > pre + dist).then_some((time, any))
     })
     .flatten()
 }
 
 /// The edge of `edges` (times from sample `a`) nearest `pre` that `ok` and `fits` accept, its time still from `a`.
-fn nearest(
-    edges: &[Edge],
-    a: usize,
-    pre: usize,
-    ok: &dyn Fn(&Edge) -> bool,
-    fits: &dyn Fn(f64) -> bool,
-) -> Option<Edge> {
-    let d = |e: &Edge| (a as f64 + e.t - pre as f64).abs();
+fn nearest(edges: &[Edge], a: usize, pre: f64, ok: &dyn Fn(&Edge) -> bool, fits: &dyn Fn(f64) -> bool) -> Option<Edge> {
+    let d = |e: &Edge| (a as f64 + e.t - pre).abs();
     edges.iter().filter(|e| ok(e) && fits(a as f64 + e.t)).min_by(|p, q| d(p).total_cmp(&d(q))).copied()
 }
 
@@ -204,6 +198,7 @@ fn nearest(
 /// comparators see, so an edge farther away is a crossing the hardware did not trigger on; the hardware point stands.
 /// `v` holds samples `base..` of a frame of `len` samples and covers `near_window(pre, len, l)`. Returns the edge and
 /// the nearest edge of either direction, as `edge_smooth`.
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)] // The frame and the borrowed window have separate coordinates.
 pub(crate) fn edge_near<S: TriggerSamples + ?Sized>(
     v: &S,
@@ -217,31 +212,63 @@ pub(crate) fn edge_near<S: TriggerSamples + ?Sized>(
     span: usize,
     l: usize,
 ) -> (Option<f64>, Option<Edge>) {
+    edge_near_from(v, (base, len), (pre as f64, span, l), EdgeSearch { level, hysteresis: hyst, rising, either })
+}
+
+/// Find a local crossing from the fractional anchor without searching the rest of the record.
+pub(crate) fn edge_near_from<S: TriggerSamples + ?Sized>(
+    v: &S,
+    (base, len): (usize, usize),
+    (pre, span, l): (f64, usize, usize),
+    trigger: EdgeSearch,
+) -> SearchResult {
     let l = l.max(1);
     let near = near_span(l).min(span);
-    let trigger = EdgeSearch { level, hysteresis: hyst, rising, either };
     let fits = &|_| true;
-    let result =
-        search(v, (base, len), (pre, near, l), trigger, None, |_, a, scratch| scratch.nearest(a, pre, trigger, fits))
-            .unwrap_or_default();
+    let result = search(v, (base, len), (pre as usize, near, l), trigger, None, |_, a, scratch| {
+        scratch.nearest(a, pre, trigger, fits)
+    })
+    .unwrap_or_default();
     #[cfg(test)]
-    if base == 0 && len == v.len() {
-        fixture::compare(v, (pre, span, l), trigger, fits, fixture::Outcome::Anchored(result));
+    if base == 0 && len == v.len() && pre.fract() == 0.0 {
+        fixture::compare(v, (pre as usize, span, l), trigger, fits, fixture::Outcome::Anchored(result));
     }
     result
 }
 
+/// The decoded grid can smooth over fewer points than the plot used to size a crop.
+/// Use the crop's spare points before the screen and anchor to arm the comparator,
+/// and accept crossings only within the decoded near window.
+pub(crate) fn edge_near_cropped<S: TriggerSamples + ?Sized>(
+    v: &S,
+    (pre, span, l): (f64, usize, usize),
+    screen_first: f64,
+    trigger: EdgeSearch,
+) -> Option<f64> {
+    let l = l.max(1);
+    let index = pre as usize;
+    let bounds = sample_bounds(v.len(), (index, near_span(l).min(span), l))?;
+    let first_edge = (bounds.start + l / 2) as f64;
+    let padding = screen_first.min(pre) as usize;
+    let history = padding.saturating_sub(oos_dsp::interp::LANCZOS8_RADIUS).min(span + l);
+    let start = bounds.start.min(index.saturating_sub(history));
+    search_in(v, 0, (start..bounds.end, l), trigger, None, |_, a, scratch| {
+        scratch.nearest(a, pre, trigger, &|ti| ti >= first_edge).0
+    })
+}
+
 pub(crate) fn smooth_all<S: TriggerSamples + ?Sized>(
     v: &S,
-    pre: usize,
+    pre: f64,
     trigger: EdgeSearch,
     span: usize,
     l: usize,
     fits: &dyn Fn(f64) -> bool,
 ) -> (Option<f64>, Option<Edge>) {
     let l = l.max(1);
-    let origin = Some(pre.saturating_sub(span + l));
-    search(v, (0, v.len()), (pre, span, l), trigger, origin, |_, a, scratch| scratch.nearest(a, pre, trigger, fits))
+    let index = pre as usize;
+    let origin = Some(index.saturating_sub(span + l));
+    search(v, (0, v.len()), (index, span, l), trigger, origin, |_, a, scratch| scratch.nearest(a, pre, trigger, fits))
         .unwrap_or_default()
 }
 
@@ -267,7 +294,7 @@ impl SearchScratch {
     fn nearest(
         &self,
         a: usize,
-        pre: usize,
+        pre: f64,
         trigger: EdgeSearch,
         fits: &dyn Fn(f64) -> bool,
     ) -> (Option<f64>, Option<Edge>) {
@@ -286,10 +313,21 @@ fn search<S: TriggerSamples + ?Sized, T>(
     interpolation_origin: Option<usize>,
     select: impl FnOnce(usize, usize, &SearchScratch) -> T,
 ) -> Option<T> {
+    let bounds = sample_bounds(source.1, geometry)?;
+    Some(search_in(v, source.0, (bounds, geometry.2), trigger, interpolation_origin, select))
+}
+
+fn search_in<S: TriggerSamples + ?Sized, T>(
+    v: &S,
+    base: usize,
+    (bounds, l): (Range<usize>, usize),
+    trigger: EdgeSearch,
+    interpolation_origin: Option<usize>,
+    select: impl FnOnce(usize, usize, &SearchScratch) -> T,
+) -> T {
     crate::fastdraw::with_scratch(|work| {
         let scratch = &mut work.trigger;
         let SearchScratch { samples, indexed, edges, window } = scratch;
-        let bounds = sample_bounds(source.1, geometry)?;
         let a = bounds.start;
         // Use the wide origin for interpolation so adding the fractional index rounds the same way.
         let origin = interpolation_origin.unwrap_or(a);
@@ -297,11 +335,11 @@ fn search<S: TriggerSamples + ?Sized, T>(
         let rebase = |(i, x)| (offset + i, x);
         indexed.clear();
         if let Some(codes) = v.trigger_codes().filter(|_| bounds.len() >= pruned::MIN_SAMPLES) {
-            pruned::smooth(codes, source.0, bounds.clone(), geometry.2, trigger, (indexed, window));
+            pruned::smooth(codes, base, bounds.clone(), l, trigger, (indexed, window));
         }
         if indexed.is_empty() {
             let initial_sum = if interpolation_origin.is_some() { 0.0 } else { -0.0 };
-            smoothed(v, source.0, bounds, geometry.2, (trigger.level, initial_sum), (samples, window));
+            smoothed(v, base, bounds, l, (trigger.level, initial_sum), (samples, window));
             oos_dsp::edges::trigger_edges_indexed_into(
                 samples.iter().copied().enumerate().map(rebase),
                 trigger.level,
@@ -316,7 +354,7 @@ fn search<S: TriggerSamples + ?Sized, T>(
                 edges,
             );
         }
-        Some(select(a, origin, scratch))
+        select(a, origin, scratch)
     })
 }
 

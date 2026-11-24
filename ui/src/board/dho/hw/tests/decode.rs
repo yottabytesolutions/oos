@@ -71,8 +71,8 @@ fn raw_pair_layout_skips_header_and_stride_padding() {
         assert_eq!(layout.stride, p.ratio as usize);
         assert!(frame.envelope && frame.ch.iter().all(Vec::is_empty));
         assert_eq!(
-            (frame.seq, frame.pre, frame.dt, frame.pre_exact),
-            (7, expected.pre, expected.dt, expected.pre_exact)
+            (frame.seq, frame.pre, frame.dt, frame.trigger_anchor.at_adc_rate()),
+            (7, expected.pre, expected.dt, expected.trigger_anchor.at_adc_rate())
         );
         for c in 0..4 {
             let samples = layout.channel(&bytes, c);

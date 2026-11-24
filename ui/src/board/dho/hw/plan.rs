@@ -24,7 +24,7 @@ impl super::super::Dho {
         let crate::wave::Source::Hw { shared, .. } = source else {
             return " acq.capture=unavailable acq.capture.stored_points=0".into();
         };
-        let (applied, mode, points, status) = {
+        let (applied, mode, points, status, play) = {
             let g = crate::perfguard::deep::ui_lock(shared);
             let id = g.acquisition.identity();
             let frame = &g.frame;
@@ -33,7 +33,9 @@ impl super::super::Dho {
             let status = g.status.diagnostic(g.acquisition);
             let applied = g.status.capture(id).map(str::to_owned);
             let mode = g.want.as_ref().filter(|_| current).map(|want| want.mode);
-            (applied, mode, frame.acq.1, status)
+            let play =
+                g.read_geometry.play.filter(|(played, _)| (played.gen(), played.epoch()) == (id.gen(), id.epoch()));
+            (applied, mode, frame.acq.1, status, play)
         };
         let mut text = applied.unwrap_or_else(|| {
             mode.map_or_else(
@@ -41,9 +43,13 @@ impl super::super::Dho {
                 |mode| capture_description(mode, points),
             )
         });
+        use std::fmt::Write;
         if let Some(status) = status {
-            use std::fmt::Write;
             write!(text, " acq.status={:?}", status.message()).expect("writing to a String cannot fail");
+        }
+        if let Some((_, play)) = play {
+            write!(text, " acq.play.lo={} acq.play.n={} acq.play.k={}", play.lo, play.n, play.k)
+                .expect("writing to a String cannot fail");
         }
         text
     }
@@ -296,8 +302,5 @@ pub fn bw_code(i: usize) -> u32 {
 /// Batch settings for a configured acquisition.
 #[cfg(any(target_os = "linux", test))]
 pub fn batch_plan(s: &Settings, p: &hz::Params, zone_batch: u32) -> Settings {
-    let plan = read_plan::read_plan(s, p, zone_batch);
-    let mut batch = s.clone();
-    plan.apply(&mut batch);
-    batch
+    super::window::batch_play(s, p, zone_batch, None)
 }

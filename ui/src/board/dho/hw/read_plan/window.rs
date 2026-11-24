@@ -27,6 +27,9 @@ impl Play {
 
     /// Select the screen window for deep records when it fits. Otherwise request full-record compression.
     pub(super) fn select(s: &Settings, stored: &hz::Params) -> Self {
+        if matches!(s.mode, Mode::Reduced(_)) {
+            return Self { window: None, compress: 1 };
+        }
         let mut play = Self::from_settings(s);
         if stored.memsel > crate::compress::MAX_DEPTH {
             match screen_window(s, stored) {
@@ -46,15 +49,18 @@ impl Play {
         if self == Self::from_settings(s) {
             return seq::frame_bytes(s, stored);
         }
+        seq::frame_bytes(&self.playback(s), stored)
+    }
+
+    fn playback(self, s: &Settings) -> Settings {
         // The HAL byte count needs only the analog playback fields. Avoid cloning the mask and zone tables.
-        let playback = Settings {
+        Settings {
             playback: s.playback,
             header: s.header,
             window: self.window,
             compress: self.compress,
             ..Settings::default()
-        };
-        seq::frame_bytes(&playback, stored)
+        }
     }
 
     pub(super) fn replay(self, mode: Mode, stored: &hz::Params) -> Replay {
@@ -68,6 +74,59 @@ impl Play {
             Replay::None
         }
     }
+}
+
+/// Select an aligned live crop with the same compression factor and pair phase as the whole record.
+pub(in crate::board::dho::hw) fn live_window(
+    s: &Settings,
+    p: &hz::Params,
+    columns: usize,
+) -> Result<Option<(u32, i64)>, seq::ReadoutError> {
+    if s.compress < 2
+        || p.memsel > crate::compress::MAX_DEPTH
+        || !s.playback.is_play4()
+        || s.mode != Mode::Normal
+        || s.single
+        || s.segments.is_some()
+        || s.la.is_some()
+        || s.window.is_some()
+        || p.max_frames < 2
+        || p.rate == 0
+    {
+        return Ok(None);
+    }
+    let screen = crate::model::HDIV as f64 * s.tdiv * p.rate as f64;
+    let k = seq::compress_k(s, p);
+    if k < 2 {
+        return Ok(None);
+    }
+    let margin = f64::from(live_margin(screen, k, columns));
+    let pre = f64::from(p.pre);
+    let center = pre + s.delay * p.rate as f64;
+    let left = (center - screen / 2.0).min(pre) - margin;
+    let right = (center + screen / 2.0).max(pre) + margin;
+    // An eight-output-point group preserves both the whole-record pair phase and its floor-rounded tail.
+    let group = 8 * k;
+    let lo = (left.floor() as u32).min(p.memsel) / group * group;
+    let hi = (right.ceil() as u32).max(lo).min(p.memsel);
+    let n = (hi - lo).div_ceil(group).saturating_mul(group).min(p.memsel - lo);
+    if n == p.memsel {
+        return Ok(None);
+    }
+    let window = Some((n, i64::from(lo) - i64::from(p.pre)));
+    let playback = Play { window, compress: s.compress }.playback(s);
+    if seq::compress_k(&playback, p) != k {
+        return Err(seq::ReadoutError::InsufficientPoints { points: n, factor: k, len: 8 });
+    }
+    seq::validate_readout(&playback, p)?;
+    Ok(window)
+}
+
+/// Cropped placement stays within the near search. Reserve its smoothed sample range and the
+/// interpolation support so a placed screen can exceed the crop only at a whole-record boundary.
+pub(super) fn live_margin(screen: f64, k: u32, columns: usize) -> u32 {
+    let l = crate::compress::smooth_len(f64::from(k) * columns as f64 / screen);
+    (crate::trignear::near_span(l) + l + oos_dsp::interp::LANCZOS8_RADIUS) as u32 * k
 }
 
 /// The part of a deep record the screen shows, as a read-out window (`Settings::window`: points, first point from the

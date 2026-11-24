@@ -29,6 +29,40 @@ fn read_plan_golden() {
     assert_eq!(screen, include_str!("screen-golden.txt"));
 }
 
+#[test]
+fn enabled_play_preserves_phase_and_capture_geometry_across_the_grid() {
+    use super::super::window::{batch_play, configured_play_window};
+
+    let sw = Switches::parse(&|_| None, "acq.compress = on\nacq.play_window = on", "", Default::default());
+    assert!(sw.source.play_window());
+    for mask in [1u32, 2, 3, 15] {
+        for tdiv in [1e-6, 10e-6, 100e-6, 500e-6, 10e-3] {
+            for (auto, policy) in [(false, AutoDepth::Extended), (true, AutoDepth::Extended), (true, AutoDepth::Screen)]
+            {
+                let mut m = model_at(mask, scale_at(tdiv));
+                m.mdepth = if auto { 0 } else { mdepths().iter().position(|&(_, d)| d == 1_000_000).unwrap() };
+                m.auto_acquisition.set_depth(policy);
+                let s = settings(&m, false, &sw);
+                let p = seq::record_geometry(&s).unwrap();
+                let b = batch_play(&s, &p, sw.board.zone_batch, configured_play_window(&s, &p, 1024));
+                let k = seq::compress_k(&s, &p);
+                let (n, lo) = seq::window(&b, &p);
+                let len = if k > 1 { seq::compressed_len(&b, &p) } else { n };
+                assert_eq!(seq::validate_readout(&b, &p), Ok(()));
+                assert_eq!(k, seq::compress_k(&b, &p));
+                assert_eq!((lo % (8 * k), n % 8, seq::frame_bytes(&b, &p) % 16), (0, 0, 0));
+                assert!(len * k <= n && lo + n <= p.memsel && (lo..lo + len * k).contains(&p.pre));
+                let mut f = Frame::default();
+                codes_into(&[0; 18], &b, &p, 1, &mut f).unwrap();
+                assert_eq!(f.dt, f64::from(k) / p.rate as f64);
+                assert_eq!(f.acq, (p.rate as f64, p.memsel as usize));
+                let anchor = if n < p.memsel { f64::from(p.pre - lo) / f64::from(k) } else { f64::from(p.pre / k) };
+                assert_eq!(f.trigger_anchor.point(f.pre), anchor);
+            }
+        }
+    }
+}
+
 fn model_at(mask: u32, tscale: usize) -> Model {
     let mut m = Model { tscale, delay: 0.0, trig_src: mask.trailing_zeros() as usize, ..Default::default() };
     for (i, channel) in m.ch.iter_mut().enumerate() {
@@ -37,7 +71,7 @@ fn model_at(mask: u32, tscale: usize) -> Model {
     m
 }
 
-fn scale_at(tdiv: f32) -> usize {
+pub(super) fn scale_at(tdiv: f32) -> usize {
     TIME_SCALES.iter().position(|&t| (t - tdiv).abs() < tdiv * 1e-6).unwrap()
 }
 

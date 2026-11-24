@@ -482,9 +482,14 @@ length and loader ID with the saved values. It reads and hashes the full image w
 state file or identify the previous image. For an interrupted rollback it checks the full hash even when the
 loader ID matches current, since the loader ID omits padding. When recovery matches the previous image it
 completes rollback tracking, preserving the rollback slot and using the restored build for downgrade checks.
-A partial rollback retains its entries so the rollback can be repeated. An external replacement clears current
-and previous tracking, so the next verified install has no prior build stamp to compare. A card read error leaves
-tracking in place and is logged. Reconciliation only writes update state.
+A partial rollback retains its entries so the rollback can be repeated. If GEL reinstalls the same build with
+the default boot card mode, startup checks the recovery image and compares its initramfs `/etc/oos-build` with
+the tracked build. The stock loader hashes the device tree, so reconciliation also checks whether applying SDR104
+in memory reproduces the tracked loader ID. A match records the actual recovery hash, length and loader ID, keeps
+the rollback entry and logs the rewrite once. The loader has accepted the boot image and signatures are verified
+at install time. The build stamp is used only for tracking. Other external replacements clear current and previous
+tracking, so the next verified install has no prior build stamp to compare. A card read error leaves tracking in
+place and is logged. Reconciliation only writes update state.
 
 `oos-update leave` clears the same entries explicitly. It requires any pending update to finish first and changes
 only the update state. The immediate power-on follows the existing boot magic. After the next healthy OOS start,

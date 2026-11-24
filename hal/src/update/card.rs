@@ -104,6 +104,18 @@ pub fn image_header(b: &[u8]) -> Result<ImageInfo, String> {
     Ok(ImageInfo { len, name, id })
 }
 
+pub(super) fn loader_id(header: &[u8], kernel: &[u8], ramdisk: &[u8], second: &[u8]) -> [u8; 20] {
+    sha1(&[
+        kernel,
+        &(kernel.len() as u32).to_le_bytes(),
+        ramdisk,
+        &(ramdisk.len() as u32).to_le_bytes(),
+        second,
+        &(second.len() as u32).to_le_bytes(),
+        &header[32..576],
+    ])
+}
+
 /// The whole image: header, section lengths and the loader's SHA-1 id (an image the loader would refuse is
 /// refused here, before anything is written).
 pub fn check_image(b: &[u8]) -> Result<ImageInfo, String> {
@@ -121,15 +133,7 @@ pub fn check_image(b: &[u8]) -> Result<ImageInfo, String> {
     let k0 = page;
     let r0 = k0 + ks.div_ceil(page) * page;
     let s0 = r0 + rs.div_ceil(page) * page;
-    let id = sha1(&[
-        &b[k0..k0 + ks],
-        &(ks as u32).to_le_bytes(),
-        &b[r0..r0 + rs],
-        &(rs as u32).to_le_bytes(),
-        &b[s0..s0 + ss],
-        &(ss as u32).to_le_bytes(),
-        &b[32..576],
-    ]);
+    let id = loader_id(b, &b[k0..k0 + ks], &b[r0..r0 + rs], &b[s0..s0 + ss]);
     if id != info.id || b[596..608].iter().any(|&x| x != 0) {
         return Err(format!(
             "image id mismatch (header {}, content {}): the loader would refuse it",

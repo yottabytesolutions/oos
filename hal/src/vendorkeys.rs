@@ -5,6 +5,9 @@
 //! inner one. What was found is kept on the data partition of the unit, so later starts need no search.
 
 use crate::model::{self, Keys};
+use crate::system::{durable_replace, oos_mounted};
+use std::io;
+use std::path::Path;
 
 /// Where the stock software is: its application package.
 const STOCK_FILES: [&str; 1] = ["/rigol/app/Sparrow.apk"];
@@ -15,14 +18,14 @@ fn word(b: &[u8], o: usize) -> Option<u32> {
 }
 
 fn wide(b: &[u8], o: usize) -> Option<u64> {
-    b.get(o..o + 8).map(|c| u64::from_le_bytes(c.try_into().unwrap()))
+    Some(u64::from_le_bytes(b.get(o..o + 8)?.try_into().ok()?))
 }
 
 fn half(b: &[u8], o: usize) -> Option<u16> {
     b.get(o..o + 2).map(|c| u16::from_le_bytes([c[0], c[1]]))
 }
 
-/// One loaded part of an image: its address, place in the file, size, and whether it runs.
+/// One loadable segment's address, file offset and size.
 #[derive(Clone, Copy, Debug)]
 struct Seg {
     addr: u64,
@@ -163,22 +166,25 @@ pub fn for_file(vendor: &[u8]) -> Option<Keys> {
         return None;
     }
     let found = stock_files().iter().find_map(|p| std::fs::read(p).ok().and_then(|b| find(&b, vendor)));
-    keep(&found.as_ref().map_or_else(|| format!("none {}\n", sig), text));
+    let mounts = std::fs::read_to_string("/proc/mounts").unwrap_or_default();
+    let line = found.as_ref().map_or_else(|| format!("none {}\n", sig), text);
+    if let Err(error) = keep(&mounts, Path::new(KEEP), &line) {
+        eprintln!("could not save vendor key cache: {error}");
+    }
     found
 }
 
-/// Best effort: without it the next start searches again.
-fn keep(line: &str) {
-    use std::path::Path;
-    let path = Path::new(KEEP);
-    let tmp = format!("{KEEP}.new");
+/// Cache only on mounted data. A stock start or an initramfs directory cannot keep the file.
+fn keep(mounts: &str, path: &Path, line: &str) -> io::Result<()> {
+    if !oos_mounted(mounts) {
+        return Ok(());
+    }
+    let tmp = path.with_added_extension("new");
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    if let Err(error) = crate::system::durable_replace(path, Path::new(&tmp), line.as_bytes(), &options) {
-        eprintln!("could not save vendor key cache: {error}");
-    }
+    durable_replace(path, &tmp, line.as_bytes(), &options)
 }
 
 #[cfg(test)]
@@ -270,6 +276,21 @@ mod tests {
     fn kept_keys_read_back() {
         assert_eq!(parse(&text(&TEST_KEYS)), Some(TEST_KEYS));
         assert_eq!(parse("1 2 3"), None);
+    }
+
+    #[test]
+    fn unmounted_data_skips_the_cache_write() {
+        // Any write beneath the test executable would fail. An unmounted data area never tries it.
+        let path = std::env::current_exe().unwrap().join("vendor.keys");
+        let mounts = "rootfs / rootfs rw 0 0\n/dev/data /oos-other ext4 rw 0 0\n";
+        assert!(keep(mounts, &path, "none fixture\n").is_ok());
+    }
+
+    #[test]
+    fn mounted_data_reports_the_cache_write_failure() {
+        let path = std::env::current_exe().unwrap().join("vendor.keys");
+        let mounts = "/dev/data /oos ext4 ro 0 0\n";
+        assert_eq!(keep(mounts, &path, "none fixture\n").unwrap_err().kind(), io::ErrorKind::NotADirectory);
     }
 
     /// The real thing, when the environment names a stock file and the unit's vendor file (not distributed).

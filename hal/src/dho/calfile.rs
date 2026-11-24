@@ -261,7 +261,7 @@ fn stage(dir: &str, name: &str, payload: &[u8], s: Stamp) -> std::io::Result<Str
 
 /// The data partition is mounted at /oos, by the text of /proc/mounts.
 pub fn oos_mounted(mounts: &str) -> bool {
-    mounts.lines().any(|l| l.split_whitespace().nth(1) == Some("/oos"))
+    crate::system::oos_mounted(mounts)
 }
 
 /// The file `name`: OOS's own copy if it is valid, else /rigol/data, else /rigol/data/default (stock order with the

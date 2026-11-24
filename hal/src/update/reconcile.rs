@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::{check_image, hash::hex, io, lock, short, Card, Entry, RecoveryTracking, Region, State};
+use super::{check_image, hash::hex, inflate, io, lock, sd, short, Card, Entry, RecoveryTracking, Region, State};
 use std::path::Path;
 
 /// Reconcile recovery tracking at ordinary start-up. Only the update state may be written.
@@ -32,6 +32,13 @@ pub fn reconcile_recovery(card: &mut Card, state_path: &Path) -> Result<Option<S
             state.save(state_path).map_err(io("writing the update state"))?;
             Ok(Some(reason))
         }
+        Recovery::InstallerRewrite(entry, id) => {
+            let reason = format!("recovery image for build {} was rewritten by an installer", short(&entry.build));
+            state.track_recovery(entry, id);
+            state.event.clone_from(&reason);
+            state.save(state_path).map_err(io("writing the update state"))?;
+            Ok(Some(reason))
+        }
         // A partial rollback keeps its verified slot and can be repeated.
         Recovery::Changed(_) if rolling_back => Ok(None),
         Recovery::Changed(describe) => {
@@ -45,6 +52,7 @@ pub fn reconcile_recovery(card: &mut Card, state_path: &Path) -> Result<Option<S
 enum Recovery {
     Current([u8; 20]),
     Previous(Entry, [u8; 20]),
+    InstallerRewrite(Entry, [u8; 20]),
     Changed(String),
 }
 
@@ -61,12 +69,19 @@ fn identify(card: &mut Card, state: &State, current: &Entry, rolling_back: bool)
     }
     let previous = state.previous.as_ref().filter(|entry| entry.len == len);
     let match_current = current.len == len && (rolling_back || loader_id.is_none());
-    if previous.is_none() && !match_current {
+    let rewrite_id = loader_id.filter(|_| !rolling_back);
+    if previous.is_none() && !match_current && rewrite_id.is_none() {
         return Ok(Recovery::Changed(format!("image {:?}, {len} bytes, loader id {}", header.name, hex(&id))));
     }
     let (image, sha) = card.read_image(Region::Recovery, header.len).map_err(io("reading recovery"))?;
     if match_current && sha == current.sha256 {
         return Ok(Recovery::Current(id));
+    }
+    if let Some(tracked_id) = rewrite_id {
+        if installer_rewrite(&image, current, id, tracked_id) {
+            let entry = Entry { build: current.build.clone(), sha256: sha, len };
+            return Ok(Recovery::InstallerRewrite(entry, id));
+        }
     }
     if let Some(previous) = previous.filter(|entry| entry.sha256 == sha) {
         return Ok(Recovery::Previous(previous.clone(), id));
@@ -76,6 +91,14 @@ fn identify(card: &mut Card, state: &State, current: &Entry, rolling_back: bool)
         Err(error) => format!("damaged image ({error})"),
     };
     Ok(Recovery::Changed(format!("{kind}, {len} bytes, SHA-256 {}", hex(&sha))))
+}
+
+fn installer_rewrite(image: &[u8], current: &Entry, id: [u8; 20], tracked_id: [u8; 20]) -> bool {
+    // The stock loader hashes the tree. GEL writes the default image even if install applied SDR104.
+    // The stamp from the image's /etc/oos-build identifies the ledger entry. Package trust is checked at install.
+    let matches =
+        if id == tracked_id { check_image(image).is_ok() } else { sd::sdr104_loader_id(image) == Some(tracked_id) };
+    matches && inflate::image_build(image).as_deref() == Some(current.build.as_str())
 }
 
 /// Clear install and rollback tracking before switching firmware. Returns the configured boot mode.

@@ -6,17 +6,17 @@
 //! done by /bin/oos-update in a child process (the card writes take a few seconds); its result comes as a dialog.
 //! A package from the web page is checked in two steps: its header (signature, target, length) in the frame loop,
 //! which answers the upload at once; the image hash and the copy to /tmp in a thread of their own, then the child.
-//! A notice from the start-up watcher (/tmp/oos-update.notice: rolled back after a failed start) is shown once.
+//! Update and data area notices from startup are shown once.
 
 use super::*;
 use oos_hal::update::{self, pkg, State};
 use std::path::Path;
 
 const BIN: &str = "/bin/oos-update";
-const NOTICE: &str = "/tmp/oos-update.notice";
 const UPLOAD: &str = "/tmp/oos-update.upload";
 const JOB_LOG: &str = "/tmp/oos-update.job";
 
+mod notice;
 mod upload;
 #[cfg(test)]
 use upload::upload_header;
@@ -42,6 +42,7 @@ pub(super) struct UpdateUi {
     arm_until: f64,
     next_check: f64,
     notice_shown: String,
+    data_notice_shown: bool,
     /// output of the last job (web page)
     pub(super) last: String,
 }
@@ -258,17 +259,7 @@ impl Ui {
                 }
             }
         }
-        // Read notices from the host supplied at construction.
-        if let Some(n) = self.host.text(NOTICE) {
-            let n = n.trim().to_string();
-            if !n.is_empty() && n != self.upd.notice_shown && self.dialog.is_none() && !self.start_up_active() {
-                self.upd.notice_shown = n.clone();
-                let mut d = vec!["Update".to_string()];
-                d.extend(wrap_lines(&n, 44));
-                d.push("Tap to close".into());
-                self.dialog = Some(d);
-            }
-        }
+        notice::poll(self);
         super::power::poll(self);
     }
 }

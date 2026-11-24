@@ -9,6 +9,24 @@ pub use ifaddrs::ipv4_all;
 use std::io;
 use std::path::Path;
 
+/// Publish a complete file after syncing its staged contents, then sync the renamed entry.
+pub(crate) fn durable_replace(
+    path: &Path,
+    temporary: &Path,
+    bytes: &[u8],
+    options: &std::fs::OpenOptions,
+) -> io::Result<()> {
+    use std::io::Write;
+    let dir = path.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    {
+        let mut file = options.open(temporary)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    std::fs::rename(temporary, path)?;
+    std::fs::File::open(dir)?.sync_all()
+}
+
 /// Pins the calling thread and its future children to `cores`.
 /// An empty set, or a platform other than Linux, leaves affinity unchanged.
 #[cfg(target_os = "linux")]

@@ -6,16 +6,35 @@
 # `backup`; U-Boot's fallback only reads the image header at its start, where a stock fallback image may live. The
 # PARM table stays untouched: only the OOS kernel sees the area, as mmcblk0p1 from `blkdevparts=` in the DTB bootargs,
 # so the kernel keeps every write inside these 16 MiB.
-# First use: formatted (ext2, label "oosdata") only when the whole area is still zero; anything else is left alone.
+# First use formats a zero-filled area as ext2 with label "oosdata". Existing filesystems are checked before mounting.
 . "${OOS_BOARD_FILE:-/etc/oos-board}"
 P=/dev/mmcblk0p1
 S=/sys/class/block/mmcblk0p1
+stock_confirmed=${1:-0}
 grep -q ' /oos ' /proc/mounts && exit 0
-[ -b $P ] || { echo "oos-mount-data: no $P (blkdevparts missing from the command line?)"; exit 1; }
-[ "$(cat $S/start)" = "$OOS_OOSDATA_LBA" ] && [ "$(cat $S/size)" = "$OOS_OOSDATA_SECTORS" ] || { echo "oos-mount-data: $P is not LBA $OOS_OOSDATA_LBA + $OOS_OOSDATA_SECTORS, not touching it"; exit 1; }
+notice() {
+	printf '%s\n' "$1" > /tmp/oos-data.notice
+	printf '%s\n' "$1"
+	[ ! -w /dev/kmsg ] || printf 'oos-mount-data: %s\n' "$1" > /dev/kmsg
+}
+unavailable() {
+	echo "oos-mount-data: $1"
+	if [ "$stock_confirmed" = 1 ]; then
+		next="Power-cycle to start stock Android."
+	else
+		next="Next start unknown. To select stock Android, run oos-oneshot successfully, then power-cycle."
+	fi
+	notice "The data area is unavailable. Saved settings and the calibration copy are unavailable. Network identity is temporary for this start. $next Save /tmp/oos-data.log and contact support before changing the card."
+	exit 1
+}
+[ -b $P ] || unavailable "no $P (blkdevparts missing from the command line?)"
+[ "$(cat $S/start)" = "$OOS_OOSDATA_LBA" ] && [ "$(cat $S/size)" = "$OOS_OOSDATA_SECTORS" ] ||
+	unavailable "$P is not LBA $OOS_OOSDATA_LBA + $OOS_OOSDATA_SECTORS"
 # Format/repair a regular image, then submit only changed data through the HAL writer.
-oos-update storage-data --card /dev/mmcblk0 || exit 1
-mkdir -p /oos
-mount -t ext4 -o noatime $P /oos || { echo "oos-mount-data: mount failed"; exit 1; }
+repair=$(oos-update storage-data --card /dev/mmcblk0) || unavailable "data preparation failed"
+mkdir -p /oos || unavailable "could not create the mount point"
+mount -t ext4 -o noatime $P /oos || unavailable "mount failed"
+[ -z "$repair" ] || notice "$repair"
+oos-update storage-data clean-recovered || echo "oos-mount-data: could not finish inspecting lost+found"
 mkdir -p /oos/cal /oos/setups /oos/shots
 echo "oos-mount-data: $P on /oos ($(df -h /oos | tail -1 | awk '{print $4}') free)"

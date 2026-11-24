@@ -43,26 +43,30 @@ new_password() {
 	echo "$p" | sed 's/..../&-/g; s/-$//'
 }
 
-# what the first start makes, kept in $dir; each file appears whole (written beside it, then renamed)
+publish() { sync "$1.new" && mv "$1.new" "$1" && sync "$dir"; }
+
+# What the first start makes, kept in $dir.
 prepare() {
 	umask 077
-	mkdir -p "$dir" && chmod 700 "$dir" || return 1
+	mkdir -p "$dir" && chmod 700 "$dir" && sync "$(dirname "$dir")" || return 1
 	if [ ! -s "$dir/password" ]; then
 		new_password > "$dir/password.new" && [ -s "$dir/password.new" ] || { rm -f "$dir/password.new"; log "no password made"; return 1; }
-		mv "$dir/password.new" "$dir/password"
+		publish "$dir/password" || return 1
 		log "a new password for root (System > Network > Remote services > SSH settings > Show password)"
 	fi
 	for t in ed25519 ecdsa; do
 		k="$dir/dropbear_${t}_host_key"
 		if [ ! -s "$k" ]; then
 			rm -f "$k.new" "$k.pub"
-			"$bin/dropbearkey" -t $t -f "$k.new" > /dev/null 2>&1 && mv "$k.new" "$k" || { rm -f "$k.new"; log "no $t host key made"; return 1; }
+			"$bin/dropbearkey" -t $t -f "$k.new" > /dev/null 2>&1 && publish "$k" || { rm -f "$k.new"; log "no $t host key made"; return 1; }
 		fi
-		[ -s "$k.pub" ] || "$bin/dropbearkey" -y -f "$k" 2>/dev/null | grep -E '^(ssh-|ecdsa-)' > "$k.pub"
+		if [ ! -s "$k.pub" ]; then
+			"$bin/dropbearkey" -y -f "$k" 2>/dev/null | grep -E '^(ssh-|ecdsa-)' > "$k.pub.new" &&
+				publish "$k.pub" || return 1
+		fi
 	done
-	[ -f "$dir/authorized_keys" ] || : > "$dir/authorized_keys"
-	chmod 600 "$dir/authorized_keys"
-	sync
+	[ -f "$dir/authorized_keys" ] || { : > "$dir/authorized_keys.new" && publish "$dir/authorized_keys"; } || return 1
+	chmod 600 "$dir/authorized_keys" || return 1
 	# root only, in RAM: the image has no user database of its own. The serial console's shell asks for nothing.
 	hash=$(mkpasswd -m sha512 -P 0 < "$dir/password") && [ -n "$hash" ] || { log "no password hash"; return 1; }
 	umask 022

@@ -69,6 +69,14 @@ class DeviceIdentity(unittest.TestCase):
         self.assertEqual(self.mac(), MAC)
         self.assertEqual(self.conf.read_bytes(), before)
 
+    def test_mac_replacement_keeps_existing_settings_if_staging_sync_fails(self):
+        self.env['BOARD_MAC'] = MAC
+        old = b'# Existing device overrides\nntp = off\n'
+        self.conf.write_bytes(old)
+        (self.root / 'sync').write_text('#!/bin/sh\ncase "$1" in *.new) exit 1 ;; esac\n')
+        self.assertNotEqual(self.run_script('oos-mac').returncode, 0)
+        self.assertEqual(self.conf.read_bytes(), old)
+
     def test_cpu_mac_is_stable_unicast_local_and_independent_of_card(self):
         first = self.mac()
         self.assertEqual(int(first[:2], 16) & 3, 2)

@@ -21,8 +21,10 @@ secret() {
 	else
 		s=$(od -An -tx2 -N16 /dev/urandom | tr -s ' \n' '  ' | sed 's/^ *//; s/ *$//; s/ /:/g')
 		ok "$s" || { log "no secret made"; return 1; }
-		mkdir -p "$(dirname "$f")" && chmod 700 "$(dirname "$f")"
-		if (umask 077; echo "$s" > "$f.new") && mv "$f.new" "$f" && sync; then
+		dir=$(dirname "$f")
+		mkdir -p "$dir" && chmod 700 "$dir" || return 1
+		if (umask 077; echo "$s" > "$f.new") &&
+			sync "$f.new" && mv "$f.new" "$f" && sync "$dir" && sync "$(dirname "$dir")"; then
 			log "secret made ($f)"
 		else
 			log "secret not kept in $f"

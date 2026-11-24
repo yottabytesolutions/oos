@@ -3,12 +3,12 @@
 use super::args::Args;
 use crate::{die, need_data, put, state_path, update, STDOUT_CLOSED};
 
+mod recovered;
+
 pub(crate) fn run(args: &Args) {
     match args.command() {
         "storage-write" => return write(args).unwrap_or_else(|e| die(&e)),
-        "storage-data" => {
-            return args.open_card(true).and_then(|mut card| card.prepare_data()).unwrap_or_else(|e| die(&e))
-        }
+        "storage-data" => return prepare_data(args).unwrap_or_else(|e| die(&e)),
         _ => {}
     }
     need_data(args);
@@ -24,6 +24,22 @@ pub(crate) fn run(args: &Args) {
         Ok(report) => report.lines.iter().for_each(|line| out!("{}", line)),
         Err(error) => die(&error),
     }
+}
+
+fn prepare_data(args: &Args) -> Result<(), String> {
+    if args.rest.get(1).is_some_and(|arg| arg == "clean-recovered") {
+        let mounts = std::fs::read_to_string("/proc/mounts").map_err(|e| e.to_string())?;
+        if !mounts.lines().any(|line| line.split_whitespace().nth(1) == Some("/oos")) {
+            return Err("the data area is unmounted".into());
+        }
+        let (removed, kept) = recovered::clean(std::path::Path::new("/oos")).map_err(|e| e.to_string())?;
+        if removed != 0 || kept != 0 {
+            out!("{removed} redundant files removed from lost+found, {kept} recovered entries kept");
+        }
+    } else if let Some(notice) = args.open_card(true)?.prepare_data()? {
+        out!("{notice}");
+    }
+    Ok(())
 }
 
 /// Boot helpers submit bytes to the same HAL boundary as signed updates.

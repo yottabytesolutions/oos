@@ -39,9 +39,10 @@ load() {
 }
 
 start() {
-	mkdir -p $DIR
-	if [ ! -s $CONF ]; then
-		(umask 077; printf 'ctrl_interface=/run/wpa_supplicant\nupdate_config=1\n' > $CONF)
+	mkdir -p "$DIR" || return 1
+	if [ ! -s "$CONF" ]; then
+		(umask 077; printf 'ctrl_interface=/run/wpa_supplicant\nupdate_config=1\n' > "$CONF.new") &&
+			sync "$CONF.new" && mv "$CONF.new" "$CONF" && sync "$DIR" && sync "$(dirname "$DIR")" || return 1
 	fi
 	ip link set wlan0 up
 	wpa_supplicant -B -i wlan0 -c $CONF -P $PID -f /tmp/wpa_supplicant.log && echo "oos-wlan: wpa_supplicant runs ($CONF)"

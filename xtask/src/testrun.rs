@@ -2,6 +2,7 @@
 //! The crates' tests, in debug and release, with full counts.
 
 use crate::run;
+use std::ffi::OsString;
 use std::path::Path;
 
 /// Summed `test result` lines of one cargo test run.
@@ -102,6 +103,13 @@ fn fail(out: &run::Output) -> String {
     format!("{}\n{}", run::tail(&out.stdout, 30), run::tail(&out.stderr, 20))
 }
 
+pub(crate) fn e2fsprogs_path() -> Result<OsString, String> {
+    let default = ["/opt/homebrew/opt/e2fsprogs/sbin", "/sbin", "/usr/sbin"];
+    let paths = std::env::var_os("PATH").unwrap_or_default();
+    let tools = default.into_iter().map(std::path::PathBuf::from).filter(|dir| dir.is_dir());
+    std::env::join_paths(tools.chain(std::env::split_paths(&paths))).map_err(|e| format!("e2fsprogs PATH: {e}"))
+}
+
 /// Runs the tests of the crate in `root/krate`, with the release-tests profile when `release`. Ok with the counts and
 /// the tests that ran 5 s or longer. Err with the end of the output when a test fails or the build breaks.
 pub fn run(
@@ -117,7 +125,12 @@ pub fn run(
     let dir = root.join(krate);
     let args = nextest_args(root, release, shard)?;
     let args: Vec<&str> = ["nextest", "run"].into_iter().chain(args.iter().map(String::as_str)).collect();
-    let out = run::capture(ctx, &dir, "cargo", &args)?;
+    let out = if krate == "hal" {
+        let path = e2fsprogs_path()?;
+        run::capture_env(ctx, &dir, "cargo", &args, &[("PATH", &path)])?
+    } else {
+        run::capture(ctx, &dir, "cargo", &args)?
+    };
     let text = format!("{}\n{}", out.stdout, out.stderr);
     let Some(mut c) = nextest_counts(&text) else {
         return Err(format!("no nextest summary\n{}", fail(&out)));

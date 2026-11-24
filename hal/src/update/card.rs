@@ -10,7 +10,7 @@
 //! | 188416 | 0x20000 (64 MiB) | `recovery`: the running OOS image |
 //! | 319488 | 0x10000 (32 MiB) | start of `backup`: copy of the stock `boot` image (the loader's last fallback), never written here |
 //! | 385024 | 0x20000 (64 MiB) | `backup` + 32 MiB: **the previous OOS image** (rollback slot) |
-//! | 516096 | 0x8000 (16 MiB) | end of `backup`: the OOS data partition /oos, never written here |
+//! | 516096 | 0x8000 (16 MiB) | end of `backup`: the OOS data partition /oos, formatted and repaired offline |
 //!
 //! Every raw write goes through the checked writer (ADR 0011). Images are padded to whole sectors; the boot
 //! selector changes only four bytes. Writes sync, drop cached pages and verify the bytes from the opened card.
@@ -174,6 +174,8 @@ pub struct Card {
     #[cfg(test)]
     pub(super) write_fault: Option<(Region, WriteFault)>,
     #[cfg(test)]
+    write_fault_at: Option<(u64, WriteFault)>,
+    #[cfg(test)]
     pub(super) read_bytes: usize,
 }
 
@@ -194,6 +196,8 @@ impl Card {
             cut: None,
             #[cfg(test)]
             write_fault: None,
+            #[cfg(test)]
+            write_fault_at: None,
             #[cfg(test)]
             read_bytes: 0,
         })

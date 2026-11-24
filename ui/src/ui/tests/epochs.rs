@@ -264,7 +264,7 @@ fn shadow_initialization_failure_keeps_services_stepping_and_can_recover() {
 }
 
 #[test]
-fn publication_and_queue_pop_report_stale_frames_at_their_own_sites() {
+fn stale_site_counts_and_hand_set_totals_sum_in_the_state_reply_formatter() {
     let _scope = crate::drawpipe::test_scope::Scope::new();
     use std::sync::atomic::Ordering::Relaxed;
     let (mut ui, shared) = hardware();
@@ -282,9 +282,8 @@ fn publication_and_queue_pop_report_stale_frames_at_their_own_sites() {
     assert!(ui.src.acquire(&ui.m, 0.04, &mut ui.rng, ui.host.switches()).is_none());
     assert_eq!(loss.queue_pop.load(Relaxed) - before.1, 2);
     assert_eq!(loss.overflow.load(Relaxed), before.2);
-    // Account for the three stale records and a separate overflow in the reply.
     crate::drawpipe::Counters::add(&counters.acquired, 7);
-    crate::drawpipe::Counters::add(&counters.deposited, 2);
+    crate::drawpipe::Counters::add(&counters.placed, 4);
     crate::drawpipe::Counters::add(&loss.overflow, 2);
     let reply = crate::scpi::Scpi::disconnected().exec_line(&mut ui, &Canvas::new(1, 1), ":SYSTem:STATe?");
     let text = String::from_utf8(reply).unwrap();
@@ -299,7 +298,11 @@ fn publication_and_queue_pop_report_stale_frames_at_their_own_sites() {
     assert_eq!(fields["lost.settings"], fields["stale_ui_publish"] + fields["stale_queue_pop"]);
     assert_eq!(fields["queue_overflow"], 2);
     assert_eq!(fields["lost.queue_overflow"], fields["queue_overflow"]);
-    let lost: u64 = fields.iter().filter(|(key, _)| key.starts_with("lost.")).map(|(_, count)| count).sum();
+    let lost: u64 = fields
+        .iter()
+        .filter(|(key, _)| key.starts_with("lost.") || key.starts_with("rejected."))
+        .map(|(_, count)| count)
+        .sum();
     assert_eq!(fields["read"], fields["deposited"] + lost);
     assert!(text.contains(" acquired 7 used 0 dropped 5 "));
     assert_eq!(fields["not_used"], fields["read"]);

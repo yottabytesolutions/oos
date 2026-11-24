@@ -100,7 +100,7 @@ fn pulses(tdiv: f32, compress: bool, records: usize, batches: usize) {
         assert_eq!(picture.maps(), &before, "settlement must not draw the pending preview twice");
         picture.clear();
     }
-    assert_eq!(counters.deposited.load(std::sync::atomic::Ordering::Relaxed), sequence);
+    assert_eq!(counters.placed.load(std::sync::atomic::Ordering::Relaxed), sequence);
     assert_eq!(counters.read().2, 0);
     println!("TAP_PULSES tdiv={tdiv} compress={compress} records={records} windows=3 batches_per_window={batches} records_total={sequence} accept_calls_per_window=3");
 }

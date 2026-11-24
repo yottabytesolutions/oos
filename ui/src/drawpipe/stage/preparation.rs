@@ -63,7 +63,7 @@ pub(super) fn batch(
     if bound.0 > bound.1.hit_limit() {
         let records = b.frames.saturating_sub(b.next.swap(b.frames, Ordering::Relaxed)) as u64;
         b.counters.discard(Lost::Budget, records);
-        let _ = painter.send_tap(slot, b, TapProjection::Unpainted, Some(v), identity);
+        let _ = painter.send_tap(slot, b, TapProjection::Recoverable, Some(v), identity);
         return Preparation::Retain(current);
     }
     let tap = painter.send_tap(slot, b, TapProjection::Projected { gen: v.gen, size: (v.w, v.h) }, Some(v), identity);

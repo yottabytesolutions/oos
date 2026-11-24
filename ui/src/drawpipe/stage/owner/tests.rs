@@ -2,6 +2,25 @@
 use super::*;
 use crate::{board::Frame, model::Model, picture::deposit::TapProjection};
 use std::time::{Duration, Instant};
+
+impl Owner {
+    pub(crate) fn invalidate_staged_hits_for_test(&mut self) {
+        // Worker preflight prevents an over-limit deposit from reaching compose.
+        let deposit = self.queue.back_mut().unwrap();
+        deposit.extent.add_hits(deposit.format().hit_limit() + 1);
+    }
+
+    pub(crate) fn inject_excess_for_test(&mut self, pipe: &Pipe, records: u64) {
+        // The sixth input cannot acquire a backing in normal operation.
+        let state = oos_hal::sync::lock(&pipe.view);
+        let view = state.view.as_ref().unwrap();
+        let mut excess = Deposit::new(view.gen, (view.w, view.h), state.identity, [true, false, false, false]);
+        excess.records = records;
+        Counters::add(&pipe.counters.placed, records);
+        self.queue.push_back(excess);
+    }
+}
+
 struct Fixture {
     pipe: Pipe,
     owner: Owner,
@@ -26,6 +45,7 @@ impl Fixture {
         };
         let mut d = self.pipe.slot.acquire_picture(gen, sizes, Some(self.id), [true, false, false, false]).unwrap();
         d.records = records;
+        Counters::add(&self.pipe.counters.placed, records);
         d.extent.include(self.origin + Duration::from_millis(ms));
         d.extent.add_hits(records);
         d.edges[0] = records;
@@ -207,11 +227,7 @@ fn compose_without_window_recycles_even_an_excess_deposit() {
     for ms in 0..5 {
         f.put(1, ms, 0);
     }
-    // A sixth deposit cannot acquire a backing. Inject an unleased deposit to exercise the guard.
-    let gen = oos_hal::sync::lock(&f.pipe.view).gen;
-    let mut excess = Deposit::new(gen, (4, 4), Some(f.id), [true, false, false, false]);
-    excess.records = 2;
-    f.owner.queue.push_back(excess);
+    f.owner.inject_excess_for_test(&f.pipe, 2);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         f.owner.compose_owned(&f.pipe, &mut f.ph, &mut true, Stats { edges: &mut [0; 4], off: &mut (0.0, 0.0) }, None)
     }));
@@ -346,4 +362,61 @@ fn seal_leaves_pending_deposit_for_next_picture_when_queue_is_full() {
     assert_eq!(f.compose().frames, PICTURE_INPUTS as u64);
     assert_eq!(f.compose().frames, 2);
     assert_eq!(f.pipe.counters.read().2, 0);
+}
+
+#[test]
+fn same_acquisition_rejection_draws_directly_only_after_a_remap() {
+    // A same-acquisition rejection stays pending while the reader's projection matches.
+    // A remap made the tap drawable. A zoom toggle expired it.
+    for (remap, zoom, direct_draw) in [
+        (true, (false, false), Some(1)),
+        (true, (true, true), Some(1)),
+        (true, (false, true), None),
+        (true, (true, false), None),
+        (false, (true, true), None),
+    ] {
+        for preview in [false, true] {
+            assert_eq!(direct_draw_after_rejection(remap, zoom, preview), direct_draw);
+        }
+    }
+}
+
+fn direct_draw_after_rejection(remap: bool, (was_zoomed, zoom): (bool, bool), preview: bool) -> Option<u64> {
+    use crate::{board::PictureEligibility::Pending, model::DotsMode, sparse::Interp};
+    let mut f = Fixture::new();
+    let detail = route::ZoomView::new((4, 4), 1.0, 0.0);
+    if was_zoomed {
+        let model = Model { zoom: true, ..Model::default() };
+        f.pipe.publish_picture_view(&model, (4, 4), Interp::Exact, f.id, Some(detail));
+    }
+    f.put(1, 0, 0);
+    let preview = preview.then(|| {
+        let tap = f.pipe.take_waveform((4, 4)).unwrap();
+        assert_eq!(tap.eligibility(), Pending);
+        tap.into_frame()
+    });
+    let old_gen = oos_hal::sync::lock(&f.pipe.view).gen;
+    if remap {
+        let model = Model { dots: DotsMode::On, zoom, ..Model::default() };
+        f.pipe.publish_picture_view(&model, (4, 4), Interp::Exact, f.id, zoom.then_some(detail));
+    }
+    assert_eq!(oos_hal::sync::lock(&f.pipe.view).gen != old_gen, remap);
+    // A mismatched detail map leaves the wave reader's main size and generation intact.
+    let mut zoom_map = Phosphor::new(if remap { 4 } else { 5 }, 4);
+    let accepted = f.owner.compose_picture(
+        &f.pipe,
+        PerMap::new(&mut f.ph, zoom.then_some(&mut zoom_map)),
+        &mut crate::picture::FirstDraw::Minimum,
+        Stats { edges: &mut [0; 4], off: &mut (0.0, 0.0) },
+        Some(&mut f.window),
+    );
+    assert_eq!((accepted.frames, f.pipe.counters.read().2), (0, 1));
+    if let Some(frame) = preview {
+        return f.pipe.take_preview(&frame, (f.ph.w, f.ph.h)).map(|_| frame.seq);
+    }
+    let queued = f.pipe.take_waveform((f.ph.w, f.ph.h)).unwrap();
+    if !remap {
+        assert_eq!(queued.eligibility(), Pending);
+    }
+    queued.eligibility().draws().then_some(queued.seq)
 }

@@ -242,7 +242,7 @@ fn full_dot_slot(fitting: &[(u8, usize)], overflowing: usize, reset: bool) {
         host::barrier(&pipe);
         let counts = pipe.counters.records_text();
         assert_eq!(pipe.counters.read(), (33, 0, 33));
-        assert!(counts.contains("read=33 deposited=32 shown=0"));
+        assert!(counts.contains("read=33 deposited=0 shown=0"));
         assert!(counts.contains("lost.unclaimed=1"));
         assert!(counts.contains("rejected.stale_key=32"));
         assert!(pipe.slot.take().is_none());
@@ -352,7 +352,7 @@ fn check_upload_rows(channels: usize, dots: bool, tdiv: f64) {
     for (c, stamp) in panel.iter().enumerate() {
         assert!(picture.upload_rows(c, Some(stamp)).1.is_empty(), "unchanged pictures need no upload");
     }
-    assert_eq!(pipe.counters.deposited.load(Ordering::Relaxed), 6);
+    assert_eq!(pipe.counters.placed.load(Ordering::Relaxed), 6);
     assert_eq!(pipe.counters.read().2, 0);
 }
 

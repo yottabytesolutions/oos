@@ -252,9 +252,10 @@ Warmed allocation tests cover selected paths. A pipeline-wide allocation-free gu
 capacity. Counters account for deliberate exclusions, selection, settings changes, invalid batches and
 other named losses. The legacy fallback and test paths remain. The design's steady-state goal is zero
 overload losses. Use the state query to account for records still in flight and count retained records
-only on first acceptance. The accounting target is:
+only on first acceptance. The quiescent state reply uses `deposited` for the records eligible for
+a picture after subtracting post-placement losses. The accounting target is:
 
-`records read = shown + intentional losses + identity rejections + other named losses + in flight`.
+`read = deposited + sum(lost.*) + sum(rejected.*)`.
 
 During live hardware RUN outside record mode, the trigger status shows the increase in the shown
 count per second. It samples at intervals of at least one second. The duty display uses the source's

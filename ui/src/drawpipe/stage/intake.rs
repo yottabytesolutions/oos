@@ -62,19 +62,51 @@ fn claim_batch(
     reset_before: u64,
     clock: clock::StageClock,
 ) -> Option<(Arc<View>, Option<oos_core::change::Identity>)> {
-    let remaining = b.next.load(Ordering::Relaxed) < b.frames;
     let v = batch_view(b, &state, reset_before);
     let identity = state.identity;
-    let reader = v.is_none().then(|| state.view.clone()).flatten();
+    let reader = v.is_err().then(|| state.view.clone()).flatten();
     drop(state);
-    let Some(v) = v else {
-        if remaining {
-            b.counters.metrics.discarded(b.header.identity(), clock);
+    match v {
+        Ok(v) => Some((v, identity)),
+        Err(lost) => {
+            if lost != 0 {
+                b.counters.metrics.discarded(b.header.identity(), clock);
+            }
+            if same_pair(b.header.identity(), identity) {
+                let projection = if lost != 0 { TapProjection::Recoverable } else { TapProjection::Unpainted };
+                let _ = painter.send_tap(slot, b, projection, reader.as_deref(), identity);
+            }
+            None
         }
-        if same_pair(b.header.identity(), identity) {
-            let _ = painter.send_tap(slot, b, TapProjection::Unpainted, reader.as_deref(), identity);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::drawpipe::tests::Bytes;
+
+    #[test]
+    fn rejected_intake_tap_uses_the_same_count_as_the_loss() {
+        for first in [1, 3] {
+            let counters = Box::leak(Box::<Counters>::default());
+            let pipe = Pipe::start(0, 0, counters);
+            let id = Default::default();
+            pipe.publish_view(&Model::default(), 8, 8, Interp::Exact, id);
+            let decode: DecodeInto = Arc::new(|_, _| unreachable!("rejected before placement"));
+            let mut batch = pipe.feed_batch(Box::new(Bytes(vec![0; 3])), 1, first..3, (0, Some(id)), decode, None);
+            Arc::get_mut(&mut batch).unwrap().newest = Some(Arc::new(Frame { seq: 3, ..Default::default() }));
+            let mut painter = Painter::new(0, 0);
+            let reset_before = batch.view_gen_at_submit + 1;
+            let view = oos_hal::sync::lock(&pipe.view);
+            assert!(claim_batch(&mut painter, &pipe.slot, &batch, view, reset_before, batch.clock).is_none());
+            assert_eq!(batch.next.load(Ordering::Relaxed), 3);
+            let expected = if first < 3 { PictureEligibility::Recoverable } else { PictureEligibility::Drawable };
+            assert_eq!(pipe.take_waveform((8, 8)).unwrap().eligibility(), expected);
+            drop(batch);
+            let text = counters.records_text();
+            assert!(text.contains(&format!("lost.settings={} ", 3 - first)), "{text}");
+            assert!(text.contains("lost.unclaimed=0 "), "{text}");
         }
-        return None;
-    };
-    Some((v, identity))
+    }
 }

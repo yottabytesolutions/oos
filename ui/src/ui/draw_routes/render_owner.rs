@@ -109,6 +109,28 @@ fn compose_claims_a_deposit_published_after_intake_in_the_same_picture() {
 }
 
 #[test]
+fn stopped_picture_retires_a_deposit_that_missed_first_use() {
+    let _scope = Scope::new();
+    let (mut r, id, sw) = start();
+    let counters = drawpipe::counters();
+    drawpipe::Counters::add(&counters.acquired, 64);
+    drop(submit(&mut r, id, &sw, None));
+    r.ui.step(1.0 / 30.0);
+    drop(submit(&mut r, id, &sw, None));
+    let pending = counters.records_text();
+    assert!(pending.contains("records read=64 deposited=64 shown=32 "), "{pending}");
+
+    let cv = Canvas::new(1, 1);
+    let mut scpi = crate::scpi::Scpi::disconnected();
+    scpi.exec_line(&mut r.ui, &cv, ":STOP");
+    r.ui.step(1.0 / 30.0);
+    assert_eq!(r.ui.m.run, RunState::Stop);
+    let reply = String::from_utf8(scpi.exec_line(&mut r.ui, &cv, ":SYSTem:STATe?")).unwrap();
+    assert!(reply.contains("records read=64 deposited=32 shown=32 "), "{}", counters.records_text());
+    assert!(reply.contains(" rejected.stale_key=32 rejected.epoch=0 "));
+}
+
+#[test]
 fn skipped_steps_preserve_records_and_pixels_in_the_next_picture() {
     use crate::pacing::{ClockMode, Flip, FlipDivisor, FrameClock};
     use std::{sync::atomic::Ordering, time::Duration};
@@ -133,7 +155,7 @@ fn skipped_steps_preserve_records_and_pixels_in_the_next_picture() {
         crate::ui::step_draw::owner::intake_render_owner(&mut r.ui);
     }
     let shown = || counters.shown.load(Ordering::Relaxed);
-    let in_flight = counters.deposited.load(Ordering::Relaxed);
+    let in_flight = counters.placed.load(Ordering::Relaxed);
     assert_eq!(shown(), 0);
     assert_eq!(in_flight, 52);
     assert_eq!(counters.read().0, 2 + in_flight);
@@ -151,7 +173,10 @@ fn skipped_steps_preserve_records_and_pixels_in_the_next_picture() {
     assert_eq!(read, shown() + dropped);
     assert_eq!(dropped, 2, "the fixture excludes one frame-0 record from each read");
     let text = counters.records_text();
-    assert!(text.contains("lost.frame0=2 ") && text.ends_with("rejected.stale_key=0 rejected.epoch=0"), "{text}");
+    assert!(
+        text.contains("lost.frame0=2 ") && text.ends_with("rejected.stale_key=0 rejected.epoch=0 records.recovered=0"),
+        "{text}"
+    );
 }
 #[test]
 fn completed_raw_recycles_once_before_real_output_wait_and_alias_survives_reset() {

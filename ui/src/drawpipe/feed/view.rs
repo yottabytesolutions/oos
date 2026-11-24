@@ -19,16 +19,16 @@ pub(crate) fn same_pair(a: Option<oos_core::change::Identity>, b: Option<oos_cor
     }
 }
 
-pub(in crate::drawpipe) fn batch_view(b: &Batch, state: &ViewState, reset_before: u64) -> Option<Arc<View>> {
+pub(in crate::drawpipe) fn batch_view(b: &Batch, state: &ViewState, reset_before: u64) -> Result<Arc<View>, u64> {
     let v = state
         .view
         .clone()
         .filter(|_| b.view_gen_at_submit >= reset_before && accepts(b, legacy_stamp(state), state.identity));
-    if v.is_none() {
+    v.ok_or_else(|| {
         let records = b.frames.saturating_sub(b.next.swap(b.frames, Ordering::Relaxed)) as u64;
         b.counters.reject_batch(!same_pair(b.header.identity(), state.identity), records);
-    }
-    v
+        records
+    })
 }
 
 fn accepts(b: &Batch, legacy_stamp: u64, identity: Option<oos_core::change::Identity>) -> bool {

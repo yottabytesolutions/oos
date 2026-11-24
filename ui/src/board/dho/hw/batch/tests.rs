@@ -221,7 +221,7 @@ fn run(frame0_drop: bool, warm: bool) {
 
 fn accounted(counters: &crate::drawpipe::Counters, frame0_drop: bool) {
     let dropped = counters.read().2;
-    let deposited = counters.deposited.load(std::sync::atomic::Ordering::Relaxed);
+    let deposited = counters.placed.load(std::sync::atomic::Ordering::Relaxed);
     let frame0 = u64::from(frame0_drop);
     assert_eq!(deposited + frame0, 3, "every read record is accounted for");
     assert_eq!(dropped, 0);

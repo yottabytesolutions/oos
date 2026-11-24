@@ -233,6 +233,7 @@ pub(super) fn acquire(
     ui: &mut Ui,
     elapsed: f64,
     taps: &mut ReaderTaps,
+    filtered: &mut usize,
 ) -> (Option<(Record, PictureEligibility, bool)>, Option<EdgeInputs>) {
     // Capture before conversion and compare again at drawing. Intervening routing
     // or settings changes cannot silently reuse a different view.
@@ -240,7 +241,7 @@ pub(super) fn acquire(
     let record = if ui.src.is_hw() && !ui.mixed_bus_mode() {
         ui.src.acquire_hw(&ui.m, |id, fallback| taps.take((ui.ph.w, ui.ph.h), id, fallback))
     } else {
-        ui.acquire_bus_candidate(elapsed).map(|record| (record, PictureEligibility::Drawable, false))
+        ui.acquire_bus_candidate(elapsed, filtered).map(|record| (record, PictureEligibility::Drawable, false))
     };
     (record, input)
 }
@@ -255,7 +256,7 @@ pub(super) fn record(
     if !eligibility.draws() {
         return (0, 0);
     }
-    let count = eligibility == PictureEligibility::Drawable;
+    let count = eligibility != PictureEligibility::Redraw;
     if let Some(raw) = &rec.raw {
         if count {
             crate::pacing::drawn(raw.frame.cfg, 1);

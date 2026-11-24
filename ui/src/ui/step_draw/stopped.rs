@@ -3,6 +3,11 @@
 use super::*;
 
 pub(in crate::ui) fn stopped(ui: &mut Ui) {
+    if ui.m.run == RunState::Stop && ui.stop_final.is_none() {
+        if let Some(pipe) = drawpipe::pipe() {
+            ui.batch_picture.owner.retire_inputs(pipe, false);
+        }
+    }
     // stopped: the whole stored record for the view shown (read again by the thread, `stop_replay`), then
     // redraw the stored record with the current scale/offset
     ui.stop_replay();

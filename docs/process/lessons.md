@@ -67,6 +67,10 @@ pull request that fixes a mistake: what happened, then the rule.
 
 - A cancellation test counted reads on its source thread's counters and losses on the pipe. Use the pipe's
   injected instance for both sides of the conservation check, even when dispatch runs on another thread.
+- A worker placement also counted as a late loss when composition discarded it. Deduct late losses from the
+  placement total in the state reply using the same snapshot that supplies the loss fields.
+- Drawing a discarded projection's waveform under a new key credited its record twice. Carry the loss outcome
+  with the waveform and count its first draw as a recovery.
 - Rejecting a serial STOP read after Clear also skipped the final acknowledgement. Check completion at the
   end of the stale DMA handoff, before the next held poll can acknowledge it.
 - A missed SINGLE handoff wrote the UI's hold field and repeated the wake after each UI publication. Keep expiry in

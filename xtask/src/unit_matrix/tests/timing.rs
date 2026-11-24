@@ -53,6 +53,7 @@ fn pacing_before_the_first_write_does_not_widen_window_bounds() {
         assert_eq!(sample.rates.first_records_per_s, 100.0 / midpoint);
         assert_eq!(sample.rates.read_per_s, 130.0 / midpoint);
         assert_eq!(sample.rates.late_flips, 2);
+        assert_eq!(sample.delta["records.recovered"], 1);
         assert_eq!(sample.fallback_delta, [("decoded_lines".into(), 3)].into());
         assert!(scpi.inner.replies.is_empty());
     }
@@ -80,4 +81,37 @@ fn checks_loss_route_and_fallback_counters_but_allows_gauges_to_decrease() {
             }
         }
     }
+}
+
+#[test]
+fn a_late_rejection_can_reduce_deposited_without_resetting_the_window() {
+    let mut script = Script::default();
+    script.reply(STATE, BEFORE);
+    script.reply(
+        STATE,
+        &BEFORE.replace("deposited=2 shown=1 rejected.stale_key=0", "deposited=1 shown=1 rejected.stale_key=1"),
+    );
+    let events = Events::default();
+    let window = window::measure(&mut script.scpi(&events), &mut FakeClock::default(), Duration::from_secs(5)).unwrap();
+    let WindowSample::Valid(sample) = window.sample else { panic!("expected valid window") };
+    assert_eq!(sample.delta["records.deposited"], -1);
+    assert_eq!(sample.delta["rejected.stale_key"], 1);
+    assert_eq!(sample.rates.first_records_per_s, 0.0);
+    assert_eq!(sample.rates.shown_records_per_s, 0.0);
+    assert_eq!(sample.rates.read_per_s, 0.0);
+}
+
+#[test]
+fn reports_a_signed_record_residual_without_rejecting_the_window() {
+    let losses = "lost.settings=0 lost.frame0=0 lost.average=0 lost.error=0 lost.buffer=0 lost.unclaimed=0 \
+                  lost.budget=0 lost.superseded=0 lost.frame1=0 lost.queue_overflow=0 rejected.epoch=0";
+    let mut script = Script::default();
+    script.reply(STATE, &BEFORE.replace(" fallback.v1", &format!(" {losses} fallback.v1")));
+    let losses = losses.replace("lost.settings=0", "lost.settings=21");
+    let after = AFTER.replace(" fallback.v1", &format!(" {losses} fallback.v1"));
+    script.reply(STATE, &format!("{after} stage.v1 rejected.read_submit=1/2/3"));
+    let events = Events::default();
+    let window = window::measure(&mut script.scpi(&events), &mut FakeClock::default(), Duration::from_secs(5)).unwrap();
+    let WindowSample::Valid(sample) = window.sample else { panic!("expected valid window") };
+    assert_eq!(sample.delta["records.residual"], -1);
 }

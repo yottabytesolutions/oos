@@ -35,7 +35,7 @@ mod deep_draw;
 mod deskew;
 mod dpt;
 #[cfg(test)]
-mod draw_routes;
+pub(crate) mod draw_routes;
 mod eyepage;
 pub(crate) mod facts;
 #[cfg(test)]
@@ -2868,7 +2868,8 @@ impl Ui {
             let t_records = std::time::Instant::now();
             for _ in 0..k {
                 let t0 = std::time::Instant::now();
-                let (r, drawing_input) = deep_draw::acquire(self, dt_wall / k as f64, &mut taps);
+                let (r, drawing_input) =
+                    deep_draw::acquire(self, dt_wall / k as f64, &mut taps, &mut composition.filtered);
                 ta += t0.elapsed().as_secs_f32() * 1000.0;
                 let bill_record = record_draw.acquired(r.as_ref().map(|(_, _, tap)| *tap), || t0.elapsed());
                 if r.is_none() && self.bus_candidate_waiting() {

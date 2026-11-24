@@ -4,7 +4,8 @@ use std::{collections::BTreeMap, iter::Peekable};
 
 const SECTIONS: &[&str] = &["stage.v1", "work.v1", "route.v1", "source.v1", "present.v1", "fallback.v1"];
 const DISARM_KEYS: [&str; 5] = ["total", "unknown", "no_completed_record", "recorded", "dropped"];
-const RECORD_KEYS: [&str; 3] = ["records.read", "records.deposited", "records.shown"];
+pub(super) const DEPOSITED: &str = "records.deposited";
+const RECORD_KEYS: [&str; 3] = ["records.read", DEPOSITED, "records.shown"];
 pub(super) const SUMMARY_KEYS: &[&str] = &[
     "eligible",
     "fresh",
@@ -14,6 +15,7 @@ pub(super) const SUMMARY_KEYS: &[&str] = &[
     "missing",
     "records.read",
     "records.shown",
+    "records.recovered",
     "rejected.age",
     "rejected.age_before_work",
     "lost.queue_overflow",
@@ -162,6 +164,7 @@ mod tests {
             ("records.read", 499731),
             ("records.deposited", 492983),
             ("records.shown", 492795),
+            ("records.recovered", 0),
             ("first_records", 492795),
             ("fresh", 5635),
             ("flip.late", 335),

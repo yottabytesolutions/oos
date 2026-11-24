@@ -14,7 +14,7 @@ pub(crate) mod standard;
 mod tap;
 pub(crate) use planes::DiffBand;
 pub(crate) use ready::Claim;
-pub(crate) use tap::{TapOrder, TapRead, TapReservation};
+pub(crate) use tap::{TapOrder, TapRead, TapReservation, TapSettlement};
 #[cfg(test)]
 mod tests;
 
@@ -197,6 +197,7 @@ pub(crate) enum TapProjection {
     Unpainted,
     Projected { gen: u64, size: (usize, usize) },
     Accounted { mapping_gen: u64, size: (usize, usize) },
+    Recoverable,
     Expired,
 }
 

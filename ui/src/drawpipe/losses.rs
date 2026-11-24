@@ -10,11 +10,14 @@ use std::sync::OnceLock;
 #[derive(Default)]
 pub struct Counters {
     pub acquired: AtomicU64,
-    pub used: AtomicU64,
+    // Hardware first use is already recorded in shown.
+    pub(crate) other_used: AtomicU64,
     /// frames whose cheap measurements went into the statistics (framestats.rs)
     pub measured: AtomicU64,
-    pub deposited: AtomicU64,
+    /// Worker-completed placements and direct UI draws, before deducting deposit losses.
+    pub placed: AtomicU64,
     pub shown: AtomicU64,
+    recovered: AtomicU64,
     pub timing: crate::claim_timing::Timing,
     pub losses: Losses,
     pub acquisition: crate::board::AcquisitionCounters,
@@ -49,7 +52,7 @@ pub struct Losses {
     /// frames looked at by the header log in its `off` mode (`board::dho::switches::HeaderProbe`), not a loss
     pub probed: AtomicU64,
     source: SourceLosses,
-    rejected: [AtomicU64; 3],
+    rejected: [AtomicU64; Rejection::ALL.len()],
 }
 
 #[derive(Default)]
@@ -57,16 +60,14 @@ struct SourceLosses {
     other: [AtomicU64; Lost::ALL.len()],
     // Some sites for the same reason (e.g. a short read) also contribute to legacy dropped.
     dropped: [AtomicU64; Lost::ALL.len()],
+    compose_error: AtomicU64,
 }
 
 impl SourceLosses {
-    fn counts(&self) -> ([u64; Lost::ALL.len()], u64) {
-        let dropped = self.dropped.each_ref().map(load);
-        let mut counts = self.other.each_ref().map(load);
-        for (count, dropped) in counts.iter_mut().zip(dropped) {
-            *count = count.wrapping_add(dropped);
-        }
-        (counts, sum(dropped))
+    fn counts(&self, dropped: [u64; Lost::ALL.len()], compose_error: u64) -> [u64; Lost::ALL.len()] {
+        let mut counts = std::array::from_fn(|i| load(&self.other[i]).wrapping_add(dropped[i]));
+        counts[Lost::Error as usize] = counts[Lost::Error as usize].wrapping_add(compose_error);
+        counts
     }
 }
 
@@ -124,6 +125,8 @@ enum Rejection {
     Epoch,
 }
 impl Rejection {
+    const ALL: [Self; 3] = [Self::Mapping, Self::Generation, Self::Epoch];
+
     fn between(a: Option<oos_core::change::Identity>, b: Option<oos_core::change::Identity>) -> Self {
         if a.map(|id| id.epoch()) != b.map(|id| id.epoch()) {
             Self::Epoch
@@ -155,18 +158,37 @@ impl Counters {
     }
     /// (acquired, used, dropped)
     pub fn read(&self) -> (u64, u64, u64) {
-        (load(&self.acquired), load(&self.used), self.losses.snapshot().dropped())
+        let used = load(&self.other_used).wrapping_add(load(&self.shown));
+        (load(&self.acquired), used, self.losses.snapshot().dropped())
+    }
+
+    pub(crate) fn picture_drawn(&self, shown: u64, direct: u64, recovered: u64) {
+        Self::add(&self.shown, shown);
+        if direct > 0 {
+            Self::add(&self.placed, direct);
+        }
+        if recovered > 0 {
+            Self::add(&self.recovered, recovered);
+        }
     }
     pub(super) fn publish(&self, progress: &crate::claim_timing::Progress, frames: u64) {
         if progress.measured > 0 {
             Self::add(&self.measured, progress.measured);
         }
         if self.diagnostics_enabled() {
-            Self::add(&self.deposited, frames);
+            Self::add(&self.placed, frames);
         }
     }
 
-    pub(crate) fn lose(&self, reason: Lost, records: u64) -> u64 {
+    pub(crate) fn lose(&self, reason: Lost, records: u64) {
+        self.lose_selected(reason, records);
+    }
+    /// Counts one frame 1 left out and returns the `lost.frame1` total. Frame 1 has no discard site.
+    pub(crate) fn lose_frame1(&self) -> u64 {
+        self.lose_selected(Lost::Frame1, 1)
+    }
+    /// Returns the new selection half of `reason`, without the discards the reply adds to it.
+    fn lose_selected(&self, reason: Lost, records: u64) -> u64 {
         if records == 0 || !self.diagnostics_enabled() {
             return 0;
         }
@@ -174,6 +196,12 @@ impl Counters {
     }
     pub(crate) fn discard(&self, reason: Lost, records: u64) {
         Self::add(&self.losses.source.dropped[reason as usize], records);
+    }
+    pub(crate) fn discard_compose_error(&self, records: u64) {
+        self.late_loss(&self.losses.source.compose_error, records);
+    }
+    pub(super) fn discard_compose_overflow(&self, records: u64) {
+        self.late_loss(&self.losses.overflow, records);
     }
     pub(super) fn reject_batch(&self, stale_identity: bool, records: u64) {
         if stale_identity {
@@ -188,7 +216,12 @@ impl Counters {
         current: Option<oos_core::change::Identity>,
         records: u64,
     ) {
-        Self::add(&self.losses.rejected[Rejection::between(previous, current) as usize], records);
+        self.late_loss(&self.losses.rejected[Rejection::between(previous, current) as usize], records);
+    }
+    fn late_loss(&self, counter: &AtomicU64, records: u64) {
+        if self.diagnostics_enabled() {
+            counter.fetch_add(records, Ordering::Release);
+        }
     }
     pub(crate) fn pipeline_text(&self, budget: std::time::Duration, step_missed: u64) -> String {
         let full = self.losses.unexpected_full.load(Ordering::Relaxed);
@@ -203,23 +236,31 @@ impl Counters {
 
     #[cfg(any(target_os = "linux", test))]
     pub(crate) fn capture_counts(&self) -> (u64, u64) {
-        let (mut lost, _) = self.losses.source.counts();
-        lost[Lost::Settings as usize] = 0;
-        lost[Lost::Superseded as usize] = 0;
-        lost[Lost::Frame0 as usize] = 0; // The first read slot is deliberately excluded.
-        (load(&self.shown), sum(lost).wrapping_add(load(&self.losses.overflow)))
+        let source = &self.losses.source;
+        let lost = Lost::ALL
+            .into_iter()
+            .filter(|reason| !matches!(reason, Lost::Settings | Lost::Superseded | Lost::Frame0))
+            .flat_map(|reason| [&source.other[reason as usize], &source.dropped[reason as usize]]);
+        (load(&self.shown), sum(lost.chain([&source.compose_error, &self.losses.overflow]).map(load)))
     }
 
     pub(crate) fn snapshot(&self) -> RecordSnapshot {
         let handoff = &self.losses.record_handoff;
+        // Acquire late losses before loading placed so each observed loss brings its placement into view.
+        let losses = self.losses.snapshot();
+        let placed = load(&self.placed);
+        let late_losses = sum(losses.rejected).wrapping_add(sum([losses.overflow, losses.compose_error]));
+        debug_assert!(placed >= late_losses, "{placed} placements for {late_losses} late losses");
+        let shown = load(&self.shown);
         RecordSnapshot {
             acquired: load(&self.acquired),
-            used: load(&self.used),
+            used: load(&self.other_used).wrapping_add(shown),
             measured: load(&self.measured),
-            deposited: load(&self.deposited),
-            shown: load(&self.shown),
+            deposited: placed.saturating_sub(late_losses),
+            shown,
+            recovered: load(&self.recovered),
             handoff: [load(&handoff.unexpected_queue), load(&handoff.sample_mismatch)],
-            losses: self.losses.snapshot(),
+            losses,
             #[cfg(feature = "private-picture-counts")]
             picture_counts: self.timing.picture_counts().text(),
         }
@@ -234,28 +275,32 @@ impl Counters {
 struct LossSnapshot {
     source: [u64; Lost::ALL.len()],
     discarded: u64,
+    compose_error: u64,
     worker_push: u64,
     ui_publish: u64,
     queue_pop: u64,
     stale_batch: u64,
     overflow: u64,
     folds: u64,
-    rejected: [u64; 3],
+    rejected: [u64; Rejection::ALL.len()],
 }
 
 impl Losses {
     fn snapshot(&self) -> LossSnapshot {
-        let (source, discarded) = self.source.counts();
+        let dropped = self.source.dropped.each_ref().map(load);
+        let late = |counter: &AtomicU64| counter.load(Ordering::Acquire);
+        let compose_error = late(&self.source.compose_error);
         LossSnapshot {
-            source,
-            discarded,
+            source: self.source.counts(dropped, compose_error),
+            discarded: sum(dropped).wrapping_add(compose_error),
+            compose_error,
             worker_push: load(&self.worker_push),
             ui_publish: load(&self.ui_publish),
             queue_pop: load(&self.queue_pop),
             stale_batch: load(&self.stale_batch),
-            overflow: load(&self.overflow),
+            overflow: late(&self.overflow),
             folds: load(&self.folds),
-            rejected: self.rejected.each_ref().map(load),
+            rejected: self.rejected.each_ref().map(late),
         }
     }
 }
@@ -281,6 +326,7 @@ pub(crate) struct RecordSnapshot {
     measured: u64,
     deposited: u64,
     shown: u64,
+    recovered: u64,
     handoff: [u64; 2],
     losses: LossSnapshot,
     #[cfg(feature = "private-picture-counts")]
@@ -311,9 +357,10 @@ impl RecordSnapshot {
         let [mapping, generation, epoch] = self.losses.rejected;
         let _ = write!(
             text,
-            " lost.queue_overflow={} rejected.stale_key={} rejected.epoch={epoch}",
+            " lost.queue_overflow={} rejected.stale_key={} rejected.epoch={epoch} records.recovered={}",
             self.losses.overflow,
-            mapping.wrapping_add(generation)
+            mapping.wrapping_add(generation),
+            self.recovered
         );
         text
     }
@@ -335,11 +382,11 @@ mod tests {
     fn each_loss_and_rejection_keeps_its_own_label_and_count() {
         let counters = super::super::Counters::default();
         for (i, reason) in Lost::ALL.into_iter().enumerate() {
-            let count = i as u64 + 1;
-            assert_eq!(counters.lose(reason, count), count);
-            assert_eq!(counters.lose(reason, 1), count + 1);
+            counters.lose(reason, i as u64 + 1);
+            counters.lose(reason, 1);
         }
         assert_eq!(counters.read().2, 0, "selection buckets preserve the legacy dropped aggregate");
+        Counters::add(&counters.placed, 24);
         counters.reject_deposit(None, None, 11);
         counters.reject_deposit(None, Some(Default::default()), 13);
         let text = counters.records_text();
@@ -350,7 +397,16 @@ mod tests {
         {
             assert!(text.contains(&format!(" lost.{label}={} ", i + 2)), "{text}");
         }
-        assert!(text.ends_with("rejected.stale_key=11 rejected.epoch=13"), "{text}");
+        assert!(text.ends_with("rejected.stale_key=11 rejected.epoch=13 records.recovered=0"), "{text}");
         assert_eq!(counters.read().2, 24);
+    }
+    #[test]
+    fn frame1_loss_returns_the_total_the_reply_reports() {
+        let counters = super::super::Counters::default();
+        assert_eq!(counters.lose_frame1(), 1);
+        assert_eq!(counters.lose_frame1(), 2);
+        assert!(counters.records_text().contains(" lost.frame1=2 "), "{}", counters.records_text());
+        counters.diagnostics_disabled.store(true, Ordering::Relaxed);
+        assert_eq!(counters.lose_frame1(), 0, "a disabled count logs nothing");
     }
 }

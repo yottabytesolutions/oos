@@ -602,17 +602,21 @@ evidence only; timing overhead and budgets are not yet verified on the unit.
 
 Host implementation, not yet verified on hardware. Process-lifetime counts use records, including
 hardware-average inputs that are deliberately withheld. Roll and scan count published sweep snapshots,
-not samples. `records read=N deposited=N shown=N` reports reads, deposits (worker and direct UI),
-and hardware records reaching a picture. Demo playback is excluded from `shown` and direct deposits;
-the older `used` aggregate still includes it. A state reply takes one relaxed load per raw
-counter. Independent counters can still reflect work in flight.
+not samples. In `records read=N deposited=N shown=N`, `deposited` credits worker placements minus
+post-placement losses, plus direct UI draws that supply the record's terminal outcome. `shown`
+counts hardware records reaching a picture for the first time.
+Demo playback is excluded from `shown` and direct deposits. The older `used` aggregate still includes
+it. A state reply loads each raw counter once and reads late losses before placements, using acquire
+loads paired with release updates at the late loss sites. The snapshot includes pending worker
+placements, so a later rejection can decrease the reported `deposited`.
 
 `lost.settings`, `lost.frame0`, `lost.frame1`, `lost.average` and `lost.error` identify intentional
-selection and short-read losses. Settings includes the worker-push, UI-publication and queue-pop
-identity counters and stale batches rejected before deposition. `lost.buffer`, `lost.unclaimed`, `lost.budget`, `lost.queue_overflow`
+selection, source errors and compose errors. Settings includes the worker-push, UI-publication and queue-pop
+identity counters, stale batches rejected before deposition, and decoded records filtered by the active UI.
+`lost.buffer`, `lost.unclaimed`, `lost.budget`, `lost.queue_overflow`
 and `lost.superseded` expose the current pipeline's remaining discards. F0 preserves these policies;
 F3 removes the buffer and unclaimed overload sites through back-pressure. Sweep snapshots replaced by
-a newer snapshot are `superseded`. Completed maps rejected after deposition count as
+a newer snapshot are `superseded`. Completed deposits rejected by identity count as
 `rejected.epoch` when their epoch changed, otherwise `rejected.stale_key`.
 `dropped` retains its pre-F0 meaning: buffer exhaustion, unclaimed work, stale queued work and
 rejected maps. Intentional frame-zero/frame-one, average, budget and superseded-snapshot selections do not
@@ -620,9 +624,33 @@ increment it. `records ... not_used=N` is the saturating `acquired - used` gap, 
 and pending work. It is not a loss rate; the legacy `used` counter also includes demo playback.
 The frozen accumulator and its rejection counter arrive with F6.
 
-The quiescent ordinary live fast-route accounting is `read = deposited + source losses` and
-`deposited = shown + map rejections`. Pending queues, batches and maps prevent testing those equalities
-from an arbitrary running snapshot. Other record-only consumers retain their existing selection counters.
+After Clear, with acquisition and picture work drained, the residual is zero. Sum the
+following integer fields from the `records` group only. `stage.v1` also contains `rejected.*` timing
+quantiles.
+
+```text
+read = deposited + lost.settings + lost.frame0 + lost.average + lost.error + lost.buffer
+     + lost.unclaimed + lost.budget + lost.superseded + lost.frame1 + lost.queue_overflow
+     + rejected.stale_key + rejected.epoch
+```
+
+The final field in the record group, `records.recovered`, counts direct draws of records
+whose loss was certain when the tap was created. Each keeps its original loss outcome and contributes
+to `shown` on its first draw. A projected tap drawn early under a changed view contributes only to
+`shown`, and compose accounts for the deposit independently. For drained ordinary acquisition,
+`read >= deposited + records.recovered` and `shown >= deposited + records.recovered`. If the deposit
+later merges, `shown` can credit the same record twice and can exceed `read`. While the pipeline
+drains, even just after STOP, `deposited` includes worker placements awaiting compose and can exceed
+`shown`. A rejected placement reduces `deposited` as its rejection counter advances.
+
+A held record FIFO can still contain a completed handoff after the final-draw wait expires or SINGLE
+finishes. An ordinary decoded handoff contains at most 48 records. RUN or Clear retires records from
+the old acquisition identity. A stable reply while such a handoff is held has a positive residual:
+typically 48 to 50 on a stopped instrument, and zero after Clear. A placement retired at STOP under
+an unchanged identity is reported as `rejected.stale_key`.
+Hardware-segment delivery and a separate raw reread of the retained record on entry to STOP can put
+frames in the draw FIFO without incrementing `read`. Interpret the identity with that limitation when
+checking those paths. Stopped-view redraws use a separate reply slot and bypass picture accounting.
 
 Every completed UI step, including zero-record and stopped steps, enters `draw.frames_per_picture`
 (wire unit `frames`, counting acquired records). All shared diagnostic time rings also report p90.
@@ -631,7 +659,7 @@ Each producer keeps its sampling cursor locally. Samples travel with the existin
 retains at most one sample, and only the UI updates the timing rings. `deposit.record` divides that sampled
 claim's elapsed nanoseconds by its record count. `deposit.batch` measures feed-to-UI-merge age once per
 nonempty picture using the newest accepted batch; it is not yet the future read-to-slot latency. All three use ns.
-Deposited and measured counts accumulate locally and publish at existing batch/share boundaries.
+Placement and measured counts accumulate locally and publish at existing batch/share boundaries.
 There are no timing-ring locks or counter atomics in the per-record draw loop.
 The future pool's separate place/tile, busy and wait-buffer observations require F2/F3 and are not synthesized here.
 

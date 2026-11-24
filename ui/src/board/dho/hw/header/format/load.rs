@@ -17,7 +17,8 @@ use std::{collections::BTreeMap, fs, io::Read, ops::Range, path::Path, str::From
 mod capture_tests;
 mod trigger;
 mod view;
-use view::{view, PictureView};
+use view::view;
+pub(crate) use view::PictureView;
 
 type Fields<'a> = BTreeMap<&'a str, &'a str>;
 type ReadGeometry = (usize, usize, bool);

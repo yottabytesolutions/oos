@@ -108,19 +108,27 @@ impl<'a> Readout<'a> {
         let start = frame1::first_kept(bytes, fb, avail, frame0_drop, (self.settings, self.params));
         counters.lose(crate::drawpipe::Lost::Frame0, u64::from(frame0_drop && avail > 1));
 
+        let newest_bytes = &bytes[(avail - 1) * fb..avail * fb];
+        let keep = frame1::newest_kept(
+            (self.newest.2.as_ref(), newest_bytes),
+            (avail, frame0_drop),
+            (self.settings, self.params),
+        );
+        let end = avail - usize::from(!keep);
+        if start == end {
+            // Releasing the output slot wakes the coordinator to retry any retained deposit.
+            return Vec::new();
+        }
+
         let probe = self.newest.1;
         let deposit = Some(self.batch.0);
         let Ok((storage, reservation)) =
             tap::reserve(self.pipe, self.settings, fb, self.newest.2.as_ref(), deposit, self.reserved, canceled)
-                .inspect_err(|&lost| counters.discard(lost, avail.saturating_sub(start) as u64))
+                .inspect_err(|&lost| counters.discard(lost, (end - start) as u64))
         else {
             return Vec::new();
         };
         let (seq, _, raw) = self.newest;
-        let settings = self.settings;
-        let params = self.params;
-        let bytes = &bytes[(avail - 1) * fb..avail * fb];
-        let keep = frame1::newest_kept((raw.as_ref(), bytes), (avail, frame0_drop), (settings, params));
         let from_dma = raw.is_none();
         let newest = keep.then(|| {
             let mut newest = raw.unwrap_or(storage);
@@ -130,7 +138,7 @@ impl<'a> Readout<'a> {
         let full = dma.take().expect("the validated read still owns its DMA destination");
         matching::submit(
             self.pipe,
-            (super::header::dump::Captured::wrap(full, self.trace), fb, start..if keep { avail } else { avail - 1 }),
+            (super::header::dump::Captured::wrap(full, self.trace), fb, start..end),
             self.batch,
             (self.settings.clone(), *self.params, probe),
             cores,
@@ -176,7 +184,7 @@ pub(super) fn decode_records(
             publication::tag(Frame { hw_avg: average, ..frame }, identity)
         })
         .collect();
-    let bad_edge = frame1::drop_frame1(&mut frames, skip, frame0_drop, settings);
+    let bad_edge = frame1::drop_frame1(&mut frames, skip, frame0_drop && !average, settings);
     skip += bad_edge;
     uncorrected -= usize::from(first_uncorrected && bad_edge > 0);
     let raw = raw.map(|(frame, missed)| {

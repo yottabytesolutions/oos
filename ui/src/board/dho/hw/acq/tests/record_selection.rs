@@ -64,7 +64,7 @@ impl Expected {
             Event::Picture(picture) => Some(picture),
             _ => None,
         });
-        if self.worker {
+        if self.worker && !self.slots.is_empty() {
             let [batch] = submissions.as_slice() else { panic!("expected one submission, got {submissions:?}") };
             assert_eq!(batch.range(), self.slots);
             assert_eq!(batch.first_words(), self.slots.clone().map(|slot| (slot as u16) << 8).collect::<Vec<_>>());
@@ -132,6 +132,20 @@ fn check(case: Case, record: Expected, deposit: Expected) {
     assert_eq!((records.1, worker.1), (u64::from(available), u64::from(available)));
     record.check(&records.0, records.1, case.count, available);
     deposit.check(&worker.0, worker.1, case.count, available);
+}
+
+#[test]
+fn two_off_edge_records_never_submit_an_empty_batch() {
+    check(Case::new(2), Expected::queued(1..1, BOTH), Expected::worker(1..1, BOTH));
+}
+
+#[test]
+fn ready_two_record_average_is_published_off_edge_on_both_requests() {
+    let mut case = Case::new(2);
+    case.settings.mode = Mode::Average { count: 2 };
+    let expected =
+        || Expected { newest: Some(Frame::average(2, 32770)), ..Expected::queued(1..2, &[("lost.average", 1)]) };
+    check(case, expected(), expected());
 }
 
 #[test]
@@ -258,4 +272,19 @@ fn a_periodic_edge_in_every_window_passes_both_paths_without_proving_slot_age() 
         Expected::queued(1..4, FRAME0),
         Expected::worker(1..4, FRAME0),
     );
+}
+
+#[test]
+fn short_buffer_counts_missing_slots_and_skips_empty_handoffs() {
+    for (available, slots, worker, losses) in [
+        (0, 0..0, false, &[("lost.error", 4)][..]),
+        (1, 1..1, false, &[("lost.error", 3), ("lost.settings", 1)]),
+        (2, 1..1, true, &[("lost.error", 2), ("lost.frame0", 1), ("lost.frame1", 1)]),
+        (3, 2..3, true, &[("lost.error", 1), ("lost.frame0", 1), ("lost.frame1", 1)]),
+    ] {
+        let case = Case { available, ..Case::new(4) };
+        let record = Expected::queued(slots.clone(), losses);
+        let deposit = if worker { Expected::worker(slots, losses) } else { Expected::queued(slots, losses) };
+        check(case, record, deposit);
+    }
 }

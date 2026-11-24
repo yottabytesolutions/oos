@@ -3,7 +3,7 @@
 use super::super::dump::{BatchInput, Dump};
 use super::*;
 use crate::board::dho::cores::Cores;
-use crate::drawpipe::stage::fixture_bench::{verify_fixture, Stage};
+use crate::drawpipe::stage::fixture_bench::{assert_benchmark_skips, benchmark_group, verify_fixture, Stage};
 use crate::model::{tscales, DotsMode, Meas, Model, WaveId};
 use crate::sparse::Interp;
 use oos_hal::dho::seq;
@@ -179,6 +179,58 @@ fn fixture_dump_replays_dense_header_and_zoom_routes() {
     }
 }
 
+fn edited(fixture: &Fixture, scratch: &Scratch, edits: &[(&str, &str)]) -> Fixture {
+    let path = scratch.0.join(fixture.name());
+    let mut meta = fs::read_to_string(path.join("fixture.txt")).unwrap();
+    for (key, value) in edits {
+        let line = meta.lines().find(|line| line.starts_with(&format!("{key}="))).unwrap().to_owned();
+        meta = meta.replace(&line, &format!("{key}={value}"));
+    }
+    fs::write(path.join("fixture.txt"), meta).unwrap();
+    Fixture::load(&path).unwrap()
+}
+
+/// A batch recorded before empty selections stopped reaching a worker: claimed with a view, but no record submitted.
+fn submitted_nothing(scratch: &Scratch) -> Fixture {
+    let fixture = synthetic(scratch, false, false, 16_384);
+    let end = fixture.expected_route().unwrap().1.end.to_string();
+    let fixture = edited(&fixture, scratch, &[("submitted", &format!("{end} {end}"))]);
+    assert!(fixture.view().is_some());
+    fixture
+}
+
+#[test]
+fn every_replay_skips_a_batch_that_submitted_no_record() {
+    let scratch = Scratch::new();
+    let fixture = submitted_nothing(&scratch);
+    assert!(fixture.placement_view().is_none());
+    assert!(!replay_route(&fixture));
+    assert_benchmark_skips(&fixture);
+}
+
+#[test]
+#[should_panic(expected = "the fixture group has no measurable fixture")]
+fn benchmark_fails_on_a_group_that_submitted_no_record() {
+    let scratch = Scratch::new();
+    let fixture = submitted_nothing(&scratch);
+    benchmark_group(&[&fixture, &fixture]);
+}
+
+#[test]
+fn benchmark_measures_the_batches_that_submitted_records() {
+    let (measured, skipped) = (Scratch::new(), Scratch::new());
+    benchmark_group(&[&synthetic(&measured, false, false, 16_384), &submitted_nothing(&skipped)]);
+}
+
+#[test]
+#[should_panic(expected = "recorded 1..2 as submitted, but the current selection rejects every record")]
+fn replay_fails_when_the_current_selection_rejects_a_recorded_batch() {
+    let scratch = Scratch::new();
+    let fixture = synthetic(&scratch, false, false, 16_384);
+    let edits = [("avail", "2"), ("frame0_drop", "true"), ("submitted", "1 2"), ("level", "50")];
+    replay_route(&edited(&fixture, &scratch, &edits));
+}
+
 #[test]
 fn replay_captured_batches() {
     for_each_fixture(&mut |fixture| {
@@ -193,7 +245,9 @@ fn captured_batches_reuse_row_and_grid_caches() {
     let mut before = (0, 0);
     let mut batches = 0;
     for_each_fixture(&mut |fixture| {
-        let view = fixture.view().unwrap();
+        let Some(view) = fixture.placement_view() else {
+            return;
+        };
         let (model, size, interp, zoom) = view.inputs();
         pipe.publish_picture_view(model, size, interp, Identity::default(), zoom);
         let (send, receive) = std::sync::mpsc::channel();

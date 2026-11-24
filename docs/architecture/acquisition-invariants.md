@@ -35,6 +35,16 @@ excluded, with zero change to either drop aggregate on deposit dispatch. An unre
 publishes no waveform and is charged to settings.
 [Selection tests](../../ui/src/board/dho/hw/acq/tests/deposit.rs) · [Dispatch](../../ui/src/board/dho/hw/batch.rs)
 
+## Hardware-average publication
+
+A ready average publishes the last complete result through the decoded record path, even when its edge is outside
+the frame-one window. Pending averages count all completed triggers as average losses. Ready averages count only
+the skipped complete slots as average losses. Reconfiguration clears the FPGA accumulator and starts a fresh
+progress tracker. A completed result carries its arm's generation and epoch. The serial handoff or the locked
+queue publication rejects a superseded identity and charges the affected records to `lost.settings`.
+[Paired selection tests](../../ui/src/board/dho/hw/acq/tests/record_selection.rs) ·
+[Settings-change test](../../ui/src/board/dho/hw/acq/tests/run_order.rs)
+
 ## Short buffers
 
 Holds in `short_buffers_submit_only_complete_records_and_count_missing_slots_as_errors`, where two or three of
@@ -42,6 +52,17 @@ four records are available after the fixture truncates the completed DMA buffer.
 `lost.error` and selection uses the available count, so any tap carries the last available record that survives
 selection.
 [Host test](../../ui/src/board/dho/hw/acq/tests/deposit.rs) · [Read accounting](../../ui/src/board/dho/publication.rs#L373)
+
+## Empty batch with a retained deposit
+
+An off-edge, two-record batch with frame-zero drop consumes both sequences and records both losses at the source.
+It submits no job, leaves DMA with the source and refunds any prepared tap reservation. When the first deposit
+occupies the output slot and a second deposit is retained on the worker, releasing the slot wakes the coordinator
+to retry publication. That wake stays pending even if intake is full, so publication can proceed on the same slot
+release without another acquisition.
+[Empty selection tests](../../ui/src/board/dho/hw/acq/tests/deposit.rs) ·
+[Retained publication test](../../ui/src/board/dho/hw/batch/tests/empty_batch.rs) ·
+[Full intake wake test](../../ui/src/drawpipe/source.rs)
 
 ## STOP and RUN boundaries
 

@@ -57,6 +57,13 @@ fn initial_singleton_and_short_buffer_fall_back_unless_frame_zero_is_kept() {
 }
 
 #[test]
+fn two_records_submit_only_when_frame_one_survives() {
+    selected((2, 2), (true, false), settings(), Some(1..2), (&[], 0), (1, 0));
+    selected((2, 2), (false, false), settings(), None, (&[], 0), (1, 1));
+    selected((2, 2), (false, true), settings(), Some(0..2), (&[], 0), (0, 0));
+}
+
+#[test]
 fn four_and_six_records_submit_the_kept_suffix_in_order() {
     for count in [4, 6] {
         selected((count, count), (true, false), settings(), Some(1..count as usize), (&[], 0), (1, 0));
@@ -67,12 +74,12 @@ fn four_and_six_records_submit_the_kept_suffix_in_order() {
 #[test]
 fn frame_one_edge_check_on_deposit_depends_on_coupling_and_trigger() {
     for (coupling, two, four, lost) in [
-        (tpu::Coupling::Dc, 1..1, 2..4, 1),
-        (tpu::Coupling::Ac, 1..2, 1..4, 0),
-        (tpu::Coupling::LfReject, 1..2, 1..4, 0),
+        (tpu::Coupling::Dc, None, 2..4, 1),
+        (tpu::Coupling::Ac, Some(1..2), 1..4, 0),
+        (tpu::Coupling::LfReject, Some(1..2), 1..4, 0),
     ] {
         let settings = Settings { trig_couple: coupling, ..settings() };
-        selected((2, 2), (false, false), settings.clone(), Some(two), (&[], 0), (1, lost));
+        selected((2, 2), (false, false), settings.clone(), two, (&[], 0), (1, lost));
         selected((4, 4), (false, false), settings, Some(four), (&[], 0), (1, lost));
     }
     let non_edge = Settings { trigger: seq::Trig::Timeout { time: 1e-6 }, ..settings() };
@@ -83,16 +90,16 @@ fn frame_one_edge_check_on_deposit_depends_on_coupling_and_trigger() {
 #[test]
 fn hardware_average_uses_record_selection_even_with_a_pipe() {
     let average = Settings { mode: Mode::Average { count: 2 }, ..settings() };
-    selected((2, 2), (false, false), average.clone(), None, (&[], 2), (0, 1));
+    selected((2, 2), (false, false), average.clone(), None, (&[Frame::average(2, 32770)], 1), (0, 0));
     selected((2, 2), (false, true), average, None, (&[Frame::average(2, 32770)], 1), (0, 0));
 }
 
 #[test]
 fn short_buffers_submit_only_complete_records_and_count_missing_slots_as_errors() {
-    for (available, off_edge) in [(2, 1..1), (3, 2..3)] {
+    for (available, off_edge) in [(2, None), (3, Some(2..3))] {
         let end = available as usize;
         selected((4, available), (true, false), settings(), Some(1..end), (&[], 0), (1, 0));
-        selected((4, available), (false, false), settings(), Some(off_edge), (&[], 0), (1, 1));
+        selected((4, available), (false, false), settings(), off_edge, (&[], 0), (1, 1));
         selected((4, available), (false, true), settings(), Some(0..end), (&[], 0), (0, 0));
     }
 }

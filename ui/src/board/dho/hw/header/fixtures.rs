@@ -12,8 +12,20 @@ use std::time::Instant;
 mod phase;
 mod tests;
 pub(crate) use super::format::Fixture;
+use super::format::PictureView;
 
 impl Fixture {
+    /// The worker view of a batch that reached placement with records, or `None` after saying on stderr why not.
+    pub(crate) fn placement_view(&self) -> Option<&PictureView> {
+        let reason = match (self.view(), self.expected_route()) {
+            (None, _) => "batch did not reach worker placement",
+            (Some(_), Some((_, range))) if range.is_empty() => "no record survived selection; nothing was submitted",
+            (Some(view), _) => return Some(view),
+        };
+        eprintln!("{}: {reason}; skipping replay", self.name());
+        None
+    }
+
     pub(crate) fn assert_route(&self, observed: &str, submitted: &std::ops::Range<usize>) {
         let (expected, range) = self.expected_route().expect("worker fixtures record their route and range");
         let (expected, recorded_wide) = expected.rsplit_once(" wide_search=").expect("recorded route has a wide count");
@@ -93,12 +105,21 @@ pub(crate) fn dispatch_fixture(fixture: &Fixture, pipe: &Pipe, trace: Option<Box
         },
         &|| false,
     );
-    assert!(bytes.is_none() && returned.is_empty(), "fixture DMA must be handed to the placement worker");
+    let name = fixture.name();
+    assert!(returned.is_empty(), "{name}: fixture records must go to the placement worker");
+    if bytes.is_none() {
+        return;
+    }
+    match fixture.expected_route().map(|(_, range)| range).filter(|range| !range.is_empty()) {
+        Some(recorded) => {
+            panic!("{name}: recorded {recorded:?} as submitted, but the current selection rejects every record")
+        }
+        None => panic!("{name}: nothing was submitted; skip it with Fixture::placement_view before dispatch"),
+    }
 }
 
 pub(crate) fn replay_route(fixture: &Fixture) -> bool {
-    let Some(view) = fixture.view() else {
-        eprintln!("{}: batch did not reach worker placement; skipping placement replay", fixture.name());
+    let Some(view) = fixture.placement_view() else {
         return false;
     };
     let (m, size, interp, zoom) = view.inputs();

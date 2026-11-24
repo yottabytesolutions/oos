@@ -10,13 +10,6 @@ use std::{
 
 pub(super) type Asked<'a> = (Option<&'a Settings>, Slow);
 
-pub(super) fn retain_replay(last_batch: &mut Option<super::super::replay::Batch>, count: u32, fresh: bool) -> bool {
-    if last_batch.as_ref().is_some_and(|batch| batch.index < count) {
-        *last_batch = None;
-    }
-    fresh && last_batch.is_some()
-}
-
 #[derive(Default)]
 pub(super) struct FirstWait(Cell<Option<Instant>>);
 
@@ -60,8 +53,8 @@ pub(super) fn read_obsolete(g: &Shared, plan: &ArmPlan<'_>, asked: Asked<'_>) ->
             && (!g.queue.is_empty() || g.record_flow.segment_bound() == Some(0)))
 }
 
-pub(super) fn disarm_after(error: &str, g: &Shared, serial: bool) -> bool {
-    is_stall(error) || error == seq::NEW_SETTINGS && (serial || g.hold || g.record_flow.shutdown)
+pub(super) fn needs_disarm(error: &str) -> bool {
+    error == seq::NEW_SETTINGS || is_stall(error)
 }
 
 pub(super) fn held_request(g: &Shared, plan: &ArmPlan<'_>, asked: Asked<'_>, count: u32, ahead: bool) -> Option<u64> {

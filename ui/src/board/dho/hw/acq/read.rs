@@ -129,10 +129,9 @@ impl BatchState {
                 |phase| timing.observe(phase),
             )
         })
-        .inspect_err(|error| {
-            let disarm = stop::disarm_after(error, &lock(out), plan.serial());
-            if disarm {
-                disarm_capture(io, self.dma.destination(), out);
+        .inspect_err(|message| {
+            if stop::needs_disarm(message) {
+                super::disarm(io.state, &mut io.bar, io.c2h, clock, out);
             }
         })?;
         let read_at = io.clock.now();
@@ -244,20 +243,6 @@ fn capture_read_allowed(
         crate::drawpipe::counters().metrics.source_capture_discarded(count);
     }
     allowed
-}
-
-fn disarm_capture(
-    io: &mut ReadIo<'_, impl Bus, impl Read, impl LoopClock>,
-    dma: &mut oos_hal::dho::bus::DmaBuf,
-    out: &HwShared,
-) {
-    let result = lifecycle::disarm(|| {
-        let steps = io.state.disarm_steps();
-        io.execute(&steps, dma)
-    });
-    if let Err(error) = result {
-        status(out, format!("disarm: {error}"));
-    }
 }
 
 fn mask_entries(cols: &[mask::Column]) -> impl Iterator<Item = [u8; 4]> + '_ {

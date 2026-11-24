@@ -11,7 +11,7 @@ use super::super::{
 };
 use super::{
     comparator::UnitGuard,
-    dma_source::{ArmedBatch, DmaSource},
+    dma_source::{DmaSource, Successor},
     lifecycle,
     segmented::{seg_abort, SegRun, SegmentIo},
     Settings,
@@ -62,6 +62,8 @@ trait Port: Sized {
     fn generator(service: &mut Service, bar: &mut Self::Bus, out: &HwShared, want: Option<crate::board::Gen>);
     fn probe_la() -> Option<Option<bool>>;
     fn trim(io: &mut Io<Self>, mask: u32) -> bool;
+    #[cfg(test)]
+    fn stream_cleared(_io: &Io<Self>, _identity: Identity) {}
 }
 
 struct Io<P: Port> {
@@ -77,24 +79,43 @@ struct Io<P: Port> {
 }
 
 #[derive(Default)]
-struct Replay {
+pub(super) struct Replay {
     fresh: bool,
     last_batch: Option<replay::Batch>,
     replayed: Option<(f64, f64)>,
     paused: bool,
 }
 
+impl Replay {
+    fn discard(&mut self, out: &HwShared) {
+        (self.last_batch, self.replayed, self.fresh) = (None, None, false);
+        crate::perfguard::deep::acq_lock(out).replay = None;
+    }
+
+    pub(super) fn invalidate(&mut self, out: &HwShared, count: u32) {
+        // Every arm starts at slot zero and can write its full programmed range.
+        if self.last_batch.as_ref().is_some_and(|batch| batch.index < count) {
+            self.discard(out);
+        }
+    }
+
+    pub(super) fn successor_slots(&self, settings: &Settings) -> u32 {
+        // Prearm uses the configured geometry of the batch it follows.
+        self.last_batch.as_ref().map_or(0, |batch| seq::frames(settings, &batch.params))
+    }
+}
+
 #[derive(Default)]
 struct Configured {
     current: Option<(Settings, hz::Params)>,
     mode: Slow,
-    applied_pair: Option<(u64, u64)>,
+    stream_pair: Option<(u64, u64)>,
     unit_blocked: bool,
 }
 
 #[derive(Default)]
 struct BatchState {
-    armed: Option<ArmedBatch>,
+    armed: Successor,
     dma: DmaSource<DmaBuf>,
     raw: Raw,
     guard: UnitGuard,
@@ -170,20 +191,13 @@ impl<T: pacing::PacingPolicy> AcqLoop<T> {
             let mut last_read = std::mem::take(&mut self.replay.fresh);
             let Some(request) = self.service(io, counter) else { continue };
             let Some((settings, params)) = self.reconfigure(io, &request, &mut last_read) else { continue };
-            self.units.poll(
-                io,
-                (&mut self.batch.armed, self.segrun.as_ref()),
-                &self.out,
-                (&settings, self.configured.mode),
-                (&request, self.service.generator_on()),
-            );
             if self.configured.mode != Slow::Off {
                 if !self.stream.poll(
                     io,
-                    &mut self.batch.armed,
                     &self.out,
                     (&settings, &params, self.configured.mode),
                     (&mut self.seq, request.identity),
+                    |io| io.disarm(&mut self.batch.armed, &mut self.replay, &self.out),
                 ) {
                     self.configured.current = None;
                 }
@@ -199,7 +213,7 @@ impl<T: pacing::PacingPolicy> AcqLoop<T> {
     }
 
     fn segments(&mut self, io: &mut Io<impl Port>, settings: &Settings, params: &hz::Params, identity: Identity) {
-        io.disarm(&mut self.batch.armed);
+        io.disarm(&mut self.batch.armed, &mut self.replay, &self.out);
         if !self.batch.dma.ready(identity, &io.clock, || {
             let g = crate::perfguard::deep::acq_lock(&self.out);
             publication::boundary(Some((identity.gen(), identity.epoch())), g.acquisition.identity())
@@ -229,8 +243,8 @@ impl<P: Port> Io<P> {
         execute(steps, &mut self.bar, &mut self.c2h, &self.clock)
     }
 
-    fn disarm(&mut self, armed: &mut Option<ArmedBatch>) {
-        disarm(armed, &mut self.state, &mut self.bar, &mut self.c2h, &self.clock);
+    fn disarm(&mut self, armed: &mut Successor, replay: &mut Replay, out: &HwShared) {
+        armed.disarm(replay, out, || disarm(&mut self.state, &mut self.bar, &mut self.c2h, &self.clock, out));
     }
 
     fn abort_segments(&mut self, run: &mut Option<SegRun>, out: &HwShared) {
@@ -249,17 +263,9 @@ fn execute(
     Ok(dma.into_vec())
 }
 
-fn disarm(
-    armed: &mut Option<ArmedBatch>,
-    state: &mut seq::State,
-    bar: &mut impl Bus,
-    c2h: &mut impl Read,
-    clock: &impl Clock,
-) {
-    if armed.take().is_some() {
-        if let Err(e) = lifecycle::disarm(|| execute(&state.disarm_steps(), bar, c2h, clock)) {
-            eprintln!("oos-ui hw: disarm: {}", e);
-        }
+fn disarm(state: &mut seq::State, bar: &mut impl Bus, c2h: &mut impl Read, clock: &impl Clock, out: &HwShared) {
+    if let Err(error) = lifecycle::disarm(|| execute(&state.disarm_steps(), bar, c2h, clock)) {
+        status(out, format!("disarm: {error}"));
     }
 }
 

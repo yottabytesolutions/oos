@@ -14,10 +14,12 @@ mod calibration_hold;
 mod deposit;
 mod picture;
 mod raw;
+mod ring_validity;
 mod side_service;
 mod sim;
 mod stopped_pass;
 mod stopped_raw;
+mod stopped_slots;
 
 const HELD_POLL: Duration = Duration::from_millis(5);
 

@@ -9,7 +9,12 @@ fn held_pass_without_a_view_writes_no_registers_for_any_request() {
     for levels in [&[][..], &[0.5][..]] {
         let outcome = twice(|| stopped_pass(levels, Resume::No));
         let stop = outcome.events.iter().position(|event| *event == Event::Stop).unwrap();
-        assert_eq!(outcome.events[stop + 1..], [Event::Wait(HELD_POLL)]);
+        let held = &outcome.events[stop + 1..];
+        if levels.is_empty() {
+            assert_eq!(held, [Event::Wait(HELD_POLL)]);
+        } else {
+            assert!(matches!(held, [Event::RingClear(_), Event::Wait(HELD_POLL)]));
+        }
         assert_eq!(outcome.final_ack, 7);
         assert_eq!(outcome.latest, Some(Frame::stamp(4, 3)));
     }
@@ -22,8 +27,12 @@ fn run_applies_only_the_latest_held_request_before_the_first_arm() {
         let stop = outcome.events.iter().position(|event| *event == Event::Stop).unwrap();
         let wake = outcome.events.iter().position(|event| *event == Event::SourceWake).unwrap();
         let held = &outcome.events[stop + 1..wake];
-        assert_eq!(held.len(), levels.len());
-        assert!(held.iter().all(|event| *event == Event::Wait(HELD_POLL)), "{held:?}");
+        assert_eq!(held.len(), 2 * levels.len());
+        assert!(held
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .all(|pair| matches!(pair, [Event::RingClear(_), Event::Wait(HELD_POLL)])));
         let run = &outcome.events[wake + 1..];
         let arms: Vec<_> = run.iter().enumerate().filter(|(_, event)| is_arm(event)).map(|(index, _)| index).collect();
         assert_eq!(arms.len(), 2);
@@ -40,7 +49,10 @@ fn reverted_held_edit_needs_no_configuration_on_run() {
     let outcome = twice(|| stopped_pass(&[0.5, 0.0], Resume::Run));
     let stop = outcome.events.iter().position(|event| *event == Event::Stop).unwrap();
     assert_eq!(trigger_plans(&outcome.events[stop..]), 0);
-    assert_eq!(outcome.events[stop + 1..stop + 3], [Event::Wait(HELD_POLL), Event::Wait(HELD_POLL)]);
+    assert!(matches!(
+        outcome.events[stop + 1..stop + 5],
+        [Event::RingClear(_), Event::Wait(HELD_POLL), Event::RingClear(_), Event::Wait(HELD_POLL)]
+    ));
     assert_eq!(outcome.events[stop..].iter().filter(|event| is_arm(event)).count(), 2);
 }
 
@@ -49,7 +61,7 @@ fn single_applies_the_held_edit_before_arming_once() {
     let outcome = twice(|| stopped_pass(&[0.5], Resume::Single));
     let stop = outcome.events.iter().position(|event| *event == Event::Stop).unwrap();
     let wake = outcome.events.iter().position(|event| *event == Event::SourceWake).unwrap();
-    assert_eq!(outcome.events[stop + 1..wake], [Event::Wait(HELD_POLL)]);
+    assert!(matches!(outcome.events[stop + 1..wake], [Event::RingClear(_), Event::Wait(HELD_POLL)]));
     let single = &outcome.events[wake + 1..];
     let arm = single.iter().position(is_arm).unwrap();
     assert_eq!(trigger_plans(&single[..arm]), 1);
@@ -57,6 +69,45 @@ fn single_applies_the_held_edit_before_arming_once() {
     assert_eq!(single.iter().filter(|event| is_arm(event)).count(), 1);
     assert_eq!(single.iter().filter(|event| matches!(event, Event::Dma(_))).count(), 1);
     assert_eq!(single.last(), Some(&Event::Wait(Duration::from_millis(2))));
+}
+
+#[test]
+fn held_stream_boundary_clears_once_per_identity() {
+    let _scope = Scope::new();
+    let want = settings();
+    let out = requested(&want, Identity::default(), false);
+    {
+        let mut g = lock(&out);
+        g.hold = true;
+        g.slow = Slow::Scan { delay: 0.0, single: true };
+    }
+    let fixture = sim::fixture(&want, out.clone(), (Run::Selection, 4, false), None);
+    let shared = out.clone();
+    let mut publish = held_edits();
+    let mut passes = 0;
+    let outcome = drive(&out, fixture, move |_, pause| {
+        if pause == Pause::Wait(HELD_POLL) {
+            passes += 1;
+            let mut g = lock(&shared);
+            match passes {
+                2 => publish(&mut g, Some(0.25), false),
+                4 => publish(&mut g, Some(0.5), false),
+                6 => g.record_flow.shutdown = true,
+                _ => {}
+            }
+        }
+    });
+    let held = outcome.events.iter().filter(|event| matches!(event, Event::RingClear(_) | Event::Wait(HELD_POLL)));
+    let events: Vec<_> = held.collect();
+    let [Event::RingClear(first), Event::Wait(HELD_POLL), Event::Wait(HELD_POLL), Event::RingClear(second), Event::Wait(HELD_POLL), Event::Wait(HELD_POLL), Event::RingClear(third), Event::Wait(HELD_POLL), Event::Wait(HELD_POLL)] =
+        events.as_slice()
+    else {
+        panic!("expected a clear before each pair of held polls: {events:?}");
+    };
+    assert_ne!(first, second);
+    assert_ne!(second, third);
+    assert_ne!(first, third);
+    assert_eq!(trigger_plans(&outcome.events), 1);
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

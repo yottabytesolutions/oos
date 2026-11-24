@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::*;
-use oos_hal::dho::scu::status::{STOPPED, WAIT_TRIG};
+use oos_hal::dho::scu::status::STOPPED;
 
 const STATUS: u32 = 0x4034;
 const DONE: u32 = 0x4080;
+const WAITING: u32 = 0x12;
 const HELD_POLL: Duration = Duration::from_millis(5);
 const RETRY: Duration = Duration::from_millis(200);
 
@@ -13,15 +14,15 @@ fn stop_acknowledges_after_one_disarm_poll_even_without_hardware_acknowledgement
     let outcome = twice(stop_without_ack);
     let trace = &outcome.events;
     let stop = trace.iter().position(|event| *event == Event::Stop).unwrap();
-    let first = trace.iter().position(|event| *event == Event::Read(STATUS, WAIT_TRIG)).unwrap();
+    let first = trace.iter().position(|event| *event == Event::Read(STATUS, WAITING)).unwrap();
     let end = first + trace[first..].iter().position(|event| matches!(event, Event::Write(_, _))).unwrap();
     assert!(stop < first);
     let poll = &trace[first..end];
     assert_eq!(poll.len(), 41);
     assert!(poll.chunks(2).all(|pair| matches!(
         pair,
-        [Event::Read(STATUS, WAIT_TRIG), Event::Wait(delay)] if *delay == Duration::from_micros(500)
-    ) || pair == [Event::Read(STATUS, WAIT_TRIG)]));
+        [Event::Read(STATUS, WAITING), Event::Wait(delay)] if *delay == Duration::from_micros(500)
+    ) || pair == [Event::Read(STATUS, WAITING)]));
     assert_eq!(waiting_time(poll), Duration::from_millis(10));
     let stop_pulses =
         trace[end..].iter().filter(|event| matches!(event, Event::Write(0x4004, value) if value & (1 << 31) != 0));
@@ -63,7 +64,7 @@ fn serial_stop_cancels_a_missing_final_trigger_after_two_virtual_seconds() {
     let outcome = twice(serial_stop_without_trigger);
     let trace = &outcome.events;
     let stop = trace.iter().position(|event| *event == Event::Stop).unwrap();
-    let disarm = trace.iter().position(|event| *event == Event::Read(STATUS, WAIT_TRIG)).unwrap();
+    let disarm = trace.iter().position(|event| *event == Event::Read(STATUS, WAITING)).unwrap();
     assert_eq!(waiting_time(&trace[stop + 1..disarm]), Duration::from_secs(2));
     assert_eq!(outcome.final_ack, 7);
     assert!(outcome.latest.is_none() && outcome.queue.is_empty());
@@ -106,7 +107,7 @@ fn run_and_armed_single_retry_without_a_trigger_or_completion_acknowledgement() 
         let retries: Vec<_> = outcome.events[wake + 1..].split(|event| *event == Event::Wait(RETRY)).collect();
         let [first, second, []] = retries.as_slice() else { panic!("expected two acquisition attempts and backoffs") };
         for attempt in [first, second] {
-            let disarm = attempt.iter().position(|event| *event == Event::Read(STATUS, WAIT_TRIG)).unwrap();
+            let disarm = attempt.iter().position(|event| *event == Event::Read(STATUS, WAITING)).unwrap();
             let trigger_wait = waiting_time(&attempt[..disarm]);
             assert!(
                 (Duration::from_secs(2)..Duration::from_micros(2_001_000)).contains(&trigger_wait),
@@ -143,6 +144,6 @@ fn missing_trigger(single: bool) -> Outcome {
     })
 }
 
-fn waiting_time(trace: &[Event]) -> Duration {
+pub(super) fn waiting_time(trace: &[Event]) -> Duration {
     trace.iter().filter_map(|event| if let Event::Wait(delay) = event { Some(*delay) } else { None }).sum()
 }

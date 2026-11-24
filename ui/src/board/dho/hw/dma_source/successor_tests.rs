@@ -13,7 +13,7 @@ struct Unit {
     bus: sim::SimBus,
     input: sim::SimC2h,
     source: DmaSource<oos_hal::dho::bus::DmaBuf>,
-    armed: Option<ArmedBatch>,
+    armed: Successor,
     // Arm-only execution must never materialize DMA bytes in this empty test port.
     arm_scratch: oos_hal::dho::bus::DmaBuf,
 }
@@ -33,7 +33,7 @@ impl Unit {
             bus,
             input,
             source: DmaSource::default(),
-            armed: None,
+            armed: Successor::default(),
             arm_scratch: oos_hal::dho::bus::DmaBuf::new(),
         }
     }
@@ -125,7 +125,7 @@ fn canceled_successor_does_not_arm_or_lose_current_completed_bytes() {
     let plan = ArmPlan::new(&settings, id, true, Some(&pipe), false);
     let mut source = DmaSource::<oos_hal::dho::bus::DmaBuf>::default();
     source.destination().read(&mut &b"completed"[..], 9, |_, _| {}).unwrap();
-    let mut armed = None;
+    let mut armed = Successor::default();
     let checks = Cell::new(0);
     let spare = plan.prearm(
         &mut source,
@@ -139,7 +139,7 @@ fn canceled_successor_does_not_arm_or_lose_current_completed_bytes() {
         },
         |_, _| panic!("cancellation must precede hardware"),
     );
-    assert!(armed.is_none());
+    assert!(!armed.is_some());
     assert_eq!(source.destination().data(), b"completed");
     pipe.return_buffer(Box::new(spare.unwrap()));
     assert!(source.spare(&pipe).is_some());

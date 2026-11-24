@@ -32,7 +32,11 @@ fn stopped_view_uses_captured_geometry_and_mode_after_held_edits() {
     let (baseline, capture, view) = twice(|| stopped_edited_view(None));
     for edit in [Edit::Timebase, Edit::Depth, Edit::Channels, Edit::Mode] {
         let (edited, edited_capture, edited_view) = twice(|| stopped_edited_view(Some(edit)));
-        assert_eq!(edited.events, baseline.events, "{edit:?}");
+        let hardware_events = |event: &&Event| !matches!(event, Event::RingClear(_));
+        assert!(
+            edited.events.iter().filter(hardware_events).eq(baseline.events.iter().filter(hardware_events)),
+            "{edit:?}"
+        );
         assert_eq!(edited_capture, capture, "{edit:?}");
         assert_eq!(edited_view, view, "{edit:?}");
     }

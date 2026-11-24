@@ -469,7 +469,7 @@ impl Ui {
         if channel >= n_ch() || !self.m.ch[channel].on {
             return None;
         }
-        let record = self.last[0].as_ref()?;
+        let record = self.measurement_record()?;
         let (samples, t0, dt) = self.measurement_channel_samples(record, channel)?;
         Some((
             RefMeasureKey {
@@ -501,7 +501,7 @@ impl Ui {
         if channel >= n_ch() || !self.m.ch[channel].on {
             return None;
         }
-        let record = self.last[0].as_ref()?;
+        let record = self.measurement_record()?;
         let raw = record.raw.as_ref()?;
         let full = raw.frame.ch.get(channel)?;
         let (samples, _, _) = self.measurement_channel_samples(record, channel)?;
@@ -592,7 +592,7 @@ impl Ui {
                 return Some((analysis, t0));
             }
         }
-        let record = self.last[0].as_ref()?;
+        let record = self.measurement_record()?;
         let (samples, _, dt) = self.measurement_channel_samples(record, channel)?;
         if large {
             self.azr.ch_measure_pending[channel].set(Some(key));

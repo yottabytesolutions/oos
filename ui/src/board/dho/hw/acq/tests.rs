@@ -2,7 +2,10 @@
 
 use super::super::{batch_timing, dma_source::ArmPlan};
 use super::{read::Capture, *};
-use crate::drawpipe::{self, admission::Grant, test_scope::Scope};
+use crate::{
+    board::identity::StopView,
+    drawpipe::{self, admission::Grant, test_scope::Scope},
+};
 use oos_hal::{
     dho::{acq::Mode, tpu},
     sync::lock,

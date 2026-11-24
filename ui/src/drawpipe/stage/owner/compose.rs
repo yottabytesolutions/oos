@@ -160,7 +160,7 @@ impl Owner {
         ctx: &OwnerContext,
         picture: &Picture,
         mut maps: PerMap<&mut Phosphor>,
-        clear: &mut bool,
+        first: &mut FirstDraw,
         stats: &mut Stats<'_>,
         timing: &mut Composition,
     ) -> Accepted {
@@ -175,7 +175,7 @@ impl Owner {
             append_accepted(&mut accepted, ctx.accept(&mut deposit, picture, stats));
             *clock = std::mem::take(deposit.extent.clocks());
             let start = Instant::now();
-            deposit.blend_picture(&mut maps, std::mem::take(clear));
+            deposit.blend_picture(&mut maps, first.begin());
             timing.merge += start.elapsed();
             ctx.slot.recycle(deposit);
         }
@@ -186,7 +186,7 @@ impl Owner {
     pub(super) fn compose(
         &mut self,
         mut maps: PerMap<&mut Phosphor>,
-        clear: &mut bool,
+        first: &mut FirstDraw,
         mut stats: Stats<'_>,
         window: Option<&mut DepositWindow>,
     ) -> Accepted {
@@ -209,8 +209,8 @@ impl Owner {
             if accepted.frames == 0 {
                 window.idle();
             }
-            if invalidated || accepted.frames > 0 {
-                *clear = false;
+            if accepted.frames > 0 || (invalidated && !first.waiting()) {
+                first.begin();
                 let start = Instant::now();
                 let retained = window.rebuild_picture(maps.as_mut());
                 timing.rebuild = start.elapsed();
@@ -223,7 +223,7 @@ impl Owner {
                     if let Some(zoom) = zoom {
                         zoom.set_format(CountFormat::Wide);
                     }
-                    let remainder = self.blend(&ctx, &picture, maps, clear, &mut stats, &mut timing);
+                    let remainder = self.blend(&ctx, &picture, maps, first, &mut stats, &mut timing);
                     visible += remainder.frames;
                     append_accepted(&mut accepted, remainder);
                 }
@@ -231,7 +231,7 @@ impl Owner {
             }
             accepted
         } else {
-            self.blend(&ctx, &picture, maps, clear, &mut stats, &mut timing)
+            self.blend(&ctx, &picture, maps, first, &mut stats, &mut timing)
         };
         let elapsed = started.elapsed();
         ctx.counters.metrics.composed(picture.identity, &timing.clocks);

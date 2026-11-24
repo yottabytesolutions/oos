@@ -1,6 +1,59 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+use super::Frame;
 use oos_core::change::Identity;
+
+/// Source capture sequence and requested time per division and delay.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct StopView {
+    pub(crate) capture: u64,
+    pub(crate) scale: f64,
+    pub(crate) delay: f64,
+}
+pub(crate) type StopReply = (StopView, Frame);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ReplayLoss {
+    Calibration,
+    Successor,
+}
+
+#[derive(Default)]
+pub(crate) struct StopReplies {
+    pub(crate) frame: Option<StopReply>,
+    calibration: Option<u64>,
+    successor: Option<u64>,
+}
+
+impl StopReplies {
+    #[cfg(any(target_os = "linux", test))]
+    pub(in crate::board) fn calibrated_through(&mut self, seq: u64) {
+        self.calibration = Some(seq);
+        self.frame = None;
+    }
+
+    #[cfg(any(target_os = "linux", test))]
+    pub(in crate::board) fn lost_through(&mut self, seq: u64) {
+        self.successor = Some(seq);
+        self.frame = None;
+    }
+
+    pub(crate) fn loss_for(&self, seq: u64) -> Option<ReplayLoss> {
+        if self.calibration.is_some_and(|calibration| seq <= calibration) {
+            Some(ReplayLoss::Calibration)
+        } else {
+            self.successor.is_some_and(|successor| seq <= successor).then_some(ReplayLoss::Successor)
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_loss(&mut self, seq: u64, loss: ReplayLoss) {
+        match loss {
+            ReplayLoss::Calibration => self.calibrated_through(seq),
+            ReplayLoss::Successor => self.lost_through(seq),
+        }
+    }
+}
 
 /// A value published with the settings and generator under Shared's lock.
 #[derive(Clone, Copy, Debug, Default)]
@@ -71,5 +124,13 @@ impl SourceStatus {
     #[cfg(test)]
     pub(super) fn take_latest(&mut self) -> String {
         std::mem::take(&mut self.latest)
+    }
+}
+
+#[cfg(test)]
+impl super::Shared {
+    pub(crate) fn inject_stop_reply(&mut self, frame: Frame) {
+        let view = self.stop_view.expect("a stopped view has been requested");
+        self.stop_replies.frame = Some((view, frame));
     }
 }

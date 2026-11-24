@@ -111,11 +111,52 @@ fn run_epoch_rejects_staged_and_pending_deposits_from_before_run() {
     let mut shadow = Shadow::new(&model, UiAcq::default(), &config).unwrap();
     f.id = shadow.observe(&model, UiAcq::default(), &[Request::Run], &config).unwrap().identity();
     f.pipe.publish_view(&model, 4, 4, crate::sparse::Interp::Exact, f.id);
+    f.owner.retire_inputs(&f.pipe, true);
+    assert!(f.pipe.slot.claim().is_none(), "RUN frees the producer slot even on the records route");
     assert_eq!(f.compose().frames, 0);
     assert!(f.window.is_empty());
     f.put(3, 2, 2);
     assert_eq!(f.compose().frames, 3);
     assert_eq!(f.window.rebuild(&mut f.ph), 3);
+}
+
+#[test]
+fn invalidated_window_and_reader_only_completion_preserve_the_waiting_counts() {
+    for _ in 0..2 {
+        let mut f = Fixture::new();
+        let mut first = FirstDraw::Minimum;
+        let compose = |f: &mut Fixture, first: &mut FirstDraw| {
+            f.owner.compose_picture(
+                &f.pipe,
+                PerMap::new(&mut f.ph, None),
+                first,
+                Stats { edges: &mut [0; 4], off: &mut (0.0, 0.0) },
+                Some(&mut f.window),
+            )
+        };
+        f.put(1, 0, 0);
+        assert_eq!(compose(&mut f, &mut first).frames, 1);
+
+        let model = Model::default();
+        let config = crate::model::config();
+        use oos_core::change::{Request, Shadow, UiAcq};
+        let mut shadow = Shadow::new(&model, UiAcq::default(), &config).unwrap();
+        f.id = shadow.observe(&model, UiAcq::default(), &[Request::Run], &config).unwrap().identity();
+        f.pipe.publish_view(&model, 4, 4, crate::sparse::Interp::Exact, f.id);
+        first = FirstDraw::Replace;
+        f.put(0, 1, 1);
+        let waiting = compose(&mut f, &mut first);
+        assert_eq!((waiting.frames, waiting.window_frames, f.ph.count(0, 0)), (0, None, 24));
+        assert!(first.waiting());
+        assert!(f.window.is_empty());
+
+        f.put(2, 2, 1);
+        assert_eq!(compose(&mut f, &mut first).frames, 2);
+        assert!(!first.waiting());
+        assert_eq!((f.ph.count(0, 0), f.ph.count(0, 4)), (0, 48));
+        assert_eq!(compose(&mut f, &mut first).frames, 0);
+        assert_eq!(f.ph.count(0, 4), 48);
+    }
 }
 
 #[test]
@@ -145,7 +186,7 @@ fn zoom_toggle_conserves_deposited_records_without_drawing_rejected_taps() {
         let accepted = f.owner.compose_picture(
             &f.pipe,
             PerMap::new(&mut f.ph, model.zoom.then_some(&mut detail)),
-            &mut true,
+            &mut crate::picture::FirstDraw::Minimum,
             Stats { edges: &mut [0; 4], off: &mut (0.0, 0.0) },
             Some(&mut f.window),
         );
@@ -278,7 +319,7 @@ fn deposit_published_after_the_seal_stays_with_the_next_picture() {
 
     let accepted = f.owner.compose(
         PerMap::new(&mut f.ph, None),
-        &mut true,
+        &mut FirstDraw::Minimum,
         Stats { edges: &mut [0; 4], off: &mut (0.0, 0.0) },
         Some(&mut f.window),
     );

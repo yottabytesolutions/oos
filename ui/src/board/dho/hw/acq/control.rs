@@ -35,7 +35,10 @@ impl<T: PacingPolicy> AcqLoop<T> {
         let request = {
             let mut g = lock(&self.out);
             match g.cal_req.take() {
-                Some(calibration) => Err(calibration),
+                Some(calibration) => {
+                    g.stop_replies.calibrated_through(self.seq);
+                    Err(calibration)
+                }
                 None => Ok(Request::read(&g)),
             }
         };
@@ -46,7 +49,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
                 io.abort_segments(&mut self.segrun, &self.out);
                 self.stream.stop(io);
                 self.configured.current = None;
-                self.replay.discard(&self.out);
+                self.replay.discard();
                 if P::calibrate(io, &self.options.cal_dir, &self.out, req) {
                     self.units.reset_trim();
                 }
@@ -235,13 +238,16 @@ impl<T: PacingPolicy> AcqLoop<T> {
         };
         let cores = {
             let mut g = lock(&self.out);
+            if g.stop_replies.loss_for(view.capture).is_some() {
+                return false;
+            }
             g.final_ack = g.final_req;
             g.cores
         };
         if self.replay.replayed != Some(view) {
             self.replay.replayed = Some(view);
             let params = &batch.params;
-            let (settings, point) = stop_plan(&batch.settings, params, view.0, view.1);
+            let (settings, point) = stop_plan(&batch.settings, params, view.scale, view.delay);
             let steps = io.state.reread_steps(&settings, params, batch.index);
             match io.execute(&steps) {
                 Ok(bytes) => {
@@ -260,7 +266,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
                         && g.stop_view == Some(view)
                         && !publication::boundary(Some(request.pair()), g.acquisition.identity())
                     {
-                        g.replay = Some(batch.view(frame, point));
+                        g.stop_replies.frame = Some((view, batch.view(frame, point)));
                     } else {
                         self.replay.replayed = None;
                     }

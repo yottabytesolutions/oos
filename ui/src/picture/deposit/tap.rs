@@ -208,10 +208,18 @@ impl Handoff {
 
     pub(crate) fn stage_tap_view(&self, identity: Identity, active: bool) {
         let mut state = lock(&self.state);
-        if !active || !crate::drawpipe::same_pair(state.taps.identity, Some(identity)) {
+        let obsolete = !crate::drawpipe::same_pair(state.taps.identity, Some(identity));
+        if !active || obsolete {
             state.taps.admission.plan = None;
         }
+        if obsolete {
+            state.taps.preview = None;
+        }
         state.taps.identity = Some(identity);
+    }
+
+    pub(crate) fn take_unusable(&self, identity: Option<Identity>, keep_current: bool) -> Option<super::Deposit> {
+        lock(&self.state).pending.take_if(|d| !keep_current || !crate::drawpipe::same_pair(d.identity, identity))
     }
 
     #[cfg(test)]

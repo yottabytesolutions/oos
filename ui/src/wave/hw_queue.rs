@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::{hw_record, Model, Record, Source};
-use crate::board::{PictureEligibility, QueuedFrame};
+use crate::board::{
+    identity::{ReplayLoss, StopView},
+    Frame, PictureEligibility, QueuedFrame,
+};
 use crate::drawpipe::{self, TapRead};
 
 impl Source {
@@ -32,14 +35,26 @@ impl Source {
 
     /// Hardware source in STOP: the view shown (time per div, delay; None: none to read for), and the frame the
     /// thread has read again from the stored record for it, if a new one came (`board::Shared::stop_view`).
-    pub fn hw_stop(&mut self, view: Option<(f64, f64)>) -> Option<crate::board::Frame> {
+    pub(crate) fn hw_stop(&mut self, view: Option<StopView>) -> (Option<ReplayLoss>, Option<Frame>) {
         if let Source::Hw { shared, .. } = self {
             let mut g = crate::perfguard::deep::ui_lock(shared);
             if g.stop_view != view {
                 g.stop_view = view;
                 g.record_flow.wake();
             }
-            return g.replay.take().filter(|_| view.is_some());
+            let reply = g.stop_replies.frame.take();
+            if let Some(view) = view {
+                let loss = g.stop_replies.loss_for(view.capture);
+                let frame = reply.filter(|(key, _)| *key == view).map(|(_, frame)| frame);
+                return (loss, frame);
+            }
+        }
+        (None, None)
+    }
+
+    pub(crate) fn hw_stop_loss(&self, sequence: u64) -> Option<ReplayLoss> {
+        if let Source::Hw { shared, .. } = self {
+            return crate::perfguard::deep::ui_lock(shared).stop_replies.loss_for(sequence);
         }
         None
     }

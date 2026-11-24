@@ -2,8 +2,9 @@
 //! Immutable pre-first-use intake. Five counted backing leases remain authoritative.
 use super::super::*;
 use crate::picture::deposit::{Deposit, Handoff};
-use crate::picture::{DepositWindow, PerMap};
+use crate::picture::{DepositWindow, FirstDraw, PerMap};
 use crate::wave::Phosphor;
+use oos_core::change::Identity;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 mod compose;
@@ -31,17 +32,39 @@ impl Owner {
         self.wake = Some(wake);
     }
     pub(crate) fn clear(&mut self) {
-        if let Some(ctx) = self.context.take() {
+        if let Some(ctx) = &self.context {
             ctx.slot.owner_enable(false, None);
-            let id = oos_hal::sync::lock(&ctx.view).identity;
-            for d in self.queue.drain(..) {
-                ctx.slot.settle_taps(&d.taps, None);
-                d.reject(id, ctx.counters);
-                ctx.slot.recycle(d);
-            }
         }
+        self.discard_queued(false);
+        self.context = None;
         self.active = false;
     }
+
+    pub(crate) fn retire_inputs(&mut self, pipe: &Pipe, keep_current: bool) {
+        self.discard_queued(keep_current);
+        let identity = oos_hal::sync::lock(&pipe.view).identity;
+        if let Some(deposit) = pipe.slot.take_unusable(identity, keep_current) {
+            reject_deposit(&pipe.slot, pipe.counters, identity, deposit);
+            pipe.wake();
+        }
+    }
+
+    fn discard_queued(&mut self, keep_current: bool) {
+        if self.queue.is_empty() {
+            return;
+        }
+        let ctx = self.context.as_ref().expect("queued deposits belong to a bound owner");
+        let id = oos_hal::sync::lock(&ctx.view).identity;
+        for _ in 0..self.queue.len() {
+            let d = self.queue.pop_front().expect("bounded existing input");
+            if keep_current && same_pair(d.identity, id) {
+                self.queue.push_back(d);
+                continue;
+            }
+            reject_deposit(&ctx.slot, ctx.counters, id, d);
+        }
+    }
+
     fn stage_pending(&mut self, pipe: &Pipe) {
         pipe.slot.owner_rearm(); // Remote drains shared Wake before this check, never after it.
         for _ in self.queue.len()..PICTURE_INPUTS {
@@ -60,6 +83,12 @@ impl Owner {
         }
     }
 }
+fn reject_deposit(slot: &Handoff, counters: &Counters, identity: Option<Identity>, deposit: Deposit) {
+    slot.settle_taps(&deposit.taps, None);
+    deposit.reject(identity, counters);
+    slot.recycle(deposit);
+}
+
 impl Drop for Owner {
     fn drop(&mut self) {
         self.clear();
@@ -108,14 +137,17 @@ impl Owner {
         stats: Stats<'_>,
         window: Option<&mut DepositWindow>,
     ) -> Accepted {
-        self.compose_picture(pipe, PerMap::new(ph, None), clear, stats, window)
+        let mut first = if *clear { FirstDraw::Minimum } else { FirstDraw::Keep };
+        let accepted = self.compose_picture(pipe, PerMap::new(ph, None), &mut first, stats, window);
+        *clear = first == FirstDraw::Minimum;
+        accepted
     }
 
     pub(crate) fn compose_picture(
         &mut self,
         pipe: &Pipe,
         maps: PerMap<&mut Phosphor>,
-        clear: &mut bool,
+        first: &mut FirstDraw,
         stats: Stats<'_>,
         window: Option<&mut DepositWindow>,
     ) -> Accepted {
@@ -123,14 +155,14 @@ impl Owner {
         if self.active {
             // The pending slot is observed once. Publications after this seal belong to the next picture.
             self.seal(pipe);
-            return self.compose(maps, clear, stats, window);
+            return self.compose(maps, first, stats, window);
         }
         // Synchronous intake keeps the slot occupied until compose can recycle its backing.
         let mut claim = pipe.slot.claim();
         if let Some(slot) = &mut claim {
             self.stage_deposit(slot);
         }
-        let accepted = self.compose(maps, clear, stats, window);
+        let accepted = self.compose(maps, first, stats, window);
         if claim.is_some() {
             drop(claim);
             pipe.wake();

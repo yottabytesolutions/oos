@@ -90,13 +90,13 @@ fn stop_freezes_the_completed_logic_capture_and_rereads_its_view() {
     assert!(lock(&shared).stop_view.is_some(), "LA can request a stopped view");
 
     let reread = Arc::unwrap_or_clone(final_frame);
-    lock(&shared).replay = Some(reread.clone());
+    lock(&shared).inject_stop_reply(reread.clone());
     ui.step(0.02);
     let shown = ui.last[0].as_ref().unwrap();
     assert!(Arc::ptr_eq(&shown.la.as_ref().unwrap().words, &reread.la.as_ref().unwrap().words));
     assert_eq!(ui.web_la_csv().unwrap(), saved);
     assert_eq!(shown.raw.as_ref().unwrap().frame.seq, 2);
-    assert!(lock(&shared).replay.is_none());
+    assert!(lock(&shared).stop_replies.frame.is_none());
 }
 
 #[test]
@@ -118,6 +118,44 @@ fn overlapping_normal_stop_on_raw_deep_or_logic_settles_in_one_step() {
         assert_eq!((ui.stop_final, g.final_req), (None, 0));
         assert_eq!(ui.m.status, TrigStatus::Stop);
         assert!(Arc::ptr_eq(&ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame, &previous));
+    }
+}
+
+#[test]
+fn stop_drops_replies_for_the_previous_geometry_or_capture() {
+    for _ in 0..2 {
+        let _scope = crate::drawpipe::test_scope::Scope::new();
+        let (mut ui, shared) = start(false);
+        ui.m.trig_mode = TrigMode::Normal;
+        ui.step(0.02);
+        lock(&shared).queue.push_back(captured(&ui, 1, None));
+        ui.step(0.02);
+        ui.m.run = RunState::Stop;
+        ui.step(0.02);
+        let previous_geometry = lock(&shared).stop_view.unwrap();
+        let late = Arc::unwrap_or_clone(captured(&ui, 10, None));
+
+        ui.m.delay += ui.m.time_per_div();
+        lock(&shared).stop_replies.frame = Some((previous_geometry, late.clone()));
+        ui.step(0.02);
+        let previous_capture = lock(&shared).stop_view.unwrap();
+        assert_ne!(previous_geometry, previous_capture);
+        assert_eq!(ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame.seq, 1);
+
+        ui.m.run = RunState::Run;
+        ui.step(0.02);
+        lock(&shared).queue.push_back(captured(&ui, 2, None));
+        ui.step(0.02);
+        ui.m.run = RunState::Stop;
+        ui.step(0.02);
+        assert_ne!(lock(&shared).stop_view, Some(previous_capture));
+        lock(&shared).stop_replies.frame = Some((previous_capture, late.clone()));
+        ui.step(0.02);
+        assert_eq!(ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame.seq, 2);
+
+        lock(&shared).inject_stop_reply(late);
+        ui.step(0.02);
+        assert_eq!(ui.last[0].as_ref().unwrap().raw.as_ref().unwrap().frame.seq, 10);
     }
 }
 

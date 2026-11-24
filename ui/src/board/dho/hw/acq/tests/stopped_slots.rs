@@ -3,7 +3,7 @@
 use super::*;
 use std::{cell::RefCell, rc::Rc};
 
-const VIEW: (f64, f64) = (1e-6, 0.0);
+const VIEW: StopView = StopView { capture: 0, scale: 1e-6, delay: 0.0 };
 const VIEW_POLL: Duration = Duration::from_millis(20);
 
 #[test]
@@ -179,13 +179,13 @@ fn stop_view_before_hold_waits_without_arming_or_rereading() {
     let (_scope, mut source, (mut io, trace)) = captured(false, 4);
     let out = source.out.clone();
     let mut ui = crate::wave::Source::Hw { shared: out.clone(), seen: 0 };
-    assert!(ui.hw_stop(Some(VIEW)).is_none());
+    assert!(ui.hw_stop(Some(VIEW)).1.is_none());
     let start = trace.borrow().events.len();
     for _ in 0..2 {
         let request = Request::read(&lock(&out));
         let mut last_read = std::mem::take(&mut source.replay.fresh);
         assert!(source.reconfigure(&mut io, &request, &mut last_read).is_none());
-        assert!(lock(&out).replay.is_none());
+        assert!(lock(&out).stop_replies.frame.is_none());
     }
     assert_eq!(trace.borrow().events[start..], [Event::Wait(VIEW_POLL), Event::Wait(VIEW_POLL)]);
     io.clock.stop();
@@ -200,13 +200,13 @@ fn a_view_arriving_during_first_wait_disarms_before_hold() {
     let mut ui = crate::wave::Source::Hw { shared: out.clone(), seen: 0 };
     io.clock.drive(move |_, pause| {
         if let Pause::Wait(_) = pause {
-            assert!(ui.hw_stop(Some(VIEW)).is_none());
+            assert!(ui.hw_stop(Some(VIEW)).1.is_none());
         }
     });
     let started = trace.borrow().events.len();
     capture(&mut source, &mut io);
     assert!(!lock(&out).hold);
-    assert!(lock(&out).replay.is_none());
+    assert!(lock(&out).stop_replies.frame.is_none());
     assert!(trace.borrow().events[started..].iter().any(is_disarm));
     io.clock.stop();
     check_reread(&mut source, &mut io, &trace, false);
@@ -317,7 +317,7 @@ fn is_disarm(event: &Event) -> bool {
 fn assert_discarded(source: &AcqLoop<FixedPacing>) {
     assert!(!source.batch.armed.is_some());
     assert!(source.replay.last_batch.is_none());
-    assert!(lock(&source.out).replay.is_none());
+    assert!(lock(&source.out).stop_replies.frame.is_none());
 }
 
 fn captured(ahead: bool, records: u32) -> (Scope, AcqLoop<FixedPacing>, sim::Fixture) {
@@ -464,7 +464,7 @@ fn check_reread_stamp(
     let g = lock(&source.out);
     assert_eq!(g.final_ack, 7);
     assert!(std::sync::Arc::ptr_eq(&g.frame, &published));
-    assert_eq!(g.replay.as_ref().map(Frame::read), expected);
+    assert_eq!(g.stop_replies.frame.as_ref().map(|(_, frame)| Frame::read(frame)), expected);
     assert_eq!(
         trace.borrow().events.iter().filter(|event| matches!(event, Event::Dma(_))).count(),
         before + usize::from(expected.is_some())

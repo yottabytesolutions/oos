@@ -1347,9 +1347,9 @@ impl Ui {
         };
         let metadata = match source {
             WaveId::Ref(i) => self.refs[i].as_ref().map(|r| (r.v.len(), r.dt, self.source_time_origin(source, r.t0))),
-            WaveId::Ch(c) => self
-                .raw_info(c)
-                .or_else(|| self.last[0].as_ref().map(|r| (r.ch[c].len(), r.dt, r.t0)))
+            WaveId::Ch(c) => self.last[0]
+                .as_ref()
+                .map(|r| Self::raw_record_info(r, c).unwrap_or((r.ch[c].len(), r.dt, r.t0)))
                 .map(|(n, dt, t0)| (n, dt, self.source_time_origin(source, t0))),
         };
         let Some((points, dt, t0)) =

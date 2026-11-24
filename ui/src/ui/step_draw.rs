@@ -2,11 +2,14 @@
 
 use super::*;
 use crate::drawpipe::{self, Accepted, Pipe, Stats};
+use crate::picture::FirstDraw;
 use std::time::{Duration, Instant};
 
 #[derive(Default)]
 pub(super) struct BatchPicture {
     pub(super) frames: u32,
+    pub(super) replacement_pending: bool,
+    pub(super) layout_changed: bool,
     pub(super) tap_statistics: Option<deep_draw::TapStatistics>,
     window: crate::picture::DepositWindow,
     owner: crate::drawpipe::stage::owner::Owner,
@@ -27,6 +30,19 @@ pub(super) fn reset_window(ui: &mut Ui) {
     }
 }
 
+pub(super) fn retire_picture_inputs(ui: &mut Ui) {
+    if let Some(pipe) = drawpipe::pipe() {
+        pipe.discard_window(&mut ui.batch_picture.window);
+        ui.batch_picture.owner.retire_inputs(pipe, true);
+    }
+}
+
+pub(super) fn clear_maps(ui: &mut Ui) {
+    reset_window(ui);
+    ui.ph.clear();
+    ui.phz.clear();
+}
+
 pub(super) fn zoom_view(ui: &Ui) -> drawpipe::route::ZoomView {
     drawpipe::route::ZoomView::new((ui.phz.w, ui.phz.h), ui.zoom_vfactor, ui.zoom_vcenter)
 }
@@ -40,11 +56,16 @@ pub(super) fn prepare_window(ui: &mut Ui) -> bool {
     active
 }
 
-fn merge(ui: &mut Ui, pipe: &Pipe, clear: &mut bool, keep_window: bool) -> Accepted {
+fn merge(ui: &mut Ui, pipe: &Pipe, first: &mut FirstDraw, keep_window: bool) -> Accepted {
     let window = keep_window.then_some(&mut ui.batch_picture.window);
     let stats = Stats { edges: &mut ui.fast_edges, off: &mut ui.fast_off };
     let picture = crate::picture::PerMap::new(&mut ui.ph, ui.m.zoom.then_some(&mut ui.phz));
-    ui.batch_picture.owner.compose_picture(pipe, picture, clear, stats, window)
+    let waiting = first.waiting();
+    let accepted = ui.batch_picture.owner.compose_picture(pipe, picture, first, stats, window);
+    if waiting && !first.waiting() && !ui.m.zoom {
+        ui.phz.clear();
+    }
+    accepted
 }
 
 fn accept(ui: &mut Ui, d: Accepted, composition: &mut Composition) {
@@ -74,6 +95,18 @@ pub(super) struct Fast {
     pub(super) raw: Option<Record>,
     pub(super) window_frames: Option<u64>,
     pub(super) ms: f32,
+}
+
+fn capture_can_replace(
+    m: &Model,
+    ch: &[Vec<f32>; NCH],
+    partial: bool,
+    has_la: bool,
+    eligibility: PictureEligibility,
+) -> bool {
+    eligibility.draws()
+        && !(partial && m.trig_mode == TrigMode::Single)
+        && (has_la || (0..NCH).any(|c| m.ch[c].on && !ch[c].is_empty() && m.z_src != Some(c)))
 }
 
 pub(super) fn intake_count(ui: &Ui, fast: bool, taps: usize) -> usize {
@@ -140,20 +173,22 @@ pub(super) fn place_records(
 pub(super) fn fast(
     ui: &mut Ui,
     sw: &crate::sysconf::Switches,
-    clear: &mut bool,
+    first: &mut FirstDraw,
     keep_window: bool,
     composition: &mut Composition,
     draw: &mut [Duration; 5],
 ) -> Fast {
     let started = Instant::now();
-    let frames = if ui.m.acq == AcqMode::Peak || ui.m.zoom { Vec::new() } else { ui.src.drain_newest() };
+    let mut frames = if ui.m.acq == AcqMode::Peak || ui.m.zoom { Vec::new() } else { ui.src.drain_newest() };
     let before_merge = Instant::now();
     let pipe = drawpipe::start_pipe(sw);
-    let merged = merge(ui, pipe, clear, keep_window);
+    let merged = merge(ui, pipe, first, keep_window);
     let after_merge = Instant::now();
-    if !frames.is_empty() && std::mem::take(clear) {
-        reset_window(ui);
-        ui.ph.clear();
+    if first.waiting() {
+        frames.retain(|f| capture_can_replace(&ui.m, &f.ch, f.partial, f.la.is_some(), PictureEligibility::Drawable));
+    }
+    if !frames.is_empty() && first.begin() {
+        clear_maps(ui);
     }
     let mut result = Fast { frames: frames.len(), ..Default::default() };
     for f in &frames {
@@ -166,7 +201,7 @@ pub(super) fn fast(
         result.raw = Some(crate::wave::hw_record(&ui.m, f.clone()));
         crate::deepmeas::cost::set(&crate::deepmeas::cost::RECORD_US, t.elapsed());
     }
-    if result.frames > 0 && ui.draw_queued_prefix(frames) > 0 {
+    if result.frames > 0 && prefix::draw_queued_prefix(ui, frames) > 0 {
         ui.m.status = TrigStatus::Triggered;
     }
     draw[1] += before_merge - started + after_merge.elapsed();
@@ -187,9 +222,12 @@ pub(super) fn fast(
 pub(super) fn replay(
     ui: &mut Ui,
     sw: &crate::sysconf::Switches,
-    clear: &mut bool,
+    first: &mut FirstDraw,
     composition: &mut Composition,
 ) -> usize {
+    if first.waiting() {
+        return 0;
+    }
     let pipe = drawpipe::start_pipe(sw);
     let Some(frame) = ui.last[0].as_ref().and_then(|rec| rec.raw.as_ref()).map(|raw| &raw.frame) else {
         return 0;
@@ -204,60 +242,7 @@ pub(super) fn replay(
         }
     }
     let rec = crate::wave::hw_record(&ui.m, frame.clone());
-    if std::mem::take(clear) {
-        reset_window(ui);
-        ui.ph.clear();
-    }
-    composition.draw_record(ui, &rec, sw.interp, None, eligibility)
-}
-
-pub(super) fn stopped(ui: &mut Ui) {
-    // stopped: the whole stored record for the view shown (read again by the thread, `stop_replay`), then
-    // redraw the stored record with the current scale/offset
-    ui.stop_replay();
-    ui.ph.clear();
-    ui.phz.clear();
-    let mainv = (ui.m.time_per_div(), ui.m.delay);
-    let zv = (tscales()[ui.m.zscale], ui.m.zdelay);
-    let zoom_model = ui.zoom_display_model();
-    let detail = ui.captured_view(zv);
-    // the view read again as pairs while the raw record of the STOP is the one measured: the pairs are drawn
-    let shown = ui.stop_picture().cloned().or_else(|| ui.last[0].clone());
-    if let Some(rec) = shown {
-        let zw = ui.z_weights(&rec);
-        for c in 0..NCH {
-            if ui.m.ch[c].on && !rec.ch[c].is_empty() && ui.m.z_src != Some(c) {
-                let shifted_main = ui.deskew_channel_view(&rec, c, mainv);
-                let main = shifted_main.as_deref().unwrap_or(&rec);
-                ui.ph.draw_ex(
-                    c,
-                    &ui.m,
-                    mainv,
-                    main.t0 - ui.m.deskew_ch[c],
-                    main.dt,
-                    &main.ch[c],
-                    24 * 6,
-                    if shifted_main.is_some() { None } else { zw.as_deref() },
-                    main.pairs,
-                );
-                if ui.m.zoom {
-                    let shifted = ui.deskew_channel_view(&rec, c, zv);
-                    let z = shifted.as_deref().or(detail.as_deref()).unwrap_or(&rec);
-                    ui.phz.draw_ex(
-                        c,
-                        &zoom_model,
-                        zv,
-                        z.t0 - ui.m.deskew_ch[c],
-                        z.dt,
-                        &z.ch[c],
-                        24 * 6,
-                        if shifted.is_some() || detail.is_some() { None } else { zw.as_deref() },
-                        z.pairs,
-                    );
-                }
-            }
-        }
-    }
+    composition.draw_record(ui, &rec, sw.interp, None, eligibility, first)
 }
 
 pub(super) fn render_start(ui: &mut Ui, l: &mut Layers) -> bool {
@@ -309,6 +294,30 @@ pub(super) struct Composition {
 }
 
 impl Composition {
+    pub(super) fn filter_record(
+        &mut self,
+        ui: &mut Ui,
+        rec: &Record,
+        eligibility: PictureEligibility,
+        first: &FirstDraw,
+    ) -> bool {
+        if !crate::zone::pass(&ui.m.zones, &rec.ch, rec.t0, rec.dt) {
+            ui.zone_drops += 1;
+        } else if ui.m.trig_type == TrigType::Bus
+            && !ui.mixed_bus_mode()
+            && ui.m.trig_mode != TrigMode::Auto
+            && !rec.triggered
+            && !rec.partial
+            && ui.bus_can_match(rec)
+        {
+            // The decoder qualifies the hardware's edge triggers in Normal and Single.
+            ui.m.status = TrigStatus::Wait;
+        } else if !first.waiting() || capture_can_replace(&ui.m, &rec.ch, rec.partial, rec.la.is_some(), eligibility) {
+            return false;
+        }
+        true
+    }
+
     pub(super) fn draw_record(
         &mut self,
         ui: &mut Ui,
@@ -316,7 +325,11 @@ impl Composition {
         interp: crate::sparse::Interp,
         input: Option<crate::drawpipe::reuse::EdgeInputs>,
         eligibility: PictureEligibility,
+        first: &mut FirstDraw,
     ) -> usize {
+        if eligibility.draws() && first.begin() {
+            clear_maps(ui);
+        }
         let (fast, records) = deep_draw::record(ui, rec, interp, input, eligibility);
         if ui.src.is_hw() && eligibility == PictureEligibility::Drawable {
             drawpipe::counters().routes.add(drawpipe::route::Route::Record, (fast + records) as u64);
@@ -363,19 +376,12 @@ pub(super) fn account_picture(ui: &Ui, records: usize, composition: Composition)
     crate::pacing::picture(records + redrawn);
 }
 
-pub(super) fn finish(ui: &mut Ui, parts: [std::time::Duration; 5], records: usize) {
-    ui.ph.publish();
-    ui.phz.publish();
-    #[cfg(feature = "private-picture-counts")]
-    crate::drawpipe::counters().timing.picture_counts().published();
-    let timing = change::timing_mut(ui);
-    timing.draw_step(parts);
-    if crate::drawpipe::counters().diagnostics_enabled() {
-        timing.picture_frames(records);
-    }
-}
+mod finish;
+mod stopped;
+pub(super) use {finish::finish, stopped::stopped};
 
 pub(crate) mod capture;
 #[cfg(all(test, feature = "private-picture-counts"))]
 mod count_tests;
 pub(crate) mod owner;
+pub(super) mod prefix;

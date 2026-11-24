@@ -134,7 +134,7 @@ fn run_case(cancel: Cancel, raw: bool) -> (Outcome, bool, Option<Frame>) {
     } else {
         assert_eq!(Frame::read(&published), Frame::stamp(4, 3));
     }
-    (outcome, Arc::ptr_eq(&published, &g.frame), g.replay.as_ref().map(Frame::read))
+    (outcome, Arc::ptr_eq(&published, &g.frame), g.stop_replies.frame.as_ref().map(|(_, frame)| Frame::read(frame)))
 }
 
 fn drive_cancel(
@@ -187,6 +187,6 @@ fn request_stop(clock: &sim::Virtual, shared: &HwShared, raw: bool) {
     if raw {
         g.deep_raw = Some(crate::deepmeas::Want { every: false });
     } else {
-        g.stop_view = Some((1e-6, 0.0));
+        g.stop_view = Some(StopView { capture: 0, scale: 1e-6, delay: 0.0 });
     }
 }

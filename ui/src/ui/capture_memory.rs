@@ -3,6 +3,7 @@
 
 //! The retained acquisition is independent of the screen's interpolated points.
 use super::*;
+use crate::board::identity::StopView;
 use crate::ui::lifecycle::worker::Worker;
 use std::{
     hash::{Hash, Hasher},
@@ -281,60 +282,131 @@ impl Ui {
     pub(super) fn refresh_capture_view(&mut self) {
         let view = (self.m.time_per_div(), self.m.delay);
         if let Some(rec) = self.captured_view(view) {
-            self.last[0] = Some(rec.as_ref().clone());
+            self.replace_stopped_view(rec.as_ref().clone());
+        }
+    }
+
+    /// Intake owns `last[0]` through the final drain. The first STOP view replacement moves that capture into the
+    /// slot. Later view replacements leave it there until RUN restores it to `last[0]`.
+    fn replace_stopped_view(&mut self, view: Record) {
+        let previous = self.last[0].replace(view);
+        if self.stop_capture.is_none() {
+            self.stop_capture = previous.and_then(|record| self.capture_sequence(&record).map(|seq| (record, seq)));
+        }
+    }
+
+    fn capture_sequence(&self, record: &Record) -> Option<u64> {
+        let Source::Hw { seen, .. } = &self.src else { return None };
+        record.raw.as_ref().map(|r| r.frame.seq).or_else(|| record.la.as_ref().map(|_| *seen))
+    }
+
+    pub(in crate::ui) fn stopped_capture(&self) -> Option<(&Record, u64)> {
+        if self.m.run == RunState::Stop && !self.record_mode() && self.hist_pos.is_none() && self.m.segments == 0 {
+            if let Some((record, seq)) = &self.stop_capture {
+                return Some((record, *seq));
+            }
+            let record = self.last[0].as_ref()?;
+            return Some((record, self.capture_sequence(record)?));
+        }
+        None
+    }
+
+    pub(super) fn raw_record_info(record: &Record, c: usize) -> Option<(usize, f64, f64)> {
+        let r = record.raw.as_ref()?;
+        let v = r.frame.ch.get(c)?;
+        // a compressed frame holds min/max pairs, not samples: then the screen record is the answer
+        (!v.is_empty() && !r.frame.envelope).then(|| (v.len(), r.frame.dt, r.t0 - r.i0 as f64 * r.frame.dt))
+    }
+
+    pub(in crate::ui) fn raw_read_record(&self) -> Option<&Record> {
+        self.stopped_capture().map(|(record, _)| record).or(self.last[0].as_ref())
+    }
+
+    pub(in crate::ui) fn measurement_record(&self) -> Option<&Record> {
+        if self.m.meas_full_record {
+            self.raw_read_record()
+        } else {
+            self.last[0].as_ref()
         }
     }
 
     /// STOP on the hardware: the thread acquires nothing and reads the stored record again for every view (time base,
     /// delay), as much of it as the view shows: zoomed out the whole record, zoomed in every sample of the part on
     /// screen. The trigger stays where the last record had it (software trigger included).
-    pub(super) fn stop_replay(&mut self) {
-        let ok = self.src.is_hw()
-            && board().slow_mode(&self.m) == crate::board::Slow::Off
-            && self.m.segments == 0
-            && self.hist_pos.is_none()
-            && self.last[0].as_ref().is_some_and(|r| r.raw.is_some() || r.la.is_some());
-        if !ok {
+    pub(in crate::ui) fn stop_replay(&mut self) {
+        let target = self
+            .stopped_capture()
+            .filter(|_| self.stop_final.is_none() && board().slow_mode(&self.m) == crate::board::Slow::Off);
+        let Some((record, capture)) = target else {
             self.src.hw_stop(None);
-            self.stop_ti_off = None;
-            (self.stop_raw, self.stop_pic) = (None, None);
+            self.stop_pic = None;
+            return;
+        };
+        let view = StopView { capture, scale: self.m.time_per_div() as f64, delay: self.m.delay as f64 };
+        let offset = record.raw.as_ref().map(|r| {
+            let f = &r.frame;
+            let ti = r.i0 as f64 - r.t0 / f.dt;
+            (ti - f.fixed_ti.unwrap_or(f.pre as f64)) * f.dt
+        });
+        let (loss, reply) = self.src.hw_stop(Some(view));
+        if loss.is_some() {
+            self.project_stop_capture();
             return;
         }
-        // the software trigger of the record shown at the stop, as a time from the hardware trigger point
-        if self.stop_ti_off.is_none() {
-            // and that record itself when it is of samples: measured while the views come as pairs
-            self.stop_raw = self.last[0].clone().filter(|r| r.raw.as_ref().is_some_and(|x| !x.frame.envelope));
-            self.stop_pic = None;
-            self.stop_ti_off = self.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|raw| {
-                let f = &raw.frame;
-                let ti = raw.i0 as f64 - raw.t0 / f.dt;
-                (ti - f.fixed_ti.unwrap_or(f.pre as f64)) * f.dt
-            });
-        }
-        let view = (self.m.time_per_div() as f64, self.m.delay as f64);
-        let Some(mut f) = self.src.hw_stop(Some(view)) else { return };
-        if let (Some(t), Some(off)) = (f.fixed_ti, self.stop_ti_off) {
+        let Some(mut f) = reply else { return };
+        if let (Some(t), Some(off)) = (f.fixed_ti, offset) {
             f.fixed_ti = Some(t + off / f.dt);
         }
-        let window = view.0 * HDIV as f64;
-        let rec = crate::board::to_record(&Arc::new(f), &self.m, 3600, window, view.1 - window / 2.0);
+        let window = view.scale * HDIV as f64;
+        let rec = crate::board::to_record(&Arc::new(f), &self.m, 3600, window, view.delay - window / 2.0);
         // a view read as min/max pairs (zoomed out on a record above `LIVE_READ`: the whole record compressed) after a
         // STOP on a raw record (the final frame of a deep record): the pairs are drawn, the raw record stays the one
         // measured and read out; pairs hold no Mean, RMS or Std dev (A3 of the 2026-11-16 review). A view read raw (far
         // zoomed in) is the record shown and measured, as before
-        match self.stop_raw.as_ref().filter(|_| rec.raw.as_ref().is_some_and(|r| r.frame.envelope)) {
-            Some(raw) => (self.last[0], self.stop_pic) = (Some(raw.clone()), Some(rec)),
-            None => (self.last[0], self.stop_pic) = (Some(rec), None),
-        }
+        let raw_capture = self
+            .stopped_capture()
+            .map(|(record, _)| record)
+            .filter(|r| r.raw.as_ref().is_some_and(|r| !r.frame.envelope));
+        let raw_view = raw_capture.filter(|_| rec.raw.as_ref().is_some_and(|r| r.frame.envelope)).cloned();
+        let (shown, pairs) = match raw_view {
+            Some(raw) => (raw, Some(rec)),
+            None => (rec, None),
+        };
+        self.replace_stopped_view(shown);
+        self.stop_pic = pairs;
         // the record counted when it came in RUN: its values for the view, not a new one for the statistics, the trend
         // and the catalog (as `refresh_stopped_measurements`)
         self.measure_last();
     }
 
+    fn project_stop_capture(&mut self) {
+        let Some((capture, _)) = self.stopped_capture() else { return };
+        let current = self.last[0].as_ref().and_then(|r| r.raw.as_ref());
+        let already_projected = self.stop_pic.is_none()
+            && capture.raw.as_ref().zip(current).is_some_and(|(a, b)| Arc::ptr_eq(&a.frame, &b.frame));
+        if self.stop_capture.is_some() && !already_projected {
+            let view = (self.m.time_per_div(), self.m.delay);
+            let projection = self.captured_record_view(capture, view);
+            self.last[0] = Some(projection.as_deref().unwrap_or(capture).clone());
+            self.stop_pic = None;
+            self.measure_last();
+        }
+        if !self.m.meas_full_record {
+            for c in 0..NCH {
+                if self.ana[c].valid
+                    && self.last[0].as_ref().is_none_or(|r| self.measurement_channel_samples(r, c).is_none())
+                {
+                    self.ana[c] = Default::default();
+                    self.stats[c] = Stats::default();
+                }
+            }
+        }
+    }
+
     /// STOP: the pair record to draw for the view (`stop_pic`) while the raw record of the stop is the record shown.
-    pub(super) fn stop_picture(&self) -> Option<&Record> {
+    pub(in crate::ui) fn stop_picture(&self) -> Option<&Record> {
         let frame = |r: Option<&Record>| r.and_then(|r| r.raw.as_ref()).map(|r| Arc::as_ptr(&r.frame));
-        let same = frame(self.last[0].as_ref()).is_some_and(|f| Some(f) == frame(self.stop_raw.as_ref()));
+        let same = frame(self.last[0].as_ref()).is_some_and(|f| Some(f) == frame(self.stopped_capture().map(|c| c.0)));
         self.stop_pic.as_ref().filter(|_| same)
     }
 }

@@ -46,16 +46,20 @@ Single scan only).
 - No replay when that newest frame was already read raw (rate-limited deep read, periodic raw read of the live
   compression), when the next batch was armed ahead anyway, or when anything else ran on the FPGA since the read (the
   read is only remembered for one pass). Then the record shown is the newest one already queued, measured as it is.
-- An eligible displayed raw or LA record requests a stopped view, even when the raw record is complete. The thread
-  reads the stored record for the requested view (`stop_plan`) while the replay slot is valid. Zoomed out on a record
-  above `LIVE_READ` (625 k points, for example 10 M at 1 ms/div), that read is the whole record as min/max pairs.
-  Those pairs are drawn (`stop_pic`), while the raw record of the STOP (`stop_raw`, the final frame or a raw record
-  already shown) stays `last[0]`, the record measured and read out (`:WAV:MODE RAW`). Far zoomed in, the thread reads
-  every sample of the view. That window becomes the record shown and measured, and the raw record of the STOP comes
-  back with the next view read as pairs. A view adds nothing to the statistics (`stop_reads_the_record_again_without_counting_it`); a
-  time base or delay change clears them, as every setting does. RUN, Clear and the history let the raw record go.
-  In a logic-analyzer view the reread carries the digital samples saved with the same capture, aligned to its trigger.
-  The pair picture is drawn by the legacy stopped redraw; moving it to an accumulator input is left to M2.3e.
+- STOP retains one accepted capture after the final-record drain. The full measurement gate and the software DVM
+  follow that capture when the gate is full record. RAW and stopped MAX read its native samples or, for pairs, its
+  original display projection. These answers are available while a stopped-view reread is pending. RUN and Clear
+  release the capture. The slot shares the decoded frame by `Arc` and copies up to 57.6 kB of screen points across
+  four channels. A four-channel pairs frame can keep up to 10 MB of native values alive. A deep-measurement raw
+  window can hold up to 48 MiB of decoded values.
+- An eligible stopped view asks the source to reread at the requested geometry using `stop_plan`. Replies echo the
+  requested geometry and capture sequence. The UI discards a reply for an older view or capture. A raw window
+  replaces the view record in `last[0]`. When a reread returns pairs for an originally raw capture, `stop_pic` holds
+  the displayed pairs and `last[0]` keeps the raw capture for the existing Screen-gate and view readouts.
+  Logic samples remain aligned to the capture's trigger.
+- A calibration or an invalidated successor ring slot leaves the UI to project the retained capture at the
+  requested view. Areas outside that capture have no samples. A capture from before calibration is labeled in STOP.
+  A view refresh contributes no new acquisition to statistics or trend. The logger still follows its interval.
 
 ## Host tests
 

@@ -150,6 +150,7 @@ pub(super) fn reset(ui: &mut Ui) {
     }
     release_board(ui);
     ui.last = [None];
+    (ui.stop_capture, ui.stop_pic) = (None, None);
     ui.history = Default::default();
     ui.hist_pos = None;
     ui.meas_pending = None;

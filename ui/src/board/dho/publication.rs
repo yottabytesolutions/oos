@@ -22,7 +22,7 @@ pub(super) struct Request {
 
 pub(super) struct Run {
     pub(super) hold: bool,
-    pub(super) stop_view: Option<(f64, f64)>,
+    pub(super) stop_view: Option<crate::board::identity::StopView>,
     pub(super) final_req: u64,
     pub(super) cores: bool,
     pub(super) deep: Option<crate::deepmeas::Want>,

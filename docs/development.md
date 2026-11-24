@@ -88,6 +88,7 @@ printf ':RUN\n' | nc -w 2 "$SCPI_HOST" 5555
 The report pools cold per-record timings across fixtures and rounds and gives the range of each stage's
 round medians. It counts non-null samples once per record per round, and counts a round when it has at least
 one timing for the stage. Stages with zero measured samples in both reports appear as `unmeasured`.
+The fixture benchmark reads replay timings, independently of the SCPI acquisition and loss counters.
 
 Each measured stage needs at least five measured rounds and ten samples in each report.
 A median change must exceed both the tolerance (default 2%) of the reference stage median and
@@ -181,8 +182,12 @@ The report identifies the firmware build and gives per-window and pooled rates, 
 changed fallback causes and acquisition read-backs. Each query takes timestamps immediately before the
 write and after the reply line arrives. The lower elapsed bound is the second write minus the first reply.
 The upper bound is the second reply minus the first write. Fresh pictures/s uses both bounds. The
-`shown_records_per_s`, `first_records_per_s` and `read_per_s` rates use the midpoint. A decreasing counter
-invalidates its window with `counter reset` and fails the group. Sampling continues with the next group.
+`shown_records_per_s`, `first_records_per_s` and `read_per_s` rates use the midpoint. Decreasing cumulative
+counters invalidate the window with `counter reset` and fail the group. Sampling continues with the next group.
+The per-window `records.deposited` delta can be negative when previously pending deposits are rejected.
+Older reports use the raw worker placement and direct draw total, so raw deposit deltas across the two
+accounting methods have different meanings. The `compare` metrics use first-use, fresh-picture and flip
+counters and remain compatible with older reports that include those metrics.
 A missing `watchdog ok` aborts sampling. The tool restores setup in two passes with offsets last and
 verifies each saved key and RUN/STOP once. A snapshot value resembling an address or hostname causes
 the tool to skip that key and print its name. After three consecutive SCPI transport failures,

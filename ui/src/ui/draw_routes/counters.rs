@@ -4,8 +4,9 @@ use super::*;
 use perf::Build;
 
 fn fixture(disabled: bool, channels: usize, tdiv: f32) -> (Scope, Build) {
-    let scope =
-        Scope::with_counters(drawpipe::Counters { diagnostics_disabled: disabled.into(), ..Default::default() });
+    let mut counters = drawpipe::Counters::default();
+    *counters.diagnostics_disabled.get_mut() = disabled;
+    let scope = Scope::with_counters(counters);
     let build = Build::new(false, channels, tdiv, 0);
     (scope, build)
 }
@@ -24,11 +25,33 @@ fn counters_preserve_picture_membership_pixels_and_pacing() {
                 compare(&picture(&reference.route.ui), &picture(&candidate.route.ui), "counters on/off");
                 assert_eq!(reference.route.ui.wfm_total, candidate.route.ui.wfm_total);
             }
-            assert!(drawpipe::counters().deposited.load(std::sync::atomic::Ordering::Relaxed) > 0);
+            assert!(drawpipe::counters().placed.load(std::sync::atomic::Ordering::Relaxed) > 0);
             reference_scope.select();
-            assert_eq!(drawpipe::counters().deposited.load(std::sync::atomic::Ordering::Relaxed), 0);
+            assert_eq!(drawpipe::counters().placed.load(std::sync::atomic::Ordering::Relaxed), 0);
         }
     }
+}
+
+#[test]
+fn empty_decoded_records_cannot_replace_a_frozen_picture_and_are_counted() {
+    let _scope = Scope::new();
+    let mut route = Route::new(BatchKind::Raw, 1, 1e-6);
+    route.ui.step(1.0 / 30.0);
+    route.ui.batch_picture.replacement_pending = true;
+    let Source::Hw { shared, .. } = &route.ui.src else { unreachable!() };
+    let mut g = lock(shared);
+    let id = g.acquisition.identity();
+    g.queue.extend((1..=2).map(|seq| {
+        Arc::new(crate::board::Frame { seq, dt: 1e-9, cfg: id.gen(), stamp: id.epoch(), ..Default::default() })
+    }));
+    drop(g);
+    let counters = drawpipe::counters();
+    drawpipe::Counters::add(&counters.acquired, 2);
+    route.ui.step(1.0 / 30.0);
+    assert!(route.ui.batch_picture.replacement_pending);
+    let text = counters.records_text();
+    assert!(text.contains("records read=2 deposited=0 shown=0 "), "{text}");
+    assert!(text.contains(" lost.settings=2 "), "{text}");
 }
 
 #[test]

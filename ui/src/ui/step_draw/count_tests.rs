@@ -1,5 +1,25 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 use super::*;
+
+pub(crate) fn draw_tap(ui: &mut Ui, tap: crate::board::QueuedFrame, interp: crate::sparse::Interp) {
+    let eligibility = tap.eligibility();
+    let record = crate::wave::hw_record(&ui.m, tap.into_frame());
+    let mut composition = Composition::default();
+    let drawn = composition.draw_record(ui, &record, interp, None, eligibility, &mut crate::picture::FirstDraw::Keep);
+    assert_eq!(drawn, 1);
+    account_picture(ui, drawn, composition);
+}
+
+pub(crate) fn compose_deposit(ui: &mut Ui, pipe: &Pipe) -> u64 {
+    let deposit = merge(ui, pipe, &mut FirstDraw::Keep, false);
+    let mut composition = Composition::default();
+    accept(ui, deposit, &mut composition);
+    let records = composition.merged;
+    account_picture(ui, records as usize, composition);
+    records
+}
+
+#[cfg(feature = "private-picture-counts")]
 #[test]
 fn fresh_membership_excludes_retained_redraw_stop_single_and_disabled_observer() {
     let _scope = crate::drawpipe::test_scope::Scope::new();

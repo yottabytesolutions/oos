@@ -219,7 +219,7 @@ fn check_claimed_plan(channels: usize, compress: bool, tdiv: f32, columns: usize
     let view = batch_view(&batch, &oos_hal::sync::lock(&pipe.view), 0).unwrap();
     assert_eq!(view.w, columns);
     assert_eq!(view.m.dots, m.dots);
-    let deposited = pipe.counters.deposited.load(Ordering::Relaxed);
+    let deposited = pipe.counters.placed.load(Ordering::Relaxed);
     let mut painter = Painter::new(1, 0);
     if !fits {
         assert_eq!(frames, 14);
@@ -235,9 +235,9 @@ fn check_claimed_plan(channels: usize, compress: bool, tdiv: f32, columns: usize
     }
     let tap = pipe.take_waveform((columns, 448)).unwrap();
     assert!(Arc::ptr_eq(&tap, batch.newest.as_ref().unwrap()));
-    let eligibility = if fits { PictureEligibility::Pending } else { PictureEligibility::Drawable };
+    let eligibility = if fits { PictureEligibility::Pending } else { PictureEligibility::Recoverable };
     assert_eq!(tap.eligibility(), eligibility);
-    assert_eq!(pipe.counters.deposited.load(Ordering::Relaxed) - deposited, if fits { frames as u64 } else { 0 });
+    assert_eq!(pipe.counters.placed.load(Ordering::Relaxed) - deposited, if fits { frames as u64 } else { 0 });
     assert_eq!(pipe.counters.read().2 - discarded, if fits { 0 } else { frames as u64 });
     assert_eq!(batch.next.load(Ordering::Relaxed), frames);
     let stale = pipe.feed_batch(
@@ -252,7 +252,7 @@ fn check_claimed_plan(channels: usize, compress: bool, tdiv: f32, columns: usize
     pipe.publish_view(&m, columns, 448, sw.interp, cleared);
     assert_eq!(pipe.read_limit(id, None), None);
     let discarded = pipe.counters.read().2;
-    assert!(batch_view(&stale, &oos_hal::sync::lock(&pipe.view), 0).is_none());
+    assert!(batch_view(&stale, &oos_hal::sync::lock(&pipe.view), 0).is_err());
     assert_eq!(pipe.counters.read().2 - discarded, frames as u64);
     assert_eq!(stale.next.load(Ordering::Relaxed), frames);
 }
@@ -360,7 +360,7 @@ fn acquisition_and_epoch_mismatches_are_settings_losses_not_capacity_losses() {
         assert_ne!((id.gen(), id.epoch()), (current.gen(), current.epoch()));
         pipe.publish_view(&m, 271, 448, Interp::Exact, current);
         assert_eq!(pipe.read_limit(id, None), None);
-        assert!(batch_view(&batch, &oos_hal::sync::lock(&pipe.view), 0).is_none());
+        assert!(batch_view(&batch, &oos_hal::sync::lock(&pipe.view), 0).is_err());
         let counts = pipe.counters.records_text();
         assert!(counts.contains("lost.settings=3"), "{counts}");
         assert!(counts.contains("lost.budget=0"), "{counts}");

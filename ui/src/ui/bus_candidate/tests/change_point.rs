@@ -36,7 +36,7 @@ fn mixed_bus_intake_cannot_publish_without_generation_or_class() {
     let before = change::acquisition::identity(&ui);
     let want = lock(&shared).want.clone();
     ui.m.dec_thr = 1.2;
-    assert!(ui.acquire_mixed_bus_record(0.001).is_none());
+    assert!(ui.acquire_mixed_bus_record(0.001, &mut 0).is_none());
     assert_eq!(lock(&shared).want, want, "record intake bypassed classification and generation");
     assert_eq!(change::acquisition::identity(&ui), before);
     ui.step(0.001);
@@ -56,9 +56,14 @@ fn mixed_bus_intake_rejects_old_generation_at_current_epoch() {
     let mut old = (*frame(10_000, 0xa5, 2, id)).clone();
     old.cfg = id.gen() - 1;
     lock(&shared).queue.push_back(old.into());
-    assert!(ui.acquire_mixed_bus_record(0.001).is_none(), "old generation reached the mixed-source decoder");
+    let mut filtered = 0;
+    assert!(
+        ui.acquire_mixed_bus_record(0.001, &mut filtered).is_none(),
+        "old generation reached the mixed-source decoder"
+    );
     lock(&shared).queue.push_back((*frame(10_000, 0xa5, 3, id)).clone().into());
-    let record = ui.acquire_mixed_bus_record(0.001).unwrap();
+    let record = ui.acquire_mixed_bus_record(0.001, &mut filtered).unwrap();
+    assert_eq!(filtered, 1);
     let raw = &record.raw.as_ref().unwrap().frame;
     assert_eq!((raw.seq, raw.cfg, raw.stamp), (3, id.gen(), id.epoch()));
     assert_eq!((raw.dt, raw.pre), (1e-9, 5000), "preserve hardware/reference time alignment");

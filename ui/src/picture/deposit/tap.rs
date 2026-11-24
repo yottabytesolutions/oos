@@ -45,6 +45,12 @@ struct Preview {
     frame: Weak<crate::board::Frame>,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum TapSettlement {
+    Accepted(u64),
+    Expired,
+}
+
 impl TapProjection {
     pub(crate) fn eligibility(self, view: Option<TapView>) -> PictureEligibility {
         use PictureEligibility::*;
@@ -59,13 +65,19 @@ impl TapProjection {
             Self::Projected { gen, size } if view.is_some_and(|view| (view.worker_gen, view.size) == (gen, size)) => {
                 Pending
             }
-            Self::Unpainted | Self::Projected { .. } => Drawable,
+            // A projected tap may reach the reader before its obsolete planes reach compose.
+            Self::Projected { .. } => ShownOnly,
+            Self::Recoverable => Recoverable,
+            Self::Unpainted => Drawable,
         }
     }
 
-    fn settle(&mut self, accepted_mapping: Option<u64>) {
+    fn settle(&mut self, settlement: TapSettlement) {
         if let Self::Projected { size, .. } = *self {
-            *self = accepted_mapping.map_or(Self::Expired, |mapping_gen| Self::Accounted { mapping_gen, size });
+            *self = match settlement {
+                TapSettlement::Accepted(mapping_gen) => Self::Accounted { mapping_gen, size },
+                TapSettlement::Expired => Self::Expired,
+            };
         }
     }
 }
@@ -331,14 +343,14 @@ impl Handoff {
         }
     }
 
-    pub(crate) fn settle_taps(&self, numbers: &std::ops::Range<u64>, accepted_mapping: Option<u64>) {
+    pub(crate) fn settle_taps(&self, numbers: &std::ops::Range<u64>, settlement: TapSettlement) {
         if numbers.is_empty() {
             return;
         }
         let mut state = lock(&self.state);
         if let Some(mut preview) = state.taps.preview.take_if(|preview| numbers.contains(&preview.number)) {
-            if accepted_mapping.is_some() {
-                preview.projection.settle(accepted_mapping);
+            if !matches!(settlement, TapSettlement::Expired) {
+                preview.projection.settle(settlement);
                 state.taps.preview = Some(preview);
             }
         }
@@ -348,7 +360,7 @@ impl Handoff {
             }
             // A coalesced deposit can span taps from batches rejected before painting.
             if numbers.contains(number) {
-                tap.projection.settle(accepted_mapping);
+                tap.projection.settle(settlement);
             }
         }
     }
@@ -393,7 +405,8 @@ mod tests {
                 panic!("missing tap")
             };
             assert_eq!(tap.projection.eligibility(Some(view)), PictureEligibility::Pending);
-            handoff.settle_taps(&(n..last + 1), accepted.then_some(1));
+            let settlement = if accepted { TapSettlement::Accepted(1) } else { TapSettlement::Expired };
+            handoff.settle_taps(&(n..last + 1), settlement);
             let TapRead::Ready((tap, _)) = handoff.take_tap(Some(remap), None, None, true) else {
                 panic!("missing tap")
             };

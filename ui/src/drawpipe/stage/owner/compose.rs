@@ -43,15 +43,15 @@ impl OwnerContext {
         if !p.mapping_matches(&d) || !same_acquisition {
             // A fresh tap from this acquisition can still draw with the new projection.
             let zoom_toggled = d.sizes().zoom().is_some() != p.sizes.zoom().is_some();
-            if !same_acquisition || zoom_toggled {
-                self.slot.settle_taps(&d.taps, None);
-            }
             d.reject(p.identity, self.counters);
+            if !same_acquisition || zoom_toggled {
+                self.slot.settle_taps(&d.taps, TapSettlement::Expired);
+            }
             self.slot.recycle(d);
             return None;
         }
         if d.records == 0 {
-            self.slot.settle_taps(&d.taps, None);
+            self.slot.settle_taps(&d.taps, TapSettlement::Expired);
             self.slot.recycle(d);
             return None;
         }
@@ -60,7 +60,7 @@ impl OwnerContext {
     fn discard(&self, deposit: Deposit) {
         deposit.reject_timing(self.counters, Instant::now());
         deposit.discard_folds(self.counters);
-        self.slot.settle_taps(&deposit.taps, None);
+        self.slot.settle_taps(&deposit.taps, TapSettlement::Expired);
         self.slot.recycle(deposit);
     }
     fn accept(&self, d: &mut Deposit, p: &Picture, stats: &mut Stats<'_>) -> Accepted {
@@ -70,7 +70,7 @@ impl OwnerContext {
             p.identity,
             self.counters,
         );
-        self.slot.settle_taps(&d.taps, (accepted.frames > 0).then_some(p.mapping));
+        self.slot.settle_taps(&d.taps, TapSettlement::Accepted(p.mapping));
         if self.counters.diagnostics_enabled() {
             self.counters.timing.picture(d.progress.sample, accepted.newest.map(|t| t.elapsed()));
         }
@@ -144,7 +144,7 @@ impl Owner {
                 continue;
             };
             if deposit.picture_totals(&[]).is_none() {
-                ctx.counters.discard(Lost::Error, deposit.records);
+                ctx.counters.discard_compose_error(deposit.records);
                 ctx.discard(deposit);
                 rejected_wait = rejected_wait.max(wait);
             } else {
@@ -167,7 +167,7 @@ impl Owner {
         let queued = self.queue.len();
         for (i, mut deposit) in self.queue.drain(..).enumerate() {
             let Some(clock) = timing.clocks.get_mut(timing.inputs + i) else {
-                Counters::add(&ctx.counters.losses.overflow, deposit.records);
+                ctx.counters.discard_compose_overflow(deposit.records);
                 ctx.discard(deposit);
                 continue;
             };

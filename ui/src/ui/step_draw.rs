@@ -185,7 +185,9 @@ pub(super) fn fast(
     let merged = merge(ui, pipe, first, keep_window);
     let after_merge = Instant::now();
     if first.waiting() {
+        let before = frames.len();
         frames.retain(|f| capture_can_replace(&ui.m, &f.ch, f.partial, f.la.is_some(), PictureEligibility::Drawable));
+        composition.filtered += before - frames.len();
     }
     if !frames.is_empty() && first.begin() {
         clear_maps(ui);
@@ -291,6 +293,9 @@ pub(super) struct Composition {
     #[cfg(feature = "private-picture-counts")]
     pub(super) oldest: Option<std::time::Instant>,
     pub(super) redrawn: usize,
+    pub(super) filtered: usize,
+    recovered: usize,
+    unplaced: usize,
 }
 
 impl Composition {
@@ -315,6 +320,7 @@ impl Composition {
         } else if !first.waiting() || capture_can_replace(&ui.m, &rec.ch, rec.partial, rec.la.is_some(), eligibility) {
             return false;
         }
+        self.filtered += usize::from(eligibility == PictureEligibility::Drawable);
         true
     }
 
@@ -331,37 +337,48 @@ impl Composition {
             clear_maps(ui);
         }
         let (fast, records) = deep_draw::record(ui, rec, interp, input, eligibility);
-        if ui.src.is_hw() && eligibility == PictureEligibility::Drawable {
+        if ui.src.is_hw()
+            && matches!(
+                eligibility,
+                PictureEligibility::Drawable | PictureEligibility::Recoverable | PictureEligibility::ShownOnly
+            )
+        {
             drawpipe::counters().routes.add(drawpipe::route::Route::Record, (fast + records) as u64);
         }
         self.deposit += fast;
         self.record += records;
-        self.redrawn += if eligibility == PictureEligibility::Redraw { fast + records } else { 0 };
+        match eligibility {
+            PictureEligibility::Redraw => self.redrawn += fast + records,
+            PictureEligibility::Recoverable | PictureEligibility::ShownOnly => {
+                self.unplaced += fast + records;
+                self.recovered += (fast + records) * usize::from(eligibility == PictureEligibility::Recoverable);
+            }
+            _ => {}
+        }
         fast + records
     }
 }
 
 pub(super) fn account_picture(ui: &Ui, records: usize, composition: Composition) {
-    #[cfg(not(feature = "private-picture-counts"))]
-    let Composition { deposit, record, newest, merged, redrawn } = composition;
-    #[cfg(feature = "private-picture-counts")]
     let Composition {
         deposit,
         record,
         newest,
         merged,
         redrawn,
+        filtered,
+        recovered,
+        unplaced,
         #[cfg(feature = "private-picture-counts")]
         oldest,
     } = composition;
     let counters = crate::drawpipe::counters();
-    crate::drawpipe::Counters::add(&counters.used, records as u64);
     if ui.src.is_hw() && counters.diagnostics_enabled() {
-        crate::drawpipe::Counters::add(&counters.shown, records as u64);
-        let direct = records as u64 - merged;
-        if direct > 0 {
-            crate::drawpipe::Counters::add(&counters.deposited, direct);
-        }
+        counters.lose(drawpipe::Lost::Settings, filtered as u64);
+        let direct = records as u64 - merged - unplaced as u64;
+        counters.picture_drawn(records as u64, direct, recovered as u64);
+    } else {
+        crate::drawpipe::Counters::add(&counters.other_used, records as u64);
     }
     #[cfg(feature = "private-picture-counts")]
     if ui.src.is_hw()
@@ -381,7 +398,7 @@ mod stopped;
 pub(super) use {finish::finish, stopped::stopped};
 
 pub(crate) mod capture;
-#[cfg(all(test, feature = "private-picture-counts"))]
-mod count_tests;
+#[cfg(test)]
+pub(crate) mod count_tests;
 pub(crate) mod owner;
 pub(super) mod prefix;

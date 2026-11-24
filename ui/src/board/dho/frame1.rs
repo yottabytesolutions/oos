@@ -77,7 +77,7 @@ fn bytes_off_trigger(bytes: &[u8], s: &Settings, p: &hz::Params) -> bool {
 /// Counts a frame 1 left out and logs the count at 1, 2, 4, 8, ...
 pub(super) fn left_out() {
     let counters = crate::drawpipe::counters();
-    let n = counters.lose(crate::drawpipe::Lost::Frame1, 1);
+    let n = counters.lose_frame1();
     if n.is_power_of_two() {
         eprintln!(
             "oos-ui hw: frame 1 of a batch without its edge at the trigger point, left out (issue #5): {n} so far"

@@ -232,7 +232,7 @@ impl Script {
         let counters = self.pipe.counters;
         let text = counters.records_text();
         assert!(text.contains(&format!("read={} deposited={} ", self.records, self.records)));
-        assert!(text.ends_with("rejected.stale_key=0 rejected.epoch=0"));
+        assert!(text.ends_with("rejected.stale_key=0 rejected.epoch=0 records.recovered=0"));
         assert_eq!(counters.read().2, 0);
         assert!(counters.pipeline_text(WORK_BUDGET, 0).contains("intake.unexpected_full=0"));
     }

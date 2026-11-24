@@ -125,47 +125,14 @@ fn compare(a: &Picture, b: &Picture, label: &str) {
     assert!(weights(a)[0] > 0, "{label}: nonempty negative control");
 }
 
-#[test]
-fn batch_redraws_current_waveform_after_mapping_rejects_its_planes() {
-    let _scope = Scope::new();
-    let mut route = Route::new(BatchKind::Codes, 1, 10e-6);
-    route.step(1);
-    assert!(route.ui.ph.maps()[0].iter().any(|&v| v > 0));
-
-    let id = change::acquisition::identity(&route.ui);
-    let sw = route.ui.switches().clone();
-    let pipe = drawpipe::start_pipe(&sw);
-    let batch = route.source.next_batch(&route.ui.m, &sw, 1, route.spare.take()).unwrap();
-    let mut waveform = batch.newest(id.epoch());
-    waveform.cfg = id.gen();
-    let waveform = Arc::new(waveform);
-    let (fb, decode, codes) = (batch.frame_bytes(), batch.decode(), batch.codes());
-    let at = route.ui.host.picture_time(route.ui.now);
-    pipe.feed_at(batch.into_bytes().into(), fb, 0..1, (id, at), decode, codes, Some(waveform.clone()));
-    drawpipe::host::finish_batch(pipe, 2).unwrap();
-
-    route.ui.m.dots = DotsMode::On;
-    route.ui.step(1.0 / 30.0);
-
-    assert!(drawpipe::counters().records_text().contains("rejected.stale_key=1 "));
-    let shown = route.ui.last[0].as_ref().unwrap().raw.as_ref().unwrap();
-    assert_eq!(shown.frame.seq, waveform.seq);
-    let mut expected = Phosphor::new(route.ui.ph.w, route.ui.ph.h);
-    drawpipe::draw_frame(&mut expected, &route.ui.m, &waveform, sw.interp, None);
-    assert!(expected.maps()[0].iter().any(|&v| v > 0));
-    assert!(route.ui.ph.maps() == expected.maps(), "the delivered waveform should be drawn with dots");
-    assert_eq!(route.ui.batch_picture.frames, 1);
-}
-
-#[test]
-fn batch_draws_newest_waveform_after_hit_budget_rejection() {
-    let _scope = Scope::new();
+pub(crate) fn draw_after_hit_budget_rejection() -> Ui {
     let mut route = Route::new(BatchKind::Raw, 1, 10e-6);
     route.ui.m.dots = DotsMode::On;
     let id = change::acquisition::script_prepare(&mut route.ui);
     let sw = route.ui.switches().clone();
     let pipe = drawpipe::start_pipe(&sw);
     let frames = 32;
+    drawpipe::Counters::add(&drawpipe::counters().acquired, frames as u64);
     let batch = route.source.next_batch(&route.ui.m, &sw, frames, None).unwrap();
     let mut waveform = batch.newest(id.epoch());
     waveform.cfg = id.gen();
@@ -190,6 +157,7 @@ fn batch_draws_newest_waveform_after_hit_budget_rejection() {
     assert!(expected.maps()[0].iter().any(|&v| v > 0));
     assert!(route.ui.ph.maps() == expected.maps(), "the newest waveform should populate the picture");
     assert_eq!(route.ui.batch_picture.frames, 1);
+    route.ui
 }
 
 #[test]

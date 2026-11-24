@@ -6,6 +6,14 @@ use crate::fastdraw::{Codes, Samples};
 use crate::model::*;
 
 #[test]
+#[cfg(target_pointer_width = "64")]
+fn tap_and_deposit_keep_their_inline_size() {
+    let deposit_limit = if cfg!(feature = "private-picture-counts") { 1_032 } else { 1_016 };
+    assert!(size_of::<super::Tap>() <= 552, "tap: {} bytes", size_of::<super::Tap>());
+    assert!(size_of::<super::Deposit>() <= deposit_limit, "deposit: {} bytes", size_of::<super::Deposit>());
+}
+
+#[test]
 fn superseded_worker_output_cannot_enter_the_handoff() {
     use super::{Deposit, Handoff, Tap, TapProjection};
     use oos_core::change::{Identity, Request, Shadow, UiAcq};

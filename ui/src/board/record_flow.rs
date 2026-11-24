@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+use super::Frame;
 use std::sync::Arc;
 
 #[cfg(test)]
@@ -67,5 +68,68 @@ impl RecordFlow {
         if let Some(source) = crate::drawpipe::source_event() {
             source.notify();
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PictureEligibility {
+    Drawable,
+    /// The tap's record already had a loss outcome when the tap was created.
+    Recoverable,
+    /// The tap can draw under a changed view, independently of its deposit's outcome.
+    ShownOnly,
+    /// The original deposit has already contributed its picture statistics.
+    Redraw,
+    Pending,
+    AlreadyDeposited,
+    Expired,
+}
+
+impl PictureEligibility {
+    pub(crate) fn draws(self) -> bool {
+        matches!(self, Self::Drawable | Self::Recoverable | Self::ShownOnly | Self::Redraw)
+    }
+}
+
+/// Picture eligibility travels with the waveform until a record reader consumes it.
+pub(crate) struct QueuedFrame {
+    frame: Arc<Frame>,
+    eligibility: PictureEligibility,
+    _charge: Option<Arc<crate::drawpipe::TapReservation>>,
+}
+
+impl QueuedFrame {
+    pub(crate) fn new(frame: Arc<Frame>, eligibility: PictureEligibility) -> Self {
+        Self::from_tap(frame, eligibility, None)
+    }
+
+    pub(crate) fn from_tap(
+        frame: Arc<Frame>,
+        eligibility: PictureEligibility,
+        charge: Option<Arc<crate::drawpipe::TapReservation>>,
+    ) -> Self {
+        Self { frame, eligibility, _charge: charge }
+    }
+
+    pub(crate) fn eligibility(&self) -> PictureEligibility {
+        self.eligibility
+    }
+
+    pub(crate) fn read<T>(self, read: impl FnOnce(Arc<Frame>) -> T) -> T {
+        let Self { frame, _charge, .. } = self;
+        read(frame)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn into_frame(self) -> Arc<Frame> {
+        self.frame
+    }
+}
+
+impl std::ops::Deref for QueuedFrame {
+    type Target = Arc<Frame>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.frame
     }
 }

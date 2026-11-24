@@ -186,6 +186,28 @@ mod tests {
     }
 
     #[test]
+    fn unmatched_mixed_bus_record_has_one_loss_outcome() {
+        let _scope = crate::drawpipe::test_scope::Scope::new();
+        let points = 10_000;
+        let (mut ui, shared) = fixture(points);
+        ui.m.trig_bus_val = 0x5a;
+        ui.mixed_bus_command(2);
+        ui.step(0.001);
+        let counters = crate::drawpipe::counters();
+        let before = counters.records_text();
+        let shown = counters.read().1;
+        push(&mut ui, &shared, points, 0xa5, 2);
+        crate::drawpipe::Counters::add(&counters.acquired, 1);
+        ui.step(0.001);
+        assert!(!ui.bus_candidate_waiting());
+        assert!(oos_hal::sync::lock(&shared).queue.is_empty());
+        assert_eq!(counters.read().1, shown);
+        assert!(before.contains(" lost.settings=0 "), "{before}");
+        let after = counters.records_text();
+        assert!(after.contains(" lost.settings=1 "), "{after}");
+    }
+
+    #[test]
     fn no_match_waits_and_force_accepts_one_without_fabricating_a_bus_match() {
         let points = 300_000;
         let (mut ui, shared) = fixture(points);
@@ -348,7 +370,9 @@ impl Ui {
     }
     pub(super) fn cancel_bus_candidate(&mut self, clear_event: bool) {
         let active = self.bus_candidate.record.is_some() || self.mixed_bus_mode();
-        self.bus_candidate.record = None;
+        if self.bus_candidate.record.take().is_some() && self.src.is_hw() {
+            crate::drawpipe::counters().lose(crate::drawpipe::Lost::Settings, 1);
+        }
         self.bus_candidate.guard.clear();
         self.bus_candidate.force = false;
         self.bus_candidate.ready_hit = None;
@@ -444,7 +468,7 @@ impl Ui {
         }
         true
     }
-    fn acquire_mixed_bus_record(&mut self, elapsed: f64) -> Option<Record> {
+    fn acquire_mixed_bus_record(&mut self, elapsed: f64, filtered: &mut usize) -> Option<Record> {
         let id = change::acquisition::identity(self);
         if let Source::Hw { shared, seen } = &mut self.src {
             let mut state = oos_hal::sync::lock(shared);
@@ -456,6 +480,7 @@ impl Ui {
                 || !frame.dt.is_finite()
                 || frame.dt <= 0.0
             {
+                *filtered += 1;
                 return None;
             }
             let window = self.m.time_per_div() as f64 * HDIV as f64;
@@ -485,7 +510,7 @@ impl Ui {
             previous;
         record
     }
-    pub(super) fn acquire_bus_candidate(&mut self, elapsed: f64) -> Option<Record> {
+    pub(super) fn acquire_bus_candidate(&mut self, elapsed: f64, filtered: &mut usize) -> Option<Record> {
         if !self.mixed_bus_mode() {
             return self.acquire_display_record(elapsed);
         }
@@ -497,8 +522,9 @@ impl Ui {
             // The hardware cannot read reference memory. Acquire edge/auto
             // candidates, then apply the actual Bus condition here. SINGLE's
             // arm stamp is checked explicitly before a candidate is retained.
-            let record = self.acquire_mixed_bus_record(elapsed)?;
+            let record = self.acquire_mixed_bus_record(elapsed, filtered)?;
             if record.raw.as_ref().is_some_and(|raw| raw.frame.stamp < self.bus_candidate.minimum_stamp) {
+                *filtered += 1;
                 return None;
             }
             self.bus_candidate.guard = self.candidate_guard(&record);
@@ -523,12 +549,12 @@ impl Ui {
         let hit = packets.as_ref().ok().and_then(|packets| {
             crate::trig::points(&self.m, packets).into_iter().min_by(|a, b| a.abs().total_cmp(&b.abs()))
         });
+        let mut record = self.bus_candidate.record.take()?;
         if hit.is_none() && self.m.trig_mode != TrigMode::Auto {
-            self.bus_candidate.record = None;
+            *filtered += 1;
             self.m.status = TrigStatus::Wait;
             return None;
         }
-        let mut record = self.bus_candidate.record.take()?;
         record.triggered = hit.is_some();
         self.bus_candidate.ready_hit = hit;
         if let Some(time) = hit {

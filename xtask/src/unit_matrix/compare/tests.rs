@@ -126,6 +126,26 @@ fn compares_first_use_throughput_even_if_shown_and_read_are_higher() {
 }
 
 #[test]
+fn compares_an_older_reference_with_a_result_reporting_recoveries() {
+    let mut reference = report(10.0, 100, 300, 0);
+    let mut result = report(10.0, 100, 300, 0);
+    for (report, deposited) in [(&mut reference, 104), (&mut result, 100)] {
+        let WindowSample::Valid(sample) = &mut report.groups.get_mut("dense").unwrap().windows[0].sample else {
+            panic!("expected valid window")
+        };
+        sample.delta.insert("records.deposited".into(), deposited);
+        sample.delta.insert("rejected.stale_key".into(), 4);
+    }
+    let group = result.groups.get_mut("dense").unwrap();
+    let WindowSample::Valid(sample) = &mut group.windows[0].sample else { panic!("expected valid window") };
+    sample.delta.insert("records.recovered".into(), 1);
+    group.summarize().unwrap();
+    assert_eq!(group.summary.as_ref().unwrap().delta["records.recovered"], 1);
+    let reference: Report = serde_json::from_str(&serde_json::to_string(&reference).unwrap()).unwrap();
+    assert_eq!(compare(&reference, &result, 0.95).unwrap().exit(), ExitCode::SUCCESS);
+}
+
+#[test]
 fn compares_a_stored_reference_without_disarm_counters() {
     let reference = report(10.0, 100, 300, 0);
     let mut result = report(10.0, 100, 300, 0);

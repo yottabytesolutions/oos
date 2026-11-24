@@ -14,6 +14,7 @@ use sim::{Event, FixedPacing, Frame, Pause, Run};
 
 mod bounds;
 mod calibration_hold;
+mod conservation;
 mod deposit;
 mod picture;
 mod raw;

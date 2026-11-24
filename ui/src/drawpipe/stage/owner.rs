@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Immutable pre-first-use intake. Five counted backing leases remain authoritative.
 use super::super::*;
-use crate::picture::deposit::{Deposit, Handoff};
+use crate::picture::deposit::{Deposit, Handoff, TapSettlement};
 use crate::picture::{DepositWindow, FirstDraw, PerMap};
 use crate::wave::Phosphor;
 use oos_core::change::Identity;
@@ -84,7 +84,7 @@ impl Owner {
     }
 }
 fn reject_deposit(slot: &Handoff, counters: &Counters, identity: Option<Identity>, deposit: Deposit) {
-    slot.settle_taps(&deposit.taps, None);
+    slot.settle_taps(&deposit.taps, TapSettlement::Expired);
     deposit.reject(identity, counters);
     slot.recycle(deposit);
 }

@@ -199,7 +199,7 @@ fn pending_tap_remaps_before_its_deposit_is_accepted() {
     drawpipe::draw_frame(&mut expected, &route.ui.m, &tap, crate::sparse::Interp::Exact, None);
     assert!(expected.maps()[0].iter().any(|&v| v > 0));
     assert!(route.ui.ph.maps() == expected.maps());
-    assert!(drawpipe::counters().records_text().contains("rejected.stale_key=1 "));
+    assert!(drawpipe::counters().records_text().ends_with("rejected.stale_key=1 rejected.epoch=0 records.recovered=0"));
     route.ui.step(STEP);
     assert!(route.ui.ph.maps() == expected.maps());
     assert_eq!((last_seq(&route.ui), route.ui.wfm_total, route.ui.history.len()), (2, 2, 2));

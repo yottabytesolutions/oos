@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::state::{Counters, Sections, State};
+use super::state::{Counters, Sections, State, DEPOSITED};
 use crate::unit_tools::scpi::{parse_state, Scpi, STATE};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -91,13 +91,25 @@ pub(super) fn measure(scpi: &mut impl Scpi, clock: &mut impl Clock, wait: Durati
     let b = scpi.query_timed(STATE, || clock.elapsed())?;
     let after = checked_state(&b.line)?;
     let host_s = [(b.before_write - a.after_line).as_secs_f64(), (b.after_line - a.before_write).as_secs_f64()];
-    let delta = diff(&before.counters, &after.counters);
+    let mut delta = diff(&before.counters, &after.counters);
     let mut fallback_delta = diff(&before.fallback, &after.fallback);
     fallback_delta.retain(|_, value| *value != 0);
-    let sample = if delta.values().chain(fallback_delta.values()).any(|&value| value < 0) {
+    // A rejection during the window can remove a deposit that was still pending at its start.
+    let reset = delta.iter().any(|(key, &value)| key != DEPOSITED && value < 0);
+    let sample = if reset || fallback_delta.values().any(|&value| value < 0) {
         WindowSample::CounterReset
     } else {
         let rates = Rates::calculate(host_s, &delta)?;
+        let losses = "lost.settings lost.frame0 lost.average lost.error lost.buffer lost.unclaimed lost.budget \
+                      lost.superseded lost.frame1 lost.queue_overflow rejected.stale_key rejected.epoch";
+        let residual = delta.get(DEPOSITED).and_then(|deposited| {
+            losses
+                .split_ascii_whitespace()
+                .try_fold(delta["records.read"] - deposited, |left, key| Some(left - delta.get(key)?))
+        });
+        if let Some(residual) = residual {
+            delta.insert("records.residual".into(), residual);
+        }
         WindowSample::Valid(Sample { delta, fallback_delta, sections: after.sections, rates })
     };
     Ok(Window { start_s: a.before_write.as_secs_f64(), host_s, sample })

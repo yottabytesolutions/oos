@@ -75,6 +75,7 @@ pub(super) fn stop_workers(ui: &mut Ui, deadline: Instant) {
     }
     if let Some(pipe) = crate::drawpipe::pipe() {
         crate::drawpipe::shutdown::close(pipe, deadline);
+        crate::drawpipe::shutdown::reset(pipe);
     }
     crate::system::shutdown::join(joins, deadline);
 }

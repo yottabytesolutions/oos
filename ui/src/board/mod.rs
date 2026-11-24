@@ -29,6 +29,7 @@ use std::sync::{Arc, Mutex};
 pub type Active = dho::Dho;
 pub type BoardSwitches = dho::switches::Switches;
 
+pub(crate) use record_flow::{PictureEligibility, QueuedFrame};
 pub(crate) use samples::{correct_adc_code, word_volts_f64};
 
 /// The board of this build.
@@ -383,65 +384,6 @@ pub struct MaskRead {
     pub gain: f64,
     pub points: u32,
     pub chans: u32,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum PictureEligibility {
-    Drawable,
-    /// The original deposit has already contributed its picture statistics.
-    Redraw,
-    Pending,
-    AlreadyDeposited,
-    Expired,
-}
-
-impl PictureEligibility {
-    pub(crate) fn draws(self) -> bool {
-        matches!(self, Self::Drawable | Self::Redraw)
-    }
-}
-
-/// Picture eligibility travels with the waveform until a record reader consumes it.
-pub(crate) struct QueuedFrame {
-    frame: Arc<Frame>,
-    eligibility: PictureEligibility,
-    _charge: Option<Arc<crate::drawpipe::TapReservation>>,
-}
-
-impl QueuedFrame {
-    pub(crate) fn new(frame: Arc<Frame>, eligibility: PictureEligibility) -> Self {
-        Self::from_tap(frame, eligibility, None)
-    }
-
-    pub(crate) fn from_tap(
-        frame: Arc<Frame>,
-        eligibility: PictureEligibility,
-        charge: Option<Arc<crate::drawpipe::TapReservation>>,
-    ) -> Self {
-        Self { frame, eligibility, _charge: charge }
-    }
-
-    pub(crate) fn eligibility(&self) -> PictureEligibility {
-        self.eligibility
-    }
-
-    pub(crate) fn read<T>(self, read: impl FnOnce(Arc<Frame>) -> T) -> T {
-        let Self { frame, _charge, .. } = self;
-        read(frame)
-    }
-
-    #[cfg(test)]
-    pub(crate) fn into_frame(self) -> Arc<Frame> {
-        self.frame
-    }
-}
-
-impl std::ops::Deref for QueuedFrame {
-    type Target = Arc<Frame>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.frame
-    }
 }
 
 /// Shared between UI and the acquisition thread: the settings the UI wants, the latest frame, a status line.

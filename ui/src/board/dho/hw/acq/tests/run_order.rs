@@ -38,7 +38,7 @@ fn assert_order(result: &Outcome, changed: bool) {
     assert_eq!(result.counters.deposited, 4);
 }
 
-fn headless(out: &HwShared, stopped: bool) -> Ui {
+pub(super) fn headless(out: &HwShared, stopped: bool) -> Ui {
     let mut ui = Ui::for_tests(Source::Hw { shared: out.clone(), seen: 0 });
     ui.m = picture::model(settings().tdiv);
     ui.m.trig_mode = TrigMode::Normal;
@@ -205,7 +205,7 @@ fn change_during_fill() -> Outcome {
     snapshot(&out, &io, &trace, started)
 }
 
-fn edit_level(ui: &mut Ui, out: &HwShared) -> [Event; 2] {
+pub(super) fn edit_level(ui: &mut Ui, out: &HwShared) -> [Event; 2] {
     let old = lock(out).acquisition.identity();
     ui.m.trig_level = 0.5;
     let events = accept(out, || change::settle(ui));

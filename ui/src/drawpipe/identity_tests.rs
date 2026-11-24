@@ -74,6 +74,7 @@ fn old_folds_cannot_refill_current_statistics() {
         pipe.set_view(Some(&model), 8, 8, Interp::Exact);
         let gen = pipe.view.lock().unwrap().gen;
         let mut phosphor = Phosphor::new(8, 8);
+        Counters::add(&counters.placed, 1);
         assert!(pipe.slot.put(accumulator(gen, Identity::default())).is_ok());
         pipe.set_identity(current);
         let stale = pipe.accept(&mut phosphor, &mut false, &mut [0; 4], &mut (0.0, 0.0));
@@ -83,6 +84,7 @@ fn old_folds_cannot_refill_current_statistics() {
         assert_eq!(counters.losses.folds.load(Ordering::Relaxed), 1);
         assert_eq!(counters.losses.overflow.load(Ordering::Relaxed), 0);
         assert_eq!(stale.frames, u64::from(request == Request::StatsReset), "statistics alone retain valid pictures");
+        Counters::add(&counters.placed, 1);
         assert!(pipe.slot.put(accumulator(gen, current)).is_ok());
         let valid = pipe.accept(&mut phosphor, &mut false, &mut [0; 4], &mut (0.0, 0.0));
         assert_eq!(valid.frames, 1);
@@ -133,7 +135,7 @@ fn rejecting_painted_planes_keeps_only_current_waveforms() {
         } else {
             let tap = tap.unwrap();
             assert!(Arc::ptr_eq(&tap, &waveform));
-            assert_eq!(tap.eligibility(), PictureEligibility::Drawable);
+            assert_eq!(tap.eligibility(), PictureEligibility::ShownOnly);
         }
     }
 }
@@ -214,7 +216,7 @@ fn remapping_a_private_deposit_keeps_its_waveform_without_a_newer_tap() {
         if identity == current {
             let tap = tap.unwrap();
             assert!(Arc::ptr_eq(&tap, &waveform));
-            assert_eq!(tap.eligibility(), PictureEligibility::Drawable);
+            assert_eq!(tap.eligibility(), PictureEligibility::ShownOnly);
         } else {
             assert!(tap.is_none());
         }

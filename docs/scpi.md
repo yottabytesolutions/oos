@@ -314,6 +314,29 @@ Logic commands are `:LA:STATe[?]`, `:LA:DIGital<n>:DISPlay[?]`, `:LA:POD<n>:THRe
 
 `:SYSTem:STATe?` returns app diagnostic state. `:SYSTem:GET? <key>` and `:SYSTem:SET <key> = <value>` access the explicit setup schema, including Math configuration that has no dedicated stock-compatible command subtree here. Key names and internal indices are implementation-specific: see [setup serialization](../ui/src/store.rs), rather than assuming a Rigol syntax. `:SYSTem:LOG ON|OFF` controls the measurement logger.
 
+In `records read=N deposited=N shown=N`, `read` counts completed record reads. `deposited` credits
+worker placements minus post-placement losses, plus direct draws that supply the record's terminal
+outcome. `shown` counts first use in a hardware picture. `records.recovered=N` counts direct draws
+of records whose loss was certain when the tap was created. An early draw of a projected tap under
+a changed view contributes only to `shown`. Compose accounts for the deposit independently.
+After Clear, with acquisition and picture work drained, the residual is zero. Use only
+the following integer fields from the `records` group.
+
+```text
+read = deposited + lost.settings + lost.frame0 + lost.average + lost.error + lost.buffer
+     + lost.unclaimed + lost.budget + lost.superseded + lost.frame1 + lost.queue_overflow
+     + rejected.stale_key + rejected.epoch
+```
+
+`read >= deposited + records.recovered` and `shown >= deposited + records.recovered` for drained
+ordinary acquisition. An early draw and later compose can both credit `shown`, so `shown` can exceed
+`deposited` or even `read`. Worker placements awaiting compose can temporarily put `deposited` ahead
+of `shown`, including just after STOP. See the [state reply schema](spec/state-query.md#f0-record-accounting-and-stage-rings-202).
+STOP normally leaves one decoded handoff held in the FIFO. Its records contribute to the residual until
+RUN or Clear retires them. An ordinary handoff holds up to 48 records, so a stopped instrument typically
+reports 48 to 50. Software zone and bus rejects count in `lost.settings`; `sw_drops` in the zone debug
+reply separates them from settings changes.
+
 The `disarm.v1` section reports batch disarms and dropped retained ring batches as
 `total`, `unknown`, `no_completed_record`, `recorded` and `dropped`. The three outcomes reflect
 the hardware status reported at disarm. A retained slot inside the programmed capture range

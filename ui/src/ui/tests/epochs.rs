@@ -268,7 +268,8 @@ fn publication_and_queue_pop_report_stale_frames_at_their_own_sites() {
     let _scope = crate::drawpipe::test_scope::Scope::new();
     use std::sync::atomic::Ordering::Relaxed;
     let (mut ui, shared) = hardware();
-    let loss = &crate::drawpipe::counters().losses;
+    let counters = crate::drawpipe::counters();
+    let loss = &counters.losses;
     let before = (loss.ui_publish.load(Relaxed), loss.queue_pop.load(Relaxed), loss.overflow.load(Relaxed));
     let old = frame(&ui, 1);
     oos_hal::sync::lock(&shared).queue.push_back(old.clone().into());
@@ -281,12 +282,27 @@ fn publication_and_queue_pop_report_stale_frames_at_their_own_sites() {
     assert!(ui.src.acquire(&ui.m, 0.04, &mut ui.rng, ui.host.switches()).is_none());
     assert_eq!(loss.queue_pop.load(Relaxed) - before.1, 2);
     assert_eq!(loss.overflow.load(Relaxed), before.2);
-    let text = crate::cmd::stat_text(&ui);
-    for name in
-        ["stale_worker_push=", "stale_ui_publish=", "stale_queue_pop=", "stale_pipe=", "queue_overflow=", "fold_drops="]
-    {
-        assert!(text.contains(name), "state query missing {name}");
+    // Account for the three stale records and a separate overflow in the reply.
+    crate::drawpipe::Counters::add(&counters.acquired, 7);
+    crate::drawpipe::Counters::add(&counters.deposited, 2);
+    crate::drawpipe::Counters::add(&loss.overflow, 2);
+    let reply = crate::scpi::Scpi::disconnected().exec_line(&mut ui, &Canvas::new(1, 1), ":SYSTem:STATe?");
+    let text = String::from_utf8(reply).unwrap();
+    let fields: std::collections::BTreeMap<_, u64> = text
+        .split_whitespace()
+        .filter_map(|token| token.split_once('='))
+        .filter_map(|(key, value)| value.parse().ok().map(|n| (key, n)))
+        .collect();
+    for key in ["stale_worker_push", "stale_pipe", "fold_drops"] {
+        assert_eq!(fields[key], 0);
     }
+    assert_eq!(fields["lost.settings"], fields["stale_ui_publish"] + fields["stale_queue_pop"]);
+    assert_eq!(fields["queue_overflow"], 2);
+    assert_eq!(fields["lost.queue_overflow"], fields["queue_overflow"]);
+    let lost: u64 = fields.iter().filter(|(key, _)| key.starts_with("lost.")).map(|(_, count)| count).sum();
+    assert_eq!(fields["read"], fields["deposited"] + lost);
+    assert!(text.contains(" acquired 7 used 0 dropped 5 "));
+    assert_eq!(fields["not_used"], fields["read"]);
 }
 
 #[test]
@@ -297,7 +313,7 @@ fn state_query_reports_acquisition_counters_beside_stale_counts() {
     let reply = remote.exec_line(&mut ui, &crate::gfx::Canvas::new(1, 1), ":SYSTem:STATe?");
     let text = String::from_utf8(reply).unwrap();
     let fields = " acq_seg_start=0 acq_seg_abort=0 acq_roll_stop=0 acq_roll_start=0 acq_batch_prearm=0 acq_batch_disarm=0 acq_configure=0 acq_single_arm=0";
-    assert!(text.contains(&format!("{}{}", crate::drawpipe::counters().losses.text(), fields)));
+    assert!(text.contains(&format!(" fold_drops=0{fields}")));
     assert_eq!(text.matches("acq_single_arm=").count(), 1);
 }
 

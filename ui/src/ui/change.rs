@@ -266,7 +266,12 @@ pub(super) fn finish_step(ui: &mut Ui) {
     sample.finish(&mut observer.census, 2);
 }
 
+#[cfg(test)]
 pub(crate) fn text(ui: &Ui) -> String {
+    state_text(ui, &crate::drawpipe::counters().snapshot())
+}
+
+pub(crate) fn state_text(ui: &Ui, records: &crate::drawpipe::RecordSnapshot) -> String {
     let observer = &ui.host.runtime().change;
     use std::fmt::Write;
     let mut text = observer.diagnostics.text();
@@ -279,9 +284,9 @@ pub(crate) fn text(ui: &Ui) -> String {
     }
     text.push_str(" legacy_observer=retired");
     text.push_str(&observer.timing.stage_text());
-    text.push_str(&crate::drawpipe::counters().losses.text());
+    text.push_str(&records.legacy_losses_text());
     text.push_str(&crate::drawpipe::counters().acquisition.text());
-    text.push_str(&crate::drawpipe::counters().records_text());
+    text.push_str(&records.records_text());
     let [autoset, bode] = proposals::restart_counts(ui);
     let _ = write!(text, " stage_restart_autoset={autoset} stage_restart_bode={bode}");
     text.push_str(&observer.timing.diagnostics_text());

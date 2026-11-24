@@ -84,11 +84,13 @@ impl RecordCounts {
     }
 
     fn read() -> Self {
-        use std::sync::atomic::Ordering;
-        let counters = drawpipe::counters();
-        let (read, _, dropped) = counters.read();
-        let losses = counters
-            .records_text()
+        let snapshot = drawpipe::counters().snapshot();
+        let (_, _, dropped, _) = snapshot.legacy_totals();
+        let text = snapshot.records_text();
+        let count = |prefix| {
+            text.split_whitespace().find_map(|field| field.strip_prefix(prefix)).unwrap().parse::<u64>().unwrap()
+        };
+        let losses = text
             .split_whitespace()
             .filter_map(|field| field.split_once('='))
             .filter(|(name, _)| name.starts_with("lost.") || name.starts_with("rejected."))
@@ -97,7 +99,7 @@ impl RecordCounts {
                 (count != 0).then(|| (name.to_owned(), count))
             })
             .collect();
-        Self { read, deposited: counters.deposited.load(Ordering::Relaxed), dropped, losses }
+        Self { read: count("read="), deposited: count("deposited="), dropped, losses }
     }
 }
 

@@ -256,19 +256,18 @@ wanted/applied metrics mirrors. Stage token types are `core/src/change/requests.
 | state-query-113 | `stale_worker_push=` | u64, frames | drawpipe::Counters.losses.worker_push; frames rejected under worker publication lock by current identity before handoff | `ui/src/board/dho/publication.rs:64` |
 | state-query-114 | `stale_ui_publish=` | u64, frames | drawpipe::Counters.losses.ui_publish; queued frames removed at UI acquisition publication because identity is obsolete | `ui/src/ui/change/acquisition.rs:32` |
 | state-query-115 | `stale_queue_pop=` | u64, frames | drawpipe::Counters.losses.queue_pop; obsolete frames rejected while draining/popping UI source queue | `ui/src/wave.rs:587` |
-| state-query-116 | `stale_pipe=` | u64, frames | drawpipe::Counters.losses.pipe; obsolete frames rejected at deposit pipe admission/worker/merge sites | `ui/src/drawpipe.rs:696` |
-| state-query-117 | `queue_overflow=` | u64, frames | drawpipe::Counters.losses.overflow; oldest frames evicted beyond QUEUE_MAX; independent of stale identity | `ui/src/board/dho/publication.rs:24` |
+| state-query-116 | `stale_pipe=` | u64, frames | Sum of pre-deposit stale batch records and deposit rejections due to a generation or epoch change | `ui/src/drawpipe/losses.rs` |
+| state-query-117 | `queue_overflow=` | u64, frames | Alias for `lost.queue_overflow`, the deposit owner's capacity overflow counter | `ui/src/drawpipe/stage/owner/compose.rs` |
 | state-query-118 | `fold_drops=` | u64, measurement samples | drawpipe::Counters.losses.folds; measurement samples discarded from invalid statistics-generation folds, sum of fold.n, not number of folds | `ui/src/drawpipe.rs:1920` |
 
-All six wire names are serialized by `ui/src/drawpipe/losses.rs:17` and appended
-by `ui/src/ui/change.rs:249`. They are independent reasons/sites, not disjoint
-parts of one conservation equation. `queue_overflow` also increments aggregate
-`dropped` (`ui/src/board/dho/publication.rs:43`). `fold_drops` deliberately counts
-samples while stale identity counts frames. `picture stale` counts what reached
-the screen, whereas these stale_* counters count rejection. Atomics are process
-lifetime, initialized to zero, not reset by CLEAR or acquisition changes;
-ordinary losses use fetch_add (u64 wrapping at overflow), unlike saturating
-acquisition attempts (`ui/src/drawpipe.rs:343`).
+The state reply loads each raw record counter once. The legacy names share
+that snapshot with the detailed record fields, so the two overflow names
+always agree and the legacy stale counts can overlap with `lost.settings`
+or `rejected.*`. `fold_drops` counts measurement samples. Legacy `dropped`
+includes queue overflow. The separate `picture stale` field counts work
+that reached the screen. Record counters accumulate from process startup
+across CLEAR and acquisition changes.
+Ordinary losses wrap at the u64 limit. Acquisition attempts saturate.
 
 | Requirement | Wire field / position | Type and unit | Meaning and source | Evidence |
 |---|---|---|---|---|
@@ -605,11 +604,12 @@ Host implementation, not yet verified on hardware. Process-lifetime counts use r
 hardware-average inputs that are deliberately withheld. Roll and scan count published sweep snapshots,
 not samples. `records read=N deposited=N shown=N` reports reads, deposits (worker and direct UI),
 and hardware records reaching a picture. Demo playback is excluded from `shown` and direct deposits;
-the older `used` aggregate still includes it. Independent relaxed atomic loads can observe work in flight.
+the older `used` aggregate still includes it. A state reply takes one relaxed load per raw
+counter. Independent counters can still reflect work in flight.
 
 `lost.settings`, `lost.frame0`, `lost.frame1`, `lost.average` and `lost.error` identify intentional
-selection and short-read losses. Settings includes the existing worker-push, UI-publication and queue-pop
-identity counters. `lost.buffer`, `lost.unclaimed`, `lost.budget`, `lost.queue_overflow`
+selection and short-read losses. Settings includes the worker-push, UI-publication and queue-pop
+identity counters and stale batches rejected before deposition. `lost.buffer`, `lost.unclaimed`, `lost.budget`, `lost.queue_overflow`
 and `lost.superseded` expose the current pipeline's remaining discards. F0 preserves these policies;
 F3 removes the buffer and unclaimed overload sites through back-pressure. Sweep snapshots replaced by
 a newer snapshot are `superseded`. Completed maps rejected after deposition count as

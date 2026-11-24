@@ -78,7 +78,8 @@ fn old_folds_cannot_refill_current_statistics() {
         pipe.set_identity(current);
         let stale = pipe.accept(&mut phosphor, &mut false, &mut [0; 4], &mut (0.0, 0.0));
         assert!(stale.folds.is_empty(), "late folds must not refill reset statistics");
-        assert_eq!(counters.losses.pipe.load(Ordering::Relaxed), u64::from(request == Request::Clear));
+        let stale_pipe = u64::from(request == Request::Clear);
+        assert!(counters.snapshot().legacy_losses_text().contains(&format!(" stale_pipe={stale_pipe} ")));
         assert_eq!(counters.losses.folds.load(Ordering::Relaxed), 1);
         assert_eq!(counters.losses.overflow.load(Ordering::Relaxed), 0);
         assert_eq!(stale.frames, u64::from(request == Request::StatsReset), "statistics alone retain valid pictures");

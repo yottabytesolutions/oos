@@ -26,10 +26,7 @@ pub(in crate::drawpipe) fn batch_view(b: &Batch, state: &ViewState, reset_before
         .filter(|_| b.view_gen_at_submit >= reset_before && accepts(b, legacy_stamp(state), state.identity));
     if v.is_none() {
         let records = b.frames.saturating_sub(b.next.swap(b.frames, Ordering::Relaxed)) as u64;
-        if !same_pair(b.header.identity(), state.identity) {
-            Counters::add(&b.counters.losses.pipe, records);
-        }
-        b.counters.discard(Lost::Settings, records);
+        b.counters.reject_batch(!same_pair(b.header.identity(), state.identity), records);
     }
     v
 }

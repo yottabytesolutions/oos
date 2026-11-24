@@ -58,7 +58,6 @@ impl OwnerContext {
         Some(d)
     }
     fn discard(&self, deposit: Deposit) {
-        Counters::add(&self.counters.dropped, deposit.records);
         deposit.reject_timing(self.counters, Instant::now());
         deposit.discard_folds(self.counters);
         self.slot.settle_taps(&deposit.taps, None);
@@ -145,7 +144,7 @@ impl Owner {
                 continue;
             };
             if deposit.picture_totals(&[]).is_none() {
-                ctx.counters.lose(Lost::Error, deposit.records);
+                ctx.counters.discard(Lost::Error, deposit.records);
                 ctx.discard(deposit);
                 rejected_wait = rejected_wait.max(wait);
             } else {

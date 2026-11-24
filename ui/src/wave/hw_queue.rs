@@ -66,7 +66,6 @@ impl Source {
             let id = g.acquisition.identity();
             let before = g.queue.len();
             g.queue.retain(|f| (f.cfg, f.stamp) == (id.gen(), id.epoch()));
-            crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, (before - g.queue.len()) as u64);
             crate::drawpipe::Counters::add(
                 &crate::drawpipe::counters().losses.queue_pop,
                 (before - g.queue.len()) as u64,
@@ -105,7 +104,6 @@ impl Source {
         let had_frames = !g.queue.is_empty();
         while g.queue.pop_front_if(|f| (f.cfg, f.stamp) != (id.gen(), id.epoch())).is_some() {
             drawpipe::Counters::add(&drawpipe::counters().losses.queue_pop, 1);
-            drawpipe::Counters::add(&drawpipe::counters().dropped, 1);
         }
         if had_frames && g.queue.is_empty() {
             g.record_flow.drained();

@@ -137,7 +137,6 @@ impl Source {
         let id = g.acquisition.identity();
         if (f.cfg, f.stamp) != (id.gen(), id.epoch()) {
             crate::drawpipe::Counters::add(&crate::drawpipe::counters().losses.queue_pop, 1);
-            crate::drawpipe::Counters::add(&crate::drawpipe::counters().dropped, 1);
             return None;
         }
         drop(g);

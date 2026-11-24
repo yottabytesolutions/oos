@@ -48,13 +48,13 @@ impl Intake {
                 continue;
             }
             if active.program.waiting.is_some() && active.read_closed() {
-                self.parked = Some(Reply::new(active.request.id(), Vec::new(), active.reservation));
+                self.parked = Some(active.abandon());
                 continue;
             }
             if let Some(bytes) = execute(&mut active.program, &mut active.reservation) {
                 self.parked = Some(active.reply(bytes));
             } else if active.program.capture.is_none() && active.read_closed() {
-                self.parked = Some(Reply::new(active.request.id(), Vec::new(), active.reservation));
+                self.parked = Some(active.abandon());
             } else {
                 active.reservation.retain(active.program.output.as_ref().map_or(0, crate::netport::Output::capacity));
                 self.waiting.push_back(active);
@@ -88,14 +88,23 @@ impl Intake {
     }
 
     #[cfg(test)]
-    pub(super) fn cancelled(&self) -> bool {
-        self.waiting.iter().all(|a| a.request.cancelled() || a.read_closed())
+    pub(super) fn pending_client_closed(&self) -> bool {
+        self.waiting
+            .iter()
+            .any(|active| active.program.waiting.is_some() && (active.request.cancelled() || active.read_closed()))
     }
 }
 
 impl Active {
     fn read_closed(&self) -> bool {
         self.request.read_closed().load(Ordering::Acquire)
+    }
+
+    fn abandon(self) -> Reply {
+        let mut reply = Reply::new(self.request.id(), Vec::new(), self.reservation);
+        // End the IO session before it can admit programs buffered behind this request.
+        reply.set_close(true);
+        reply
     }
 
     fn reply(mut self, bytes: Vec<u8>) -> Reply {

@@ -3856,26 +3856,26 @@ mod tests {
         let mut client = TcpStream::connect(("127.0.0.1", s.port().unwrap())).unwrap();
         client.write_all(b"*IDN?\n").unwrap();
         client.shutdown(std::net::Shutdown::Write).unwrap();
-        // One poll can take the client, answer and let it go. The events are the answer and the session's close,
-        // both observed at the client: collect without blocking until EOF.
+        let answer = read_raw_to_eof(&mut client, || s.poll(&mut ui, &cv));
+        assert!(answer.starts_with(b"OOS,"), "{answer:?}");
+        assert!(s.transport.intake.active_is_empty(), "the session completed the half-closed client's answer");
+    }
+
+    fn read_raw_to_eof(client: &mut TcpStream, mut drive: impl FnMut()) -> Vec<u8> {
         client.set_nonblocking(true).unwrap();
         let mut answer = Vec::new();
-        crate::ui::lifecycle::test_wait::until("SCPI answer and close of a half-closed client", || {
-            s.poll(&mut ui, &cv);
-            let mut buf = [0u8; 256];
-            loop {
-                match std::io::Read::read(&mut client, &mut buf) {
-                    Ok(0) => return Some(()),
-                    Ok(n) => answer.extend_from_slice(&buf[..n]),
-                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => return None,
-                    Err(e) => panic!("client read: {e}"),
-                }
+        crate::ui::lifecycle::test_wait::until("raw SCPI server closes the session", || {
+            drive();
+            let mut buf = [0; 256];
+            match client.read(&mut buf) {
+                Ok(0) => return Some(()),
+                Ok(n) => answer.extend_from_slice(&buf[..n]),
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {}
+                Err(e) => panic!("client read: {e}"),
             }
+            None
         });
-        let answer = String::from_utf8(answer).unwrap();
-        assert!(answer.starts_with("OOS,"), "{answer:?}");
-        s.poll(&mut ui, &cv);
-        assert!(!s.transport.intake.pending(), "the session completed the half-closed client's answer");
+        answer
     }
 
     #[test]
@@ -3888,16 +3888,16 @@ mod tests {
             s.poll(&mut ui, &cv);
             s.transport.intake.pending().then_some(())
         });
-        assert!(s.transport.intake.pending());
         client.write_all(b":RUN\n").unwrap();
-        client.shutdown(std::net::Shutdown::Both).unwrap();
-        drop(client);
+        // Keep the read half open so the test can observe when the server finishes with the pipeline.
+        client.shutdown(std::net::Shutdown::Write).unwrap();
         crate::ui::lifecycle::test_wait::until("raw client close reaches IO", || {
-            s.transport.intake.cancelled().then_some(())
+            s.transport.intake.pending_client_closed().then_some(())
         });
         line(&mut s, &mut ui, &cv, ":TRIG:EDGE:LEV 0");
         ui.step(0.2);
-        s.poll(&mut ui, &cv);
+        let answer = read_raw_to_eof(&mut client, || s.poll(&mut ui, &cv));
+        assert!(answer.is_empty(), "the pending query was abandoned: {answer:?}");
         assert!(s.transport.intake.active_is_empty());
         assert_eq!(ui.m.run, RunState::Stop);
         assert_eq!(captures(&ui), 1.0);

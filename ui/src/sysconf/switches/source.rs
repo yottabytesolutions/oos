@@ -86,7 +86,7 @@ pub(crate) struct SourceOverhead {
 
 impl Default for SourceOverhead {
     fn default() -> Self {
-        Self { batch_settle: true, fifo: true, work_budget: None, capture: Capture::default(), play_window: false }
+        Self { batch_settle: true, fifo: true, work_budget: None, capture: Capture::default(), play_window: true }
     }
 }
 
@@ -103,11 +103,11 @@ impl SourceOverhead {
         let batch_settle = enabled("acq.write_gap", "OOS_ACQ_WRITE_GAP", "0", "10");
         let fifo = enabled("acq.sched", "OOS_ACQ_SCHED", "fifo", "other");
         let play_window = match conf_value(None, conf, "acq.play_window").as_deref() {
-            Some("on") => true,
-            Some("off") | None => false,
+            Some("on") | None => true,
+            Some("off") => false,
             Some(value) => {
-                report("acq.play_window", value, "off");
-                false
+                report("acq.play_window", value, "on");
+                true
             }
         };
         Self {
@@ -176,7 +176,7 @@ mod tests {
         fifo: false,
         work_budget: None,
         capture: Capture { mode: CaptureMode::Full, inferred: false },
-        play_window: false,
+        play_window: true,
     };
 
     #[test]
@@ -213,12 +213,12 @@ mod tests {
     }
 
     #[test]
-    fn play_window_is_off_unless_explicitly_enabled() {
+    fn play_window_is_on_unless_explicitly_disabled() {
         for (conf, expected, errors) in [
-            ("", false, 0),
+            ("", true, 0),
             ("acq.play_window = off", false, 0),
             ("acq.play_window = on", true, 0),
-            ("acq.play_window = yes", false, 1),
+            ("acq.play_window = no", true, 1),
         ] {
             let mut reports = Vec::new();
             let switches = SourceOverhead::parse(&|_| None, conf, |key, value, fallback| {

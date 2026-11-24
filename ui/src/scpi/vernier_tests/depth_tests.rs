@@ -49,7 +49,7 @@ impl Fixture {
         assert_eq!(self.query(":ACQ:MDEP?").parse::<f64>().unwrap(), depth as f64);
         assert_eq!(self.query(":ACQuire:SRATe?").parse::<f64>().unwrap(), rate);
         // This same pair supplies the top bar and System information's Record label.
-        let (shown_rate, shown_depth) = self.ui.src.rate_depth(&self.ui.m);
+        let (shown_rate, shown_depth) = self.ui.src.rate_depth(&self.ui.m, self.ui.switches());
         assert!((shown_rate - rate).abs() <= rate * 1e-12);
         assert_eq!(shown_depth, depth);
         assert_eq!(self.query(":SYST:ERR?"), "0,\"No error\"");
@@ -105,6 +105,46 @@ fn depth_readback_without_a_usable_frame_keeps_the_model_estimate() {
         f.record(true, 0, (0.0, 0));
         f.assert_readback(rate, depth);
     }
+}
+
+#[test]
+fn auto_memory_readback_reports_the_board_plan_before_the_first_frame() {
+    let mut f = Fixture::new();
+    f.query(":TIM:SCAL 0.0005;:ACQ:MDEP AUTO");
+    assert_eq!(f.query(":ACQuire:MDEPth:AUTO?"), "EXT");
+    f.assert_readback(12_500_000.0, 100_000);
+    assert_eq!(f.query(":ACQuire:MDEPth:AUTO SCReen;:ACQ:MDEP:AUTO?"), "SCR");
+    f.assert_readback(12_500_000.0, 70_312);
+    assert!(f.ui.m.demo_rate_depth().1 > 100_000);
+    f.query(":ACQ:MDEP:AUTO bogus");
+    assert!(f.query(":SYST:ERR?").starts_with("-224,"));
+    assert_eq!(f.query(":ACQ:MDEP:AUTO?"), "SCR");
+}
+
+#[test]
+fn auto_memory_scpi_changes_generation_and_keeps_the_stopped_capture() {
+    let mut f = Fixture::new();
+    f.query(":TIM:SCAL 0.0005;:RUN");
+    f.ui.step(0.04);
+    let shared = f.shared.clone();
+    let identity = || oos_hal::sync::lock(&shared).acquisition.identity();
+    let running = identity();
+    f.query(":ACQ:MDEP:AUTO SCR");
+    f.ui.step(0.04);
+    assert_eq!(identity().gen(), running.gen() + 1);
+    f.record(false, 1000, (12_500_000.0, 70_312));
+    f.query(":STOP");
+    f.ui.step(0.04);
+    let captured = oos_hal::sync::lock(&f.shared).frame.clone();
+    f.query(":ACQ:MDEP:AUTO EXT");
+    f.ui.step(0.04);
+    assert_eq!(f.ui.m.run, RunState::Stop);
+    assert!(std::sync::Arc::ptr_eq(&oos_hal::sync::lock(&f.shared).frame, &captured));
+    f.assert_readback(12_500_000.0, 70_312);
+    f.query(":RUN");
+    f.ui.step(0.04);
+    assert_eq!(f.ui.m.run, RunState::Run);
+    assert_ne!(identity().epoch(), running.epoch());
 }
 
 #[test]

@@ -1064,11 +1064,11 @@ impl Scpi {
         if n.len() == 1 && kw(n0, "ROLL") {
             // Auto roll: the screen enters roll at 50 ms/div while this is on.
             if query {
-                return t(if ui.m.auto_roll { "1" } else { "0" });
+                return t(if ui.m.auto_acquisition.roll() { "1" } else { "0" });
             }
             return match parse_bool(arg) {
                 Some(on) => {
-                    ui.m.auto_roll = on;
+                    ui.m.auto_acquisition.set_roll(on);
                     change::edited(ui);
                     None
                 }

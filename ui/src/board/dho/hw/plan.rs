@@ -8,8 +8,8 @@ use super::{
     trigger::{bus_line, hw_trigger, serial_lines_acquired},
 };
 use crate::{board::Slow, model::*};
-use oos_hal::dho::seq::{Chan, Couple, Playback, Segments, Settings, Trig};
-use oos_hal::dho::{afe, auxout, hz, tpu, uarttrig};
+use oos_hal::dho::seq::{Chan, Couple, Playback, Segments, Settings, Trig, TriggerOptions};
+use oos_hal::dho::{afe, auxout, hz, roll, seq, tpu, uarttrig};
 
 #[cfg(test)]
 mod capture_tests;
@@ -61,13 +61,8 @@ pub fn settings(m: &Model, program_afe: bool, sw: &crate::sysconf::Switches) -> 
     let tdiv = m.hw_time_per_div() as f64;
     let slow = slow_mode(m);
     let limit = oos_hal::model::platform().limits.mem(mask.count_ones() as usize, m.la_on());
-    let depth = read_plan::depth(mdepths()[m.mdepth].1 as i128, limit as i128, mask, tdiv, m.delay as f64, slow);
-    let la = m.la_on().then(|| oos_hal::dho::la::Set {
-        thr: [m.la.thr(0) as f64, m.la.thr(1) as f64],
-        analog_shown: m.n_on() > 0,
-        cal: oos_hal::dho::la::Cal::default(), // The acquisition thread supplies the calibrated zero codes.
-        roll: slow != Slow::Off,
-    });
+    let requested = mdepths()[m.mdepth].1 as i128;
+    let depth = read_plan::depth(requested, limit as i128, mask, tdiv, m.delay as f64, slow);
     let mut s = Settings {
         // roll and scan have their own way with the position
         delay: if slow == Slow::Off { m.delay as f64 } else { 0.0 },
@@ -76,6 +71,7 @@ pub fn settings(m: &Model, program_afe: bool, sw: &crate::sysconf::Switches) -> 
         mask,
         tdiv,
         depth,
+        sample_rate: None,
         ch: channels(m),
         afe: program_afe,
         // LA line n: the stock source number 9 + n (trigger.md 2.2)
@@ -88,12 +84,11 @@ pub fn settings(m: &Model, program_afe: bool, sw: &crate::sysconf::Switches) -> 
             _ => m.trig_level,
         } as f64,
         auto: m.trig_mode == TrigMode::Auto,
-        auto_fast: m.auto_fast && m.trig_mode == TrigMode::Auto,
+        trigger_options: TriggerOptions::new(m.auto_fast && m.trig_mode == TrigMode::Auto, m.trig_nrej),
         single: single_takes_first(m),
         playback: Playback::Raw,
         blocks: 7,
         header: sw.board.header_probe.on(),
-        noise_reject: m.trig_nrej,
         trig_couple: match m.trig_coupling() {
             TrigCoup::Dc => tpu::Coupling::Dc,
             TrigCoup::Ac => tpu::Coupling::Ac,
@@ -104,7 +99,7 @@ pub fn settings(m: &Model, program_afe: bool, sw: &crate::sysconf::Switches) -> 
         compress: 1,
         trigger: hw_trigger(m, sw.board.serial_hw),
         window: None,
-        la,
+        la: logic_analyser(m, slow),
         segments: (m.seg_hw && m.segments > 0 && hw_segments_ok(m))
             .then_some(Segments { n: m.segments as u32, interval: m.seg_ivl as f64 }),
         aux: aux_out(m.aux_out),
@@ -114,7 +109,34 @@ pub fn settings(m: &Model, program_afe: bool, sw: &crate::sysconf::Switches) -> 
         hwzone: None,
     };
     finish_settings(m, sw, slow, &mut s);
+    if requested == 0 && slow == Slow::Off && m.auto_acquisition.depth() == AutoDepth::Screen {
+        read_plan::use_screen_depth(&mut s);
+    }
     s
+}
+
+fn logic_analyser(m: &Model, slow: Slow) -> Option<oos_hal::dho::la::Set> {
+    use oos_hal::dho::la;
+    m.la_on().then(|| la::Set {
+        thr: [m.la.thr(0) as f64, m.la.thr(1) as f64],
+        analog_shown: m.n_on() > 0,
+        cal: la::Cal::default(), // The acquisition thread supplies the calibrated zero codes.
+        roll: slow != Slow::Off,
+    })
+}
+
+/// Planned Auto geometry for hardware readback before a captured frame provides the actual depth.
+pub(in crate::board::dho) fn auto_rate_depth(m: &Model, sw: &crate::sysconf::Switches) -> Option<(f64, u64)> {
+    if mdepths().get(m.mdepth)?.1 != 0 {
+        return None;
+    }
+    let s = settings(m, false, sw);
+    let p = seq::record_geometry(&s).ok()?;
+    if slow_mode(m) == Slow::Roll {
+        let stream = roll::params(s.mask, seq::tdiv_fs(s.tdiv), s.depth, &p);
+        return Some((1e15 / stream.spacing_fs as f64, u64::from(stream.len)));
+    }
+    Some((p.rate as f64, u64::from(p.memsel)))
 }
 
 fn analog_mask(m: &Model) -> u32 {
@@ -232,8 +254,9 @@ pub fn seg_max(m: &Model) -> Option<usize> {
     if !hw_segments_ok(m) {
         return None;
     }
-    let s = settings(m, false, &crate::sysconf::Switches::default());
-    let p = hz::prep(s.mask, oos_hal::dho::seq::tdiv_fs(s.tdiv), s.depth, 0);
+    let mut s = settings(m, false, &crate::sysconf::Switches::default());
+    s.mode = oos_hal::dho::acq::Mode::Normal;
+    let p = seq::record_geometry(&s).ok()?;
     Some(hz::max_record_frames(p.seg) as usize)
 }
 

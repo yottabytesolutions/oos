@@ -43,6 +43,7 @@ fn acquire_rows_keep_kinds_labels_and_complete_option_domains() {
             (AcqAvg, Value, "Averages", AVERAGES.iter().map(ToString::to_string).collect()),
             (AcqAvgHw, Choice, "HW average", strings(&["Off", "On"])),
             (AcqDepth, Choice, "Memory", mdepths().iter().map(|d| d.0.into()).collect()),
+            (AcqAutoDepth, Choice, "Auto memory", strings(&["Extended", "Screen"])),
             (
                 AcqSeg,
                 Choice,
@@ -120,6 +121,22 @@ fn acquire_depth_values_and_committed_indices_follow_current_settings() {
         assert_eq!(u.value(Item::AcqDepth), *label);
         assert_eq!(active_choice::index(&u, Item::AcqDepth), Some(index));
     }
+}
+
+#[test]
+fn auto_memory_choice_is_visible_for_hardware_auto_depth() {
+    let mut u = Ui::for_tests(Source::Hw { shared: Default::default(), seen: 0 });
+    let item = Item::AcqAutoDepth;
+    assert!(u.items(MenuId::Acquire).contains(&item));
+    assert_eq!(active_choice::index(&u, item), Some(0));
+    u.select_option(item, "Screen");
+    assert_eq!(u.m.auto_acquisition.depth(), AutoDepth::Screen);
+    assert_eq!(u.value(item), "Screen");
+    assert_eq!(active_choice::index(&u, item), Some(1));
+    u.select_option(Item::AcqDepth, mdepths()[1].0);
+    assert!(!u.items(MenuId::Acquire).contains(&item));
+    u.select_option(Item::AcqDepth, "Auto");
+    assert_eq!(active_choice::index(&u, item), Some(1));
 }
 
 #[test]
@@ -225,7 +242,11 @@ fn check_acquire_visibility(u: &Ui, hardware: bool, average: bool, segments: boo
             expected.push(AcqAvgHw);
         }
     }
-    expected.extend([AcqDepth, AcqSeg]);
+    expected.push(AcqDepth);
+    if hardware && u.m.mdepth == 0 {
+        expected.push(AcqAutoDepth);
+    }
+    expected.push(AcqSeg);
     if segments {
         expected.push(AcqSegHw);
     }

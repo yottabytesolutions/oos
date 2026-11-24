@@ -30,7 +30,8 @@ pub use readout::{
     window, Playback, ReadoutError, COMPRESS_K_MAX, STAMP_BYTES, STAMP_WORDS,
 };
 pub use settings::{
-    raw_settings, tdiv_fs, time_fs, Chan, Couple, HwMask, HwZone, Segments, Settings, Trig, HOLDOFF_MIN,
+    raw_settings, record_geometry, tdiv_fs, time_fs, Chan, Couple, HwMask, HwZone, Segments, Settings, Trig,
+    TriggerOptions, HOLDOFF_MIN,
 };
 pub use state::{plan, State};
 pub use wait::{wait_steps, NEW_SETTINGS};

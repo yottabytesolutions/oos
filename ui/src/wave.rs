@@ -421,25 +421,24 @@ impl Source {
         }
     }
 
-    /// Sample rate and points per channel of the latest hardware frame (the model's numbers are the stock system's
-    /// choice for Auto depth; the hardware source reads a shorter live record).
+    /// Sample rate and points per channel of the latest hardware frame.
     pub fn hw_rate_depth(&self) -> Option<(f64, usize)> {
         if let Source::Hw { shared, .. } = self {
             let g = crate::perfguard::deep::ui_lock(shared);
-            let n = g.frame.ch.iter().map(|c| c.len()).max().unwrap_or(0);
             if g.frame.seq > 0 && g.frame.acq.1 > 0 {
                 return Some(g.frame.acq);
             }
-            if g.frame.seq > 0 && g.frame.dt > 0.0 && n > 0 {
-                return Some((1.0 / g.frame.dt, n));
+            if g.frame.seq > 0 && g.frame.dt > 0.0 {
+                let points = g.frame.ch.iter().map(Vec::len).max().unwrap_or(0);
+                return (points > 0).then(|| (g.frame.dt.recip(), points));
             }
         }
         None
     }
 
-    /// Sample rate and depth as the top bar shows them: of the hardware when it runs, else the model's choice.
-    pub fn rate_depth(&self, m: &Model) -> (f64, u64) {
-        self.hw_rate_depth().map(|(r, n)| (r, n as u64)).unwrap_or_else(|| m.srate_depth())
+    /// Sample rate and depth from the captured frame or the acquisition plan.
+    pub fn rate_depth(&self, m: &Model, sw: &crate::sysconf::Switches) -> (f64, u64) {
+        self.hw_rate_depth().map(|(r, n)| (r, n as u64)).unwrap_or_else(|| self.planned_rate_depth(m, sw))
     }
 
     /// Hardware source: frames decoded and frames dropped unseen so far (`board::Shared`).
@@ -479,7 +478,7 @@ impl Source {
     ) -> Option<Record> {
         let tdiv = m.hw_time_per_div() as f64;
         let (window, n) = if full_demo && matches!(self, Source::Demo { .. }) {
-            let (rate, points) = m.srate_depth();
+            let (rate, points) = m.demo_rate_depth();
             (points as f64 / rate, points as usize)
         } else {
             (tdiv * HDIV as f64, 3600usize)

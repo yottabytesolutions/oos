@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 // Stable diagnostic index, patch variant, Model field/type, storage policy and classes.
+// A field in brackets names the Model sub-struct holding the following field.
 // Group boundaries preserve the public Patch variants; row order preserves field emission.
 macro_rules! field_table {
     ($generate:ident) => {
         $generate! {
+            nested { auto_acquisition: AutoAcquisition { auto_roll, auto_depth } }
             Channels0 channels0 {
                 0 Ch(ch: [Channel; NCH]) clone [NONE];
                 1 Active(active: usize) copy [NONE];
@@ -21,7 +23,7 @@ macro_rules! field_table {
                 117 Zoom(zoom: bool) copy [NONE];
                 119 Zscale(zscale: usize) copy [NONE];
                 120 Zdelay(zdelay: f32) copy [NONE];
-                118 AutoRoll(auto_roll: bool) copy [ACQ|STATS];
+                118 AutoRoll([auto_acquisition] auto_roll: bool) copy [ACQ|STATS];
             }
             Trigger0 trigger0 {
                 4 TrigSrc(trig_src: usize) copy [ACQ|STATS];
@@ -373,6 +375,9 @@ macro_rules! field_table {
             Display2P0 display2_p0 {
                 342 BarCompact(bar_compact: bool) copy [NONE];
                 343 HdmiView(hdmi_view: usize) copy [NONE];
+            }
+            Acquire1 acquire1 {
+                344 AutoDepth([auto_acquisition] auto_depth: AutoDepth) copy [ACQ|STATS];
             }
         }
     };

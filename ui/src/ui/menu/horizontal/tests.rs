@@ -54,7 +54,8 @@ fn every_horizontal_row_keeps_its_kind_label_and_options() {
 fn horizontal_values_and_visibility_follow_current_settings() {
     let mut u = Ui::for_tests(Source::Demo { t: 0.0 });
     for on in [false, true] {
-        (u.m.fine_t, u.m.zoom, u.m.auto_roll) = (on, on, on);
+        (u.m.fine_t, u.m.zoom) = (on, on);
+        u.m.auto_acquisition.set_roll(on);
         for item in [Item::HFine, Item::Zoom, Item::AutoRoll] {
             assert_eq!(u.value(item), if on { "On" } else { "Off" });
             assert_eq!(active_choice::index(&u, item), Some(usize::from(on)));

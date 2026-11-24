@@ -41,7 +41,7 @@ const ROWS: &[Descriptor] = {
             |u| u.m.zoom,
         ),
         Descriptor::new(ZDelay, Value, "Zoom position", |u| si(u.m.zdelay as f64, "s"), |_| Vec::new(), |u| u.m.zoom),
-        Descriptor::new(AutoRoll, Choice, "Auto Roll", |u| onoff(u.m.auto_roll), toggles, |_| true),
+        Descriptor::new(AutoRoll, Choice, "Auto Roll", |u| onoff(u.m.auto_acquisition.roll()), toggles, |_| true),
     ]
 };
 
@@ -79,7 +79,7 @@ fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
             let on = !ui.m.zoom;
             ui.set_zoom(on);
         }
-        Item::AutoRoll => ui.m.auto_roll = !ui.m.auto_roll,
+        Item::AutoRoll => ui.m.auto_acquisition.set_roll(!ui.m.auto_acquisition.roll()),
         Item::ZScale => {
             ui.m.zscale = step(ui.m.zscale, tscales().len(), d);
         }

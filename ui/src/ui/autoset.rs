@@ -772,7 +772,7 @@ mod tests {
         assert!(ui.m.trig_nrej && ui.m.trig_hyst_div() == 0.7);
         let back = crate::store::parse_setup(&crate::store::setup_text(&ui.m)).unwrap();
         assert!(back.trig_nrej);
-        assert!(crate::board::dho::hw::settings(&ui.m, false, &Default::default()).noise_reject);
+        assert!(crate::board::dho::hw::settings(&ui.m, false, &Default::default()).trigger_options.noise_reject());
         ui.m.trig_nrej = false;
         let mut scpi = crate::scpi::Scpi::open(0, false);
         let cv = Canvas::new(PANEL_W, PANEL_H);
@@ -786,9 +786,9 @@ mod tests {
     #[test]
     fn levels_stages_use_the_fast_auto_trigger_only() {
         let mut ui = Ui::for_tests(Source::Demo { t: 0.0 });
-        assert!(!crate::board::dho::hw::settings(&ui.m, false, &Default::default()).auto_fast);
+        assert!(!crate::board::dho::hw::settings(&ui.m, false, &Default::default()).trigger_options.auto_fast());
         ui.auto_start();
-        assert!(crate::board::dho::hw::settings(&ui.m, false, &Default::default()).auto_fast);
+        assert!(crate::board::dho::hw::settings(&ui.m, false, &Default::default()).trigger_options.auto_fast());
         let mut seen_search = false;
         for _ in 0..4000 {
             ui.step(0.02);

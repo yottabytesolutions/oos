@@ -17,7 +17,7 @@ pub(super) fn steps(state: &mut State, s: &Settings) -> Vec<Write> {
     // LA lines have no level: any entry will do
     let tc = if src <= 4 { (src - 1) as usize } else { 0 };
     // the hysteresis comes from the scale of the source at the BNC, and multiplies the scale of each channel
-    let noise = tpu::noise_hysteresis(nv(s.ch[tc].scale / s.ch[tc].probe), s.noise_reject);
+    let noise = tpu::noise_hysteresis(nv(s.ch[tc].scale / s.ch[tc].probe), s.trigger_options.noise_reject());
     let vt: [tpu::Vert; 4] = [0, 1, 2, 3].map(|c| tpu::Vert {
         scale: nv(s.ch[c].scale),
         offset: nv(s.ch[c].offset),

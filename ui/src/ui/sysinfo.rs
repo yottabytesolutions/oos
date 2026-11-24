@@ -317,7 +317,7 @@ impl Ui {
         }
         d.push(Row::Head("Acquisition now".into()));
         d.push(kv("Channels on", format!("{} of {}", self.m.n_on(), n_ch())));
-        let (sr, depth) = self.src.rate_depth(&self.m);
+        let (sr, depth) = self.src.rate_depth(&self.m, self.switches());
         d.push(kv("Sample rate", si_short(sr, "Sa/s")));
         d.push(kv("Record", si_short(depth as f64, "pts")));
         d.push(kv("Waveforms/s", format!("{:.0}", self.wfm_rate)));

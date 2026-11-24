@@ -11,7 +11,7 @@ fn fixture() -> (Ui, Frame) {
     let mut ui = Ui::new(Source::Demo { t: 0.0 }, host::Host::headless());
     let mut batches = super::batch::BatchScript::new(&mut ui, BatchKind::Roll);
     ui.m.tscale = tscales().iter().position(|&t| t == 0.2).unwrap();
-    ui.m.auto_roll = true;
+    ui.m.auto_acquisition.set_roll(true);
     ui.m.view = match std::env::var("OOS_ROLL_PROFILE_VIEW").as_deref() {
         Ok("spectrum") => AView::Spectrum,
         Ok("eye") => AView::Eye,
@@ -76,7 +76,7 @@ fn budget_fixture(roll: bool) -> (Ui, Frame) {
     let mut ui = Ui::new(Source::Hw { shared: Default::default(), seen: 0 }, host::Host::headless());
     let tdiv = if roll { 0.2 } else { 0.002 };
     ui.m.tscale = tscales().iter().position(|&t| t == tdiv).unwrap();
-    ui.m.auto_roll = roll;
+    ui.m.auto_acquisition.set_roll(roll);
     ui.m.mdepth = mdepths().iter().position(|d| d.1 == 10_000_000).unwrap();
     ui.m.meas.clear();
     ui.m.meas2.clear();

@@ -28,7 +28,7 @@ mod tests {
             let mut ui = Ui::new(Source::Hw { shared: shared.clone(), seen: 0 }, host::Host::fixture());
             ui.m.run = RunState::Run;
             ui.m.trig_mode = TrigMode::Single;
-            ui.m.auto_roll = true;
+            ui.m.auto_acquisition.set_roll(true);
             ui.m.tscale = tscales().iter().position(|&t| t == 0.5).unwrap();
             for ch in &mut ui.m.ch {
                 ch.on = true;

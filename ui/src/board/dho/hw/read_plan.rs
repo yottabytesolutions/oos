@@ -20,7 +20,7 @@ mod window;
 mod tests;
 
 pub(super) use capture::configure_capture;
-pub(super) use depth::depth;
+pub(super) use depth::{depth, use_screen_depth};
 #[cfg(any(target_os = "linux", test))]
 pub use window::stop_plan;
 

@@ -52,7 +52,7 @@ fn shell_and_host_use_the_shared_cases_in_order() {
     })
     .unwrap();
     let cases = cases();
-    assert_eq!(cases.len(), 73);
+    assert_eq!(cases.len(), 77);
     assert_eq!(cases.iter().collect::<std::collections::BTreeSet<_>>().len(), cases.len());
     for (definition, expected) in
         [(definition, expected.as_str()), ("--frames 16\n", "### --frames 16\n<plan><--frames><16>\n")]

@@ -67,7 +67,8 @@ pub struct Model {
     pub seg_hw: bool,
     /// hardware segments: wait after each segment before the next arm, seconds (0 = back to back)
     pub seg_ivl: f32,
-    pub mdepth: usize,  // index into `config.depths()` (0 = auto)
+    pub mdepth: usize, // index into `config.depths()` (0 = auto)
+    pub auto_acquisition: AutoAcquisition,
     pub persist: usize, // index into PERSIST
     pub intensity: u32, // 10..100 %
     pub grid: Grid,
@@ -192,8 +193,6 @@ pub struct Model {
     /// option settings of a protocol module (`protocols::Opt`), indices into its choices
     pub dec_opt: [u8; crate::protocols::OPTS],
     pub zoom: bool,
-    /// slow time bases on the hardware: roll from 50 ms/div (on), scan from 200 ms/div (off), like stock "Auto Roll"
-    pub auto_roll: bool,
     pub zscale: usize,     // index into tscales(), <= tscale
     pub zdelay: f32,       // centre of the zoom window relative to the trigger
     pub color_grade: bool, // colour-graded persistence: trace pixels coloured by hit density (temperature map)

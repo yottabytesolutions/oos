@@ -58,6 +58,7 @@
 //! Options (defaults = the warm hand-over of 2026-11-02: CH1, 200 us/div, Auto depth, 1 V/div):
 //!   --mask 1           channel mask (bit0 = CH1)          --app-mask 1   channel mask the stock system left behind
 //!   --tdiv 200e-6      time/div in s                       --depth 0      memory depth (0 = Auto)
+//!   --sample-rate Hz  use the specified divider rate with an explicit, eight-point-aligned depth
 //!   --scale 1          V/div of all enabled channels       --offset 0     offset in V
 //!   --level 1.5        trigger level in V                  --src 1        trigger source channel
 //!   --slope rise|fall|either                               --normal       NORMAL sweep instead of AUTO

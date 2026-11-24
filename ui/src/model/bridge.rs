@@ -38,6 +38,7 @@ pub trait ModelExt {
     #[cfg(test)]
     fn max_mem(&self) -> u64;
     fn srate_depth(&self) -> (f64, u64);
+    fn demo_rate_depth(&self) -> (f64, u64);
     fn dec_opts(&self) -> [usize; crate::protocols::OPTS];
     fn set_dec_proto_only(&mut self, p: Proto);
     fn trig_feature(&self) -> f64;
@@ -88,7 +89,10 @@ impl ModelExt for Model {
         self.max_mem_in(&config())
     }
     fn srate_depth(&self) -> (f64, u64) {
-        self.srate_depth_in(&config())
+        board().auto_rate_depth(self, &crate::sysconf::Switches::default()).unwrap_or_else(|| self.demo_rate_depth())
+    }
+    fn demo_rate_depth(&self) -> (f64, u64) {
+        self.demo_rate_depth_in(&config())
     }
     fn dec_opts(&self) -> [usize; crate::protocols::OPTS] {
         self.dec_opts_in(&protocols::context(self))

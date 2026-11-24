@@ -52,6 +52,21 @@ fn retired_draw_path_is_accepted_and_omitted_when_saved() {
 }
 
 #[test]
+fn auto_memory_is_saved_independently_of_fixed_depth() {
+    assert_eq!(parse_setup("mdepth = 0\n").unwrap().auto_acquisition.depth(), AutoDepth::Extended);
+    for policy in AutoDepth::ALL {
+        let mut model = Model { mdepth: 1, ..Model::default() };
+        model.auto_acquisition.set_depth(policy);
+        let saved = setup_text(&model);
+        let entry = format!("auto_depth = {policy:?}");
+        assert!(saved.lines().any(|line| line == entry));
+        let restored = parse_setup(&saved).unwrap();
+        assert_eq!((restored.mdepth, restored.auto_acquisition.depth()), (1, policy));
+    }
+    assert!(parse_setup("auto_depth = unknown\n").is_err());
+}
+
+#[test]
 fn decoder_slot_accepts_legacy_logic_analyser_inputs() {
     let model = parse_setup("d2.dec_la = 1 0 2 - -\n").unwrap();
     let decoder = model.dec_view(1);

@@ -115,6 +115,10 @@ impl Board for Dho {
         hw::settings(m, false, sw)
     }
 
+    fn auto_rate_depth(&self, m: &Model, sw: &crate::sysconf::Switches) -> Option<(f64, u64)> {
+        hw::auto_rate_depth(m, sw)
+    }
+
     fn slow_mode(&self, m: &Model) -> Slow {
         hw::slow_mode(m)
     }

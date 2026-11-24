@@ -5,6 +5,7 @@
 
 use super::{capture, Playback, Step};
 use crate::dho::{acq, afe, auxout, hz, la, mask, tpu, zone};
+use std::num::NonZeroU64;
 
 /// Input coupling of a channel.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -114,6 +115,30 @@ pub enum Trig {
 /// The holdoff of a trigger set-up without one.
 pub const HOLDOFF_MIN: f64 = 8e-9;
 
+/// Optional trigger timing and hysteresis adjustments.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TriggerOptions {
+    auto_fast: bool,
+    noise_reject: bool,
+}
+
+impl TriggerOptions {
+    /// Use the shortest auto-trigger timeout and increase comparator hysteresis when requested.
+    pub fn new(auto_fast: bool, noise_reject: bool) -> Self {
+        Self { auto_fast, noise_reject }
+    }
+
+    /// Use the minimum auto-trigger timeout during autoset.
+    pub fn auto_fast(self) -> bool {
+        self.auto_fast
+    }
+
+    /// Use 0.7 instead of 0.3 divisions of comparator hysteresis.
+    pub fn noise_reject(self) -> bool {
+        self.noise_reject
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Settings {
     /// trigger holdoff, seconds (`HOLDOFF_MIN` = none)
@@ -126,6 +151,8 @@ pub struct Settings {
     pub tdiv: f64,
     /// memory depth (points per channel), 0 = Auto
     pub depth: i128,
+    /// Sample rate in real Sa/s before LA adjustment. None derives it from time/div and depth.
+    pub sample_rate: Option<NonZeroU64>,
     pub ch: [Chan; 4],
     /// program the AFEs of the enabled channels (else they keep the stock set-up)
     pub afe: bool,
@@ -133,9 +160,7 @@ pub struct Settings {
     pub slope: tpu::Slope,
     pub level: f64,
     pub auto: bool,
-    /// AUTO sweep with the shortest auto-trigger time (10 ms) whatever the time base: the auto set-up reads the
-    /// levels of a signal its trigger level may not cross yet, and must not wait 20 time/div per record for it
-    pub auto_fast: bool,
+    pub trigger_options: TriggerOptions,
     /// SINGLE: the UI takes the first frame after the press and stops; a batch of more frames records triggers nobody
     /// sees (oos-ui plans one frame per batch, `hw::batch_plan`)
     pub single: bool,
@@ -149,8 +174,6 @@ pub struct Settings {
     pub blocks: u8,
     /// read with the 16-byte frame header like the stock live loop (0x1010 bit31 = 0) instead of the export mode
     pub header: bool,
-    /// noise reject: 0.7 instead of 0.3 div comparator hysteresis (trigger.md 2.3, 2.7)
-    pub noise_reject: bool,
     /// coupling of the edge trigger (trigger.md 2.5); the other types are always DC
     pub trig_couple: tpu::Coupling,
     /// frames per batch: one arm records this many triggered frames, one type-4 play and one read return them all
@@ -232,20 +255,20 @@ impl Default for Settings {
             mask: 1,
             tdiv: 200e-6,
             depth: 0,
+            sample_rate: None,
             ch: [c; 4],
             afe: false,
             trig_src: 1,
             slope: tpu::Slope::Rising,
             level: 1.5,
             auto: true,
-            auto_fast: false,
+            trigger_options: TriggerOptions::default(),
             single: false,
             trigger: Trig::Edge,
             window: Some((4000, -2000)),
             playback: Playback::Raw,
             blocks: 7,
             header: false,
-            noise_reject: false,
             trig_couple: tpu::Coupling::Dc,
             frames: 1,
             compress: 1,
@@ -292,12 +315,15 @@ pub fn raw_settings(s: &Settings) -> Settings {
 }
 
 /// The record geometry after delay, reduction, LA and hardware average have been applied.
-pub(super) fn record_params(s: &Settings, st: &mut Vec<Step>) -> Result<hz::Params, String> {
-    let mut p = capture::horizontal(s)?;
+pub fn record_geometry(s: &Settings) -> Result<hz::Params, String> {
+    let mut p = match s.sample_rate {
+        Some(rate) => fixed_rate_geometry(s, rate)?,
+        None => capture::horizontal(s)?,
+    };
     if let Some(l) = &s.la {
         p = la::prep(p, l.analog_shown);
     }
-    if let acq::Mode::Average { count } = s.mode {
+    if matches!(s.mode, acq::Mode::Average { .. }) {
         // the hardware does not refuse these combinations (assumed), OOS does
         if s.la.is_some() || s.segments.is_some() {
             return Err("hardware average with the LA or hardware segments".into());
@@ -306,6 +332,22 @@ pub(super) fn record_params(s: &Settings, st: &mut Vec<Step>) -> Result<hz::Para
         if p.max_frames == 0 {
             return Err(format!("hardware average: {} points do not fit the average layout", p.memsel));
         }
+    }
+    Ok(p)
+}
+
+fn fixed_rate_geometry(s: &Settings, rate: NonZeroU64) -> Result<hz::Params, String> {
+    if matches!(s.mode, acq::Mode::Reduced(_)) {
+        return Err("an explicit sample rate cannot be combined with capture reduction".into());
+    }
+    let offset = if s.la.is_some() { 0 } else { time_fs(s.delay) };
+    hz::at_rate(s.mask, rate.get(), s.depth, offset)
+        .ok_or_else(|| format!("unsupported record geometry: {} points at {rate} Sa/s", s.depth))
+}
+
+pub(super) fn record_params(s: &Settings, st: &mut Vec<Step>) -> Result<hz::Params, String> {
+    let p = record_geometry(s)?;
+    if let acq::Mode::Average { count } = s.mode {
         st.push(Step::Note(format!("hardware average of {} (0x10b0 = {})", count, acq::avg_count_reg(count))));
     }
     st.push(Step::Note(format!(

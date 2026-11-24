@@ -128,8 +128,8 @@ pub const FREE: usize = 4;
 pub fn free_plan(m: &Model, sw: &bode::Sweep) -> Result<FreePlan, String> {
     let ts = tscales();
     let pick = |want: f64| ts.iter().position(|&t| t as f64 >= want * 0.999);
-    let mut c = m.clone();
-    (c.auto_roll, c.acq, c.trig_mode) = (false, AcqMode::Normal, TrigMode::Single);
+    let mut c = Model { acq: AcqMode::Normal, trig_mode: TrigMode::Single, ..m.clone() };
+    c.auto_acquisition.set_roll(false);
     if let Some(i) = pick(sw.time * 1.02 / 9.0) {
         (c.tscale, c.delay) = (i, 4.0 * ts[i]);
         if board().slow_mode(&c) == crate::board::Slow::Off {
@@ -431,14 +431,14 @@ impl Ui {
     }
 
     pub(super) fn bode_finish(&mut self, msg: &str) {
-        self.bode.running = false;
-        self.bode.tx = None;
+        (self.bode.running, self.bode.tx) = (false, None);
         (self.bode.free, self.bode.capturing) = (false, false);
         if let Some(s) = self.bode.free_saved.take() {
             let m = &mut self.m;
             (m.tscale, m.delay, m.trig_type, m.trig_src, m.trig_la, m.trig_level, m.slope) =
                 (s.tscale, s.delay, s.trig_type, s.trig_src, s.trig_la, s.trig_level, s.slope);
-            (m.trig_mode, m.mdepth, m.auto_roll, m.acq, m.run) = (s.trig_mode, s.mdepth, s.auto_roll, s.acq, s.run);
+            (m.trig_mode, m.mdepth, m.acq, m.run) = (s.trig_mode, s.mdepth, s.acq, s.run);
+            m.auto_acquisition.set_roll(s.auto_roll);
             change::mapping_observed(self, change::oracle::Row::Stage);
             change::edited(self);
         }
@@ -564,13 +564,13 @@ impl Ui {
             slope: m.slope,
             trig_mode: m.trig_mode,
             mdepth: m.mdepth,
-            auto_roll: m.auto_roll,
+            auto_roll: m.auto_acquisition.roll(),
             acq: m.acq,
             run: m.run,
         });
         m.ch = want.ch;
-        (m.tscale, m.delay, m.mdepth, m.auto_roll, m.acq) =
-            (plan.tscale, plan.delay, plan.mdepth, false, AcqMode::Normal);
+        (m.tscale, m.delay, m.mdepth, m.acq) = (plan.tscale, plan.delay, plan.mdepth, AcqMode::Normal);
+        m.auto_acquisition.set_roll(false);
         let slope = if m.bode_sync_slope == Slope::Fall { Slope::Fall } else { Slope::Rise };
         (m.trig_type, m.trig_src, m.trig_la, m.trig_level, m.slope) =
             (TrigType::Edge, sync, None, m.bode_sync_level, slope);
@@ -1036,10 +1036,7 @@ mod tests {
         ui.render(&mut cv);
         ui.activate(Item::BodeRun);
         assert!(
-            !ui.bode.running
-                && ui.m.tscale == ts0
-                && ui.m.trig_mode == TrigMode::Auto
-                && ui.m.auto_roll == Model::default().auto_roll
+            !ui.bode.running && ui.m.tscale == ts0 && ui.m.trig_mode == TrigMode::Auto && ui.m.auto_acquisition.roll()
         );
         // the demo signals through the whole loop: whatever CH4 does, the sweep waits or ends with a message
         ui.m.bode_sw_time = 0.05;

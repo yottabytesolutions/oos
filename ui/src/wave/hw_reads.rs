@@ -5,9 +5,15 @@
 //! mask and zone units, slots, board status, and the segment recorder. Other sources answer None or nothing.
 
 use super::{Record, SegView, Source};
-use crate::model::{Model, HDIV};
+use crate::board::{board, Board};
+use crate::model::{Model, ModelExt, HDIV};
 
 impl Source {
+    pub(crate) fn planned_rate_depth(&self, m: &Model, sw: &crate::sysconf::Switches) -> (f64, u64) {
+        let planned = if self.is_hw() { board().auto_rate_depth(m, sw) } else { None };
+        planned.unwrap_or_else(|| m.demo_rate_depth())
+    }
+
     /// Hardware source: hands the counter set-up the UI wants to the acquisition thread (None: off) and returns the
     /// latest reading; None off the hardware (the counter is then worked out from the records).
     pub fn hw_counter(&self, want: Option<crate::board::CounterWant>) -> Option<Option<crate::board::CounterRead>> {

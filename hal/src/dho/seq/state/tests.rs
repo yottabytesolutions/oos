@@ -107,7 +107,11 @@ fn peak_mode_delay_and_holdoff_reach_the_hardware() {
 #[test]
 fn fast_auto_trigger_takes_the_shortest_times() {
     let t = |auto_fast: bool| {
-        let s = Settings { tdiv: 20e-3, auto_fast, ..Settings::default() };
+        let s = Settings {
+            tdiv: 20e-3,
+            trigger_options: crate::dho::seq::TriggerOptions::new(auto_fast, false),
+            ..Settings::default()
+        };
         let w = writes(&State::handover(1, None).configure(&s, None, None).unwrap().0);
         let last = |r: u32| w.iter().rev().find(|x| x.0 == r).unwrap().1;
         (last(0x4060), last(0x4064))

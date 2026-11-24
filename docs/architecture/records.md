@@ -73,14 +73,17 @@ it carries its `BatchMeta` (`id`, `gen`, `epoch`, `mode`).
 | decode | any; the cache is keyed by record `id` and decoder settings, so it needs no invalidation |
 | history | per route: off the fast path every record of the `RecordBatch`; on it the newest `Frame` per batch. History density therefore follows the route, and each entry carries its `BatchMeta` so replay knows which it is |
 
-In Average, the accepted 3600-point volts grid is the source for channel
+In software Average, the accepted 3600-point volts grid is the source for channel
 measurements, tracked cursors, software DVM, and NORM/MAX waveform transfers.
-This applies to both software and FPGA averaging. The latest native acquisition
-remains available to RAW when retained. STOP keeps the accepted grid and its
+The latest native acquisition remains available to RAW when retained. STOP keeps the accepted grid and its
 original time axis. Pan and zoom render that grid at the requested view.
 Vector traces interpolate between grid points, and zoom has the resolution of
 the grid at acquisition time. Screen measurements gate the grid to the current
 view, and Full Record uses the complete acquired grid.
+
+FPGA Average retains the native averaged samples. Measurements use their selected gate on this
+record, and tracked cursors and stopped views also use its native resolution. NORM and running MAX
+transfer the screen record. Stopped MAX and RAW transfer the native averaged record when available.
 
 Timing measurements use the existing threshold-crossing interpolation with the
 grid interval. A faster edge can therefore read as an interpolated grid-scale
@@ -187,8 +190,8 @@ This section describes the target port. The current `Shared` hand-off and final-
   the last record it has. The step never sleeps on it.
 - Batches that a STOP may need to replay are not armed ahead (`prearm_keeps_replay`). Open lever: let the armed batch
   finish and replay its newest frame instead (deep-meas.md, open levers).
-- Average STOP holds the accepted grid in the UI. It needs no final native read
-  or hardware replay for its stopped view.
+- Average STOP holds the accepted software grid or native FPGA average in the UI. The stopped view
+  uses the retained result without a final native read or hardware replay.
 - Single: one batch per `epoch`. In Single, deep raw windows come with every batch.
 
 ## Rules

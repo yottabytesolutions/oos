@@ -291,6 +291,10 @@ pub(crate) fn resample_channels(
 ) -> bool {
     #[cfg(test)]
     RESAMPLES.with(|count| count.set(count.get() + 1));
+    if m.acq == AcqMode::Average && !f.hw_avg && !f.envelope {
+        point_channels(f, (n, window, first), ti, channels);
+        return false;
+    }
     let dt = window / n.max(1) as f64;
     let pairs = dt / f.dt >= 2.0 && m.acq != AcqMode::HiRes;
     for (values, out) in f.ch.iter().zip(channels) {

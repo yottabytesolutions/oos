@@ -61,7 +61,7 @@ impl ReaderTaps {
     }
 
     pub(super) fn next_record(&mut self, ui: &Ui, tap: bool) {
-        if self.previous_tap.replace(tap) == Some(true) && !ui.readers_use_average() {
+        if self.previous_tap.replace(tap) == Some(true) {
             if let Some(record) = &ui.last[0] {
                 if self.fold_displaced(ui, record) {
                     drawpipe::Counters::add(&drawpipe::counters().measured, 1);
@@ -72,7 +72,7 @@ impl ReaderTaps {
     }
 
     fn fold_displaced(&mut self, ui: &Ui, record: &Record) -> bool {
-        let Some(raw) = &record.raw else { return false };
+        let Some(raw) = ui.reader_raw(record) else { return false };
         let identity = change::acquisition::identity(ui);
         let tap = self.previous_folds.as_ref().filter(|folds| folds.current(identity.stats_gen()));
         if crate::deepmeas::deep_raw_frame(&raw.frame) {
@@ -99,10 +99,6 @@ impl ReaderTaps {
     }
 
     pub(super) fn fold(self, ui: &mut Ui, raw_record: Option<&Record>) {
-        if ui.readers_use_average() {
-            ui.batch_picture.tap_statistics = None;
-            return;
-        }
         if let Some(folds) = self.folds {
             ui.mstat_fold(&folds);
         }
@@ -130,11 +126,11 @@ impl TapStatistics {
 
     // The generic reader uses the selected physical gate, including full-record measurements.
     fn fold_latest(ui: &mut Ui, folds: Option<&crate::framestats::TapFolds>) -> Option<Self> {
-        let rec = ui.last[0].as_ref()?;
-        let raw = rec.raw.as_ref()?;
-        if crate::compress::live(&raw.frame) || !ui.m.meas.iter().any(|(_, source)| source.ch().is_some()) {
+        let frame = &ui.reader_raw(ui.displayed_reader_record()?)?.frame;
+        if crate::compress::live(frame) || !ui.m.meas.iter().any(|(_, source)| source.ch().is_some()) {
             return None;
         }
+        let frame = Arc::downgrade(frame);
         let mut counted = Vec::with_capacity(ui.m.meas.len());
         let mut measured = false;
         let folds = folds
@@ -157,7 +153,7 @@ impl TapStatistics {
         if measured {
             drawpipe::Counters::add(&drawpipe::counters().measured, 1);
         }
-        Some(Self::new(ui, &raw.frame, counted))
+        Some(Self { frame, identity: change::acquisition::identity(ui), counted })
     }
 
     fn current(&self, ui: &Ui) -> bool {
@@ -247,13 +243,11 @@ pub(super) fn acquire(
     } else {
         ui.acquire_bus_candidate(elapsed, filtered).map(|record| (record, PictureEligibility::Drawable, false, None))
     };
-    if let Some((record, _, _, None)) = &record {
-        average::count_record_fallback(ui, record);
-    }
     (record, input)
 }
 
-pub(super) fn condition_record(ui: &Ui, rec: &mut Record) {
+pub(super) fn prepare_record(ui: &mut Ui, rec: &mut Record, first: crate::picture::FirstDraw) {
+    average::count_record_fallback(ui, rec);
     if !ui.src.is_hw() && !rec.raw.as_ref().is_some_and(|raw| raw.conditioned) {
         for (c, channel) in rec.ch.iter_mut().enumerate() {
             if ui.m.ch[c].on && !channel.is_empty() {
@@ -261,6 +255,7 @@ pub(super) fn condition_record(ui: &Ui, rec: &mut Record) {
             }
         }
     }
+    average::blend_record_average(ui, rec, first);
 }
 
 pub(super) fn remember_record(ui: &mut Ui, record: &Record, hw_seg: bool) {
@@ -349,12 +344,10 @@ pub(super) fn draw_record_weighted(ui: &mut Ui, rec: &Record, weight: u16) {
 pub(super) fn update_readers(ui: &mut Ui, raw_rec: Option<Record>) {
     // deep record on min/max pairs while raw reads of its screen window come (deepmeas.rs): the
     // measurement stays that of the last raw record
-    let shown = ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);
+    let shown = displayed_raw(ui);
     let hold = held_deep(ui) || crate::compress::hold(&ui.m, shown);
     let p0 = std::time::Instant::now();
-    if ui.readers_use_average() {
-        ui.meas_new |= ui.measure_last();
-    } else if hold {
+    if hold {
         // the measurement shown stays that of the last raw deep record, or of this step's
         if let Some(r) = raw_rec {
             if ui.meas_bg.is_some() {
@@ -364,15 +357,14 @@ pub(super) fn update_readers(ui: &mut Ui, raw_rec: Option<Record>) {
                 ui.meas_new |= ui.measure_rec(&r, usize::MAX);
             }
         }
-    } else if ui.meas_bg.is_some() {
+    } else if ui.meas_bg.is_some() && shown.is_some() {
+        let raw_deep = shown.is_some_and(crate::deepmeas::deep_raw_frame);
         // A previous record's result remains useful within the same acquisition/statistics identity.
         ui.meas_want = true;
         // raw deep reads: this raw record is the one to measure, even when pair records (held) follow
         // before the worker is free; measuring the newest then measured a pair record (Mean NaN live)
         // (only a raw deep record: a clone of every record cost the screen rate, 26 instead of 27 frames a
         // second with GPU and HDMI Layout, unit 2026-11-15)
-        let raw_deep =
-            ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).is_some_and(|r| crate::deepmeas::deep_raw_frame(&r.frame));
         if raw_deep && crate::deepmeas::want(&ui.m).is_some() {
             ui.meas_pending = ui.last[0].clone();
         }
@@ -390,6 +382,10 @@ pub(super) fn update_readers(ui: &mut Ui, raw_rec: Option<Record>) {
 }
 
 fn held_deep(ui: &Ui) -> bool {
-    let shown = ui.last[0].as_ref().and_then(|r| r.raw.as_ref()).map(|r| &*r.frame);
+    let shown = displayed_raw(ui);
     shown.is_some_and(crate::deepmeas::deep_pairs) && crate::deepmeas::hold(&ui.m, shown, ui.src.hw_deep_ok())
+}
+
+fn displayed_raw(ui: &Ui) -> Option<&crate::board::Frame> {
+    ui.reader_raw(ui.displayed_reader_record()?).map(|raw| raw.frame.as_ref())
 }

@@ -1,2 +1,2 @@
 main0 0 40 1024 480
-settings dots=On channels=1 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=278 menu_open=false acq=(1250000000.0, 70312) envelope=false roll=false scan=false partial=false hw_avg=false
+settings dots=On channels=1 tdiv=0.000005 persist=0 grade=false zoom=false acquisition=Average run=Run frames=22 records=22 menu_open=false acq=(1250000000.0, 70312) envelope=false roll=false scan=false partial=false hw_avg=false

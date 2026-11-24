@@ -62,6 +62,11 @@ hold) are computed by the scope itself, with their own statistics, per-measureme
 `measures/standard.rs` and `measures/pairs.rs` only place them on the page (`Kind::Standard`, `Kind::Pair`); their
 numbers are not stored. A new measurement should come as a module.
 
+In software Average, edge measurements use the accepted 3600-point grid. The grid interval is
+the full acquisition view divided by 3600, about 27.8 ns at 10 µs/div. Rise and fall time can
+return interpolated values when an edge spans only a few grid points, with accuracy limited by
+that spacing. An unresolved crossing returns the usual unavailable value.
+
 ## Rules
 
 - **The id never changes** once released, and is never given to another measurement.

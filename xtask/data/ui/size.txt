@@ -10,8 +10,8 @@
 516 file ui/src/measures/standard.rs
 3262 file ui/src/scpi.rs
 1464 file ui/src/store.rs
-8217 file ui/src/ui.rs
-1495 file ui/src/ui/analysis.rs
+8197 file ui/src/ui.rs
+1485 file ui/src/ui/analysis.rs
 504 file ui/src/ui/autoset.rs
 826 file ui/src/ui/bode.rs
 1840 file ui/src/ui/eyepage.rs

@@ -151,9 +151,12 @@ on record or stream paths. Software Average folds raw DMA records at every sampl
 the batch route for its edge-triggered views. It averages Normal acquisitions on the screen grid.
 For each record, refine the fractional trigger and linearly interpolate the two adjacent corrected
 samples at each grid position. Sparse settings that require reconstruction retain their Lanczos
-interpolation. Fold the points in capture order with the exponential moving average, using weight
-`1 / N` for each new input. At two or more samples per grid point, this replaces the blend of
-per-record envelope extremes. HiRes continues to use a boxcar.
+interpolation. Both software Average routes sample the same 3600-point grid from native samples,
+including at two or more samples per point. The records route uses that grid for Single, segments,
+deskew, XY, Z input, mask, zones, LA and non-edge triggers. RUN and SINGLE therefore give the same
+meaning to a grid value. Fold the points in capture order with the exponential moving average,
+using weight `1 / N` for each new input. Captures that arrive as min/max pairs retain their pair
+representation. HiRes continues to use a boxcar.
 
 Workers fold contiguous record ranges and send one 3600-point average with the newest raw waveform
 tap. The linear pass reads at most two source words per point and its scratch scales with the grid,
@@ -162,8 +165,8 @@ have hardware and tap capacity bounds and use no difference planes.
 Both software routes seed a fresh average when the time grid, trigger
 alignment, record depth or enabled channels change. Vertical scale and offset changes preserve the
 voltage seed. The records path still handles hardware Average and software Average on min/max pairs.
-The software Average fallback counters report the primary cause for each record consumed by the UI.
-Zoom in the worker route views the accepted average grid. See
+The software Average fallback counters report the primary cause for each record the UI accepts after filtering.
+Zoom in the worker route views the accepted average grid. Enabling, panning or rescaling zoom keeps the grid and its seed. See
 [`Ui::fast_ok`](../../ui/src/ui.rs) and [hardware trigger selection](../../ui/src/drawpipe/route.rs).
 Taps feed record consumers. Display overlays are composed separately from the deposit planes.
 
@@ -198,8 +201,9 @@ picture can therefore come from pairs, a window or full raw samples. STOP-time r
 See [placement input](../../ui/src/drawpipe/stage.rs), [tap provenance](../../ui/src/drawpipe/stage/readout.rs),
 [record drawing](../../ui/src/ui/step_draw.rs) and [STOP](../fork/stop-exact.md).
 
-In Average, the displayed grid also supplies measurements, tracked cursors, zoom and
-NORM/MAX waveform transfers. The newest native tap supplies RAW when available.
+In software Average, the displayed grid also supplies measurements, tracked cursors, zoom and
+NORM/MAX waveform transfers. The newest native tap supplies RAW when available. FPGA Average keeps
+the native averaged samples for measurements, tracked cursors, stopped zoom and stopped MAX.
 See [records and measurements](records.md#records).
 
 ### STOP and RUN
@@ -208,8 +212,9 @@ In normal hardware batch acquisition, STOP holds the source once there is a disp
 screen has been cleared. For captures that need a final record, the UI keeps taking data until the
 final request is acknowledged and the decoded-record queue drains, or until three seconds elapse.
 A stopped view can request a reread of the stored frame. Calibration, generator updates and side
-readings continue during the hold. Average freezes the accepted grid at STOP and
-renders stopped pan and zoom from that grid.
+readings continue during the hold. Software Average freezes the accepted grid at STOP and
+renders stopped pan and zoom from that grid. FPGA Average derives stopped views from the retained
+native averaged record.
 
 RUN publishes the new acquisition epoch before releasing the hold. RUN itself leaves the phosphor
 and window contents to the usual picture rules. Pending deposits and queued records are subject to

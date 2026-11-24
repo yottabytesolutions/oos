@@ -162,11 +162,14 @@ pub(in crate::drawpipe::stage) fn verify_codes(name: &str, batch: &Arc<Batch>, v
     for count in [2, 4, 16, 1024] {
         stats[1] = stats[1].max(dense::compare_fold(batch, view, &model, range.clone(), count, scales));
     }
-    // The Q14 coefficients introduce a small additional Lanczos error. The linear fold
+    // The Q15 coefficients introduce a small additional Lanczos error. The linear fold
     // also allows several f32 roundings from joining and reseeding around a nonzero offset.
-    let tolerance = if meta.dt > 2.0 * screen_dt { [8.0, 8.0] } else { [0.125, 0.5] };
+    let tolerance = if meta.dt > 2.0 * screen_dt { [1.0, 1.0] } else { [0.125, 0.5] };
     println!("{name}: {} records, trigger error 0 samples, grid/fold ADC errors {stats:?}", range.len());
-    assert!(stats.into_iter().zip(tolerance).all(|(error, limit)| error <= limit), "{name}: limits {tolerance:?}");
+    assert!(
+        stats.into_iter().zip(tolerance).all(|(error, limit)| error <= limit),
+        "{name}: maximum grid/fold ADC errors {stats:?}, limits {tolerance:?}"
+    );
 }
 
 fn adc_error(actual: &[Vec<f32>; NCH], expected: &[Vec<f32>; NCH], scales: [f32; NCH]) -> f32 {

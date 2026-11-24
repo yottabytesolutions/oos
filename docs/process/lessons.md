@@ -83,6 +83,8 @@ pull request that fixes a mistake: what happened, then the rule.
 
 - Average history slots grew over several channel-mask cycles because only the evicted slot was resized.
   Reserve the newly seen channel in every history slot at first use.
+- Dense Average goldens forced the records route after workers became the production route. Drive these cases
+  through normal route selection and pin the route with the picture.
 
 - A zero-allocation check assumed eight warm-up passes set up the reply channel's waiter storage. With replies
   already queued, `recv` skipped that setup, and the first waiting receive allocated inside the measured pass.

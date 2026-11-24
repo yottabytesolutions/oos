@@ -159,11 +159,7 @@ pub(super) fn publish_average(
     output.publish_clock(b.header.identity(), clock);
     let started = Instant::now();
     let published = painter.send_tap(slot, b, TapProjection::Average(output), Some(v), b.header.identity());
-    #[cfg(test)]
-    let timing = clock.pool_override().map_or(timing, |wall| crate::picture::deposit::pool::Timing {
-        wall,
-        worker_time: wall * painter.pool.shards().min(records) as u32,
-    });
+    let timing = clock.pool_timing(timing, painter.pool.shards().min(records));
     if published.is_some() {
         b.counters.routes.add(route::Route::Average, records as u64);
         #[cfg(any(target_os = "linux", test))]
@@ -177,10 +173,7 @@ pub(super) fn publish_average(
     if let Some(flight) = oos_hal::sync::lock(&b.header.flight).as_mut() {
         flight.worked(records as u64, timing.wall);
         if published.is_some() {
-            let publication = started.elapsed();
-            #[cfg(test)]
-            let publication = if clock.pool_override().is_some() { Duration::ZERO } else { publication };
-            flight.published(publication);
+            flight.published(clock.publication_time(|| started.elapsed()));
         }
     }
 }

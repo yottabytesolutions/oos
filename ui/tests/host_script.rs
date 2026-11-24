@@ -118,7 +118,11 @@ fn average_and_zoom_use_workers_and_record_routes_remain_repeatable() {
     const AVERAGE: &str = "menu Acquire\nset Mode = Average\nset Averages = 16\n";
     for (kind, commands, result) in [
         ("raw", AVERAGE, "deposited 46 delivered 4 dropped 0 newest 46 route workers"),
-        ("raw-average-records", AVERAGE, "deposited 27 delivered 1 dropped 0 newest 46 route records"),
+        (
+            "raw",
+            "menu Acquire\nset Mode = Average\nset Averages = 16\nmenu Mask\nset Mask test = On\nmenu close\n",
+            "deposited 27 delivered 1 dropped 0 newest 46 route records",
+        ),
         ("raw", "knob hscale push\n", "deposited 46 delivered 4 dropped 0 newest 46 route workers"),
         ("raw", "knob hscale -9\n", "deposited 27 delivered 1 dropped 0 newest 46 route records"),
     ] {

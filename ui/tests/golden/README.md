@@ -16,7 +16,8 @@ at all channel strides and in dots mode. Sparse records retain their interpolati
 `decode_route` by counting distinct records passed to the worker decoder. The newest waveform arrives already decoded.
 For the other records, `codes` means none used the worker decoder, `decoded` means all used it, and `mixed` means
 both paths ran. `records-decoded` identifies the queued-record route; `source_route` separately
-records workers versus queued records. Zoom and average use records. Roll/scan inject synthetic partial and complete
+records workers versus queued records. The Zoom references preserve the records route. The software Average references
+exercise the production worker route at dense spacing. Roll/scan inject synthetic partial and complete
 snapshots into the consumer route; they do not simulate the real producer loops. The `hw-average` fixture
 marks a deterministic decoded record as pre-averaged; it does not implement FPGA averaging.
 
@@ -89,7 +90,7 @@ stable capacity through three complete histories. Neither sample retention nor t
 
 Each cycle injects three old-stamp frames at a temporary newer pipe view, checks exactly three drops
 without publishing a waveform tap. The normal batches must drain and account for every frame.
-The test includes real workers where eligible and the record route for average and zoom. It neither
+The test includes real workers where eligible. It neither
 claims zero partial merges nor changes the existing perf guards. No listener, port or device is opened.
 The shared server harness remains `tools/host_harness.py` for tests that actually need a host server.
 

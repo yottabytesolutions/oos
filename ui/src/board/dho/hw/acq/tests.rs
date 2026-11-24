@@ -20,6 +20,8 @@ mod first_trigger;
 mod picture;
 mod raw;
 mod record_selection;
+mod reference;
+mod reference_picture;
 mod ring_validity;
 mod run_order;
 mod side_service;

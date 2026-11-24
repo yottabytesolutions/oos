@@ -35,6 +35,16 @@ fn capture_switch_programs_and_reads_the_same_geometry() {
 }
 
 #[test]
+fn diagnostic_decimation_programs_a_reduced_record_with_dots_enabled() {
+    let model = Model { dots: DotsMode::On, ..at_1us() };
+    let sw = switches("acq.capture = decimate:2\nacq.capture.inferred = on");
+    let decimated = settings(&model, false, &sw);
+    assert!(matches!(decimated.mode, Mode::Reduced(capture) if capture.to_string() == "decimate:2"));
+    let (_, p) = seq::State::handover(decimated.mask, None).configure(&decimated, None, None).unwrap();
+    assert_eq!((p.rate, p.memsel), (625_000_000, 7032));
+}
+
+#[test]
 fn capture_switch_leaves_explicit_depth_and_special_acquisition_alone() {
     let sw = switches("acq.capture = decimate:2\nacq.capture.inferred = on");
     for m in [

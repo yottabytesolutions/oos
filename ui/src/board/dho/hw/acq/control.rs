@@ -6,7 +6,7 @@ use super::super::{
     comparator::{hw_merge, mask_map, unit_key},
     decode_with, lifecycle,
     plan::raw_for_ui,
-    single, stop_plan,
+    raw, single, stop_plan,
 };
 use super::pacing::PacingPolicy;
 use super::{status, AcqLoop, CaptureStatus, Io, Port, Request, SingleCompletion, SingleHandoff};
@@ -76,20 +76,13 @@ impl<T: PacingPolicy> AcqLoop<T> {
             return None;
         };
         let held = request.run.hold;
-        let single =
-            self.batch.single_done.as_mut().filter(|done| {
-                single::progress(want, Some(done.pair), request.pair(), false, 0).1 == single::Poll::Wait
-            });
-        let single_completed = single.is_some();
-        if let Some(done) = single {
-            if held {
-                done.handoff = SingleHandoff::TakenOver;
-            } else if done.expire(&io.clock, &self.out, request) {
-                io.clock.wait(HELD_POLL);
+        let single_completed = self.single_wait(&io.clock, request, want)?;
+        if held && !self.replay.paused {
+            if self.configured.current.as_ref().is_some_and(|(settings, _)| raw::is_reduced(settings))
+                && super::reference::waiting_for_picture(&io.clock)
+            {
                 return None;
             }
-        }
-        if held && !self.replay.paused {
             // The completed SINGLE has already delivered its record.
             self.enter_hold(io, request, *last_read && !single_completed);
         }
@@ -102,7 +95,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
             let current = self.configured.current.as_ref().map(|c| (&c.0, self.configured.mode));
             if publication::reconfigure(current, &want, request.mode) {
                 *last_read = false;
-                if !self.configure(io, want, request.mode, request.avg_clear) {
+                if !self.configure(io, want, request) {
                     return None;
                 }
             }
@@ -124,6 +117,23 @@ impl<T: PacingPolicy> AcqLoop<T> {
             return None;
         }
         self.configured.current.clone()
+    }
+
+    fn single_wait(&mut self, clock: &impl Clock, request: &Request, want: &Settings) -> Option<bool> {
+        let Some(done) =
+            self.batch.single_done.as_mut().filter(|done| {
+                single::progress(want, Some(done.pair), request.pair(), false, 0).1 == single::Poll::Wait
+            })
+        else {
+            return Some(false);
+        };
+        if request.run.hold {
+            done.handoff = SingleHandoff::TakenOver;
+        } else if done.expire(clock, &self.out, request) {
+            clock.wait(HELD_POLL);
+            return None;
+        }
+        Some(true)
     }
 
     fn poll_units(&mut self, io: &mut Io<impl Port>, request: &Request, single_completed: bool) {
@@ -150,7 +160,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
         }
     }
 
-    fn apply_overrides(&self, io: &Io<impl Port>, request: &Request, want: &mut Settings) -> bool {
+    fn apply_overrides(&mut self, io: &Io<impl Port>, request: &Request, want: &mut Settings) -> bool {
         want.afe = self.options.program_afe;
         raw_for_ui(want, request.needs_raw);
         let map = mask_map();
@@ -163,6 +173,12 @@ impl<T: PacingPolicy> AcqLoop<T> {
         if let Some(la) = want.la.as_mut() {
             la.cal = io.la_cal;
         }
+        super::reference::plan_capture(
+            &mut self.batch.raw.reference,
+            request,
+            want,
+            self.switches.source.capture().auto(),
+        );
         // The flush batch leaves the hardware view in the UI.
         blocked && !self.batch.guard.flush
     }
@@ -188,6 +204,15 @@ impl<T: PacingPolicy> AcqLoop<T> {
 
     fn enter_hold(&mut self, io: &mut Io<impl Port>, request: &Request, last_read: bool) {
         io.disarm(&mut self.batch, &mut self.replay, &self.out);
+        if self.configured.current.as_ref().is_some_and(|(settings, _)| raw::is_reduced(settings)) {
+            let mut g = lock(&self.out);
+            // Readers already own the full-rate waveform. Ask stopped views to project that host record.
+            let sequence = g.stop_view.map_or(g.frame.seq, |view| g.frame.seq.max(view.capture));
+            g.stop_replies.lost_through(sequence);
+            g.final_ack = request.run.final_req;
+            self.replay.paused = true;
+            return;
+        }
         let last = self.replay.last_batch.as_ref().filter(|_| last_read).and_then(|read| {
             let settings = read.plan(request.run.deep)?;
             let params = &read.params;
@@ -282,12 +307,18 @@ impl<T: PacingPolicy> AcqLoop<T> {
         true
     }
 
-    fn configure<P: Port>(&mut self, io: &mut Io<P>, want: Settings, mode: Slow, avg_clear: u64) -> bool {
+    fn configure<P: Port>(&mut self, io: &mut Io<P>, want: Settings, request: &Request) -> bool {
         io.disarm(&mut self.batch, &mut self.replay, &self.out);
+        if raw::is_reduced(&want) {
+            // A later full-rate fallback must qualify its first slot again. The old
+            // full-rate slot-zero evidence pre-dates the intervening peak geometry.
+            self.batch.first = super::FirstRecord::default();
+        }
         lock(&self.out).record_flow.serial = false;
         io.abort_segments(&mut self.segrun, &self.out);
         self.configured.current = None;
         self.replay.last_batch = None;
+        self.batch.raw.reference.reset();
         self.stream.stop(io);
         let configured = lifecycle::configure(&mut io.state, &want, io.cal.as_ref(), io.cal_adc.as_ref())
             .map_err(|e| format!("settings: {}", e))
@@ -306,8 +337,13 @@ impl<T: PacingPolicy> AcqLoop<T> {
         crate::pacing::configured(|| io.clock.now());
         self.batch.la_fails = 0;
         self.units.configured(io.state.mode.min(10), want.mask, self.switches.board.core_offset_tight, io.clock.now());
-        self.batch.configured(want.mode, self.switches.board.avg_kind(), avg_clear);
-        self.configured.mode = mode;
+        let capture = self.switches.source.capture();
+        if capture.auto() || capture.reduction().is_some() {
+            let description = super::super::plan::capture_description(want.mode, params.memsel as usize);
+            lock(&self.out).status.applied_capture(request.identity, description);
+        }
+        self.batch.configured(want.mode, self.switches.board.avg_kind(), request.avg_clear);
+        self.configured.mode = request.mode;
         self.configured.current = Some((want, params));
         true
     }

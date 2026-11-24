@@ -40,6 +40,10 @@ impl<T: PacingPolicy> AcqLoop<T> {
         if std::mem::take(&mut self.replay.paused) {
             lock(&self.out).clear_queue(drawpipe::Lost::Settings);
         }
+        if super::super::raw::is_reduced(settings) {
+            super::reference::reduced_batch(self, io, (settings, params), &request);
+            return;
+        }
         let mut b = batch_plan(settings, params, self.switches.board.zone_batch);
         let (deposit, uncapped) = batch::deposit_plan(&b, params, request.identity, request.route);
         let uncapped = request.run.batch_bound(uncapped);
@@ -183,7 +187,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
 }
 
 impl BatchState {
-    fn arm_for_force(
+    pub(super) fn arm_for_force(
         &mut self,
         io: &mut Io<impl Port>,
         out: &HwShared,
@@ -217,7 +221,7 @@ impl BatchState {
         };
     }
 
-    fn failed(
+    pub(super) fn failed(
         &mut self,
         io: &ReadIo<'_, impl Bus, impl Read, impl LoopClock>,
         capture: &Capture<'_>,

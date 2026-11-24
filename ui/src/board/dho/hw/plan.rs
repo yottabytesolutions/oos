@@ -19,31 +19,42 @@ use super::read_plan;
 pub(super) use read_plan::{live_compress, screen_margin, LIVE_DEPTH};
 
 impl super::super::Dho {
-    /// Capture geometry confirmed by a current frame, plus a pending source diagnostic.
+    /// Applied experimental capture geometry or the geometry of a current frame, plus any source diagnostic.
     pub(crate) fn capture_state(&self, source: &crate::wave::Source) -> String {
-        use oos_hal::dho::acq::Mode;
         let crate::wave::Source::Hw { shared, .. } = source else {
             return " acq.capture=unavailable acq.capture.stored_points=0".into();
         };
-        let (mode, points, status) = {
+        let (applied, mode, points, status) = {
             let g = crate::perfguard::deep::ui_lock(shared);
             let id = g.acquisition.identity();
             let frame = &g.frame;
             let current = frame.seq != 0 && (frame.cfg, frame.stamp) == (id.gen(), id.epoch());
             // Device-specific error details stay in the source log.
             let status = g.status.diagnostic(g.acquisition);
-            (g.want.as_ref().filter(|_| current).map(|want| want.mode), frame.acq.1, status)
+            let applied = g.status.capture(id).map(str::to_owned);
+            let mode = g.want.as_ref().filter(|_| current).map(|want| want.mode);
+            (applied, mode, frame.acq.1, status)
         };
-        let mut text = match mode {
-            Some(Mode::Reduced(capture)) => format!(" acq.capture={capture} acq.capture.stored_points={points}"),
-            Some(_) => format!(" acq.capture=full acq.capture.stored_points={points}"),
-            None => " acq.capture=pending acq.capture.stored_points=0".into(),
-        };
+        let mut text = applied.unwrap_or_else(|| {
+            mode.map_or_else(
+                || " acq.capture=pending acq.capture.stored_points=0".into(),
+                |mode| capture_description(mode, points),
+            )
+        });
         if let Some(status) = status {
             use std::fmt::Write;
             write!(text, " acq.status={:?}", status.message()).expect("writing to a String cannot fail");
         }
         text
+    }
+}
+
+pub(super) fn capture_description(mode: oos_hal::dho::acq::Mode, points: usize) -> String {
+    match mode {
+        oos_hal::dho::acq::Mode::Reduced(capture) => {
+            format!(" acq.capture={capture} acq.capture.stored_points={points}")
+        }
+        _ => format!(" acq.capture=full acq.capture.stored_points={points}"),
     }
 }
 

@@ -26,15 +26,39 @@ pub(in super::super) fn configure_capture(m: &Model, sw: &Switches, slow: Slow, 
 
 fn capture_reduction(m: &Model, sw: &Switches, slow: Slow, s: &mut Settings) {
     let Some((peak, factor, inferred)) = sw.source.capture().reduction() else { return };
-    if m.acq == AcqMode::Normal
-        && slow == Slow::Off
+    let eligible = if peak { peak_eligible(m, slow, s) } else { diagnostic_decimation(m, slow) };
+    if eligible {
+        let _ = s.reduce_capture(peak, factor, inferred);
+    }
+}
+
+fn diagnostic_decimation(m: &Model, slow: Slow) -> bool {
+    slow == Slow::Off
         && m.mdepth == 0
+        && m.acq == AcqMode::Normal
         && m.trig_type == TrigType::Edge
         && m.segments == 0
         && !m.mask_on
-        && !m.zones.iter().any(|z| z.usable())
-    {
-        let _ = s.reduce_capture(peak, factor, inferred);
+        && !m.zones.iter().any(|zone| zone.usable())
+}
+
+fn peak_eligible(m: &Model, slow: Slow, s: &Settings) -> bool {
+    slow == Slow::Off
+        && m.mdepth == 0
+        && crate::compress::allowed(m)
+        && hz::prep(s.mask, seq::tdiv_fs(s.tdiv), s.depth, 0).memsel <= crate::compress::MAX_DEPTH
+}
+
+/// Plan against the current picture width. Four words per column give two peak pairs.
+#[cfg(any(target_os = "linux", test))]
+pub(in super::super) fn auto_capture(m: &Model, slow: Slow, s: &mut Settings, columns: usize) {
+    if columns == 0 || !peak_eligible(m, slow, s) {
+        return;
+    }
+    let min_rate = crate::compress::POINTS_PER_COLUMN * columns as f64 / (HDIV as f64 * s.tdiv);
+    let compress = std::mem::replace(&mut s.compress, 1);
+    if s.reduce_capture_auto(min_rate.ceil() as u64).is_none() {
+        s.compress = compress;
     }
 }
 

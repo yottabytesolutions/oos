@@ -41,6 +41,17 @@ pub(crate) use source::{source_event, wake_source, SourceWake};
 
 const WORKERS: usize = 2;
 
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn with_plot<R>(
+    pipe: &Pipe,
+    identity: oos_core::change::Identity,
+    f: impl FnOnce(&crate::model::Model, usize) -> R,
+) -> Option<R> {
+    let state = oos_hal::sync::lock(&pipe.view);
+    let view = state.view.as_ref().filter(|_| same_pair(state.identity, Some(identity)))?;
+    Some(f(&view.m, view.w))
+}
+
 /// Map a compact worker index to the original DMA slot when slot one was excluded.
 pub(crate) fn dma_slot(index: usize, skip_second: bool) -> usize {
     index + usize::from(skip_second && index > 0)

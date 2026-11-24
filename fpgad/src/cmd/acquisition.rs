@@ -223,7 +223,8 @@ mod tests {
             &["--capture", "peak:2", "--n", "1000"],
             &["--capture", "peak:2", "--compress", "4"],
             &["--capture", "peak:2", "--average", "4"],
-            &["--capture", "peak:2", "--mask", "2", "--src", "2"],
+            &["--capture", "decimate:2", "--mask", "2", "--src", "2"],
+            &["--capture", "peak:2", "--mask", "4", "--src", "3"],
             &["--capture", "peak:8", "--mask", "15"],
             &["--capture", "peak:2", "--sample-rate", "625000000"],
         ] {

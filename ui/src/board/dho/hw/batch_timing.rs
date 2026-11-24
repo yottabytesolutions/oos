@@ -64,6 +64,10 @@ impl SourceTiming {
         (self.read + self.readout).as_secs_f32() * 1e3
     }
 
+    pub(super) fn trigger_wait(&self) -> Duration {
+        self.first_trigger + self.fill
+    }
+
     pub(super) fn pre_ms(&self, started: Instant) -> f32 {
         self.first_trigger_at.map_or(0.0, |at| at.saturating_duration_since(started).as_secs_f32() * 1e3)
     }

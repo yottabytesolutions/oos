@@ -119,6 +119,11 @@ impl DmaBuf {
         &self.raw[self.off..self.off + self.len]
     }
 
+    /// Mutable access to the completed transfer, after device ownership has ended.
+    pub fn data_mut(&mut self) -> &mut [u8] {
+        &mut self.raw[self.off..self.off + self.len]
+    }
+
     /// Keeps the first `n` bytes of the last read.
     pub fn truncate(&mut self, n: usize) {
         self.len = self.len.min(n);

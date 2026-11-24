@@ -280,6 +280,18 @@ pub mod sim {
             ((k & 0xff) << 8) as u16 | (i & 0xff) as u16
         }
 
+        pub fn capture_armed(&self) -> bool {
+            self.rec.is_some()
+        }
+
+        /// Deliver triggers independently of register polls, until the stop pulse ends the recording.
+        pub fn record_triggers(&mut self, count: u32) {
+            if let Some((first, last, recorded)) = self.rec.as_mut() {
+                *recorded = recorded.saturating_add(count).min(*last - *first + 1);
+                self.first_valid |= *recorded > 0;
+            }
+        }
+
         fn run(&mut self) {
             let c = self.reg(0x400c);
             let (first, last) = (self.reg(0x4010), self.reg(0x4018));
@@ -360,15 +372,10 @@ pub mod sim {
             match off {
                 // the done-flag poll is where time passes: `per_poll` more frames each
                 0x4080 => {
-                    let n = match self.rec.as_mut() {
-                        Some((first, last, n)) => {
-                            *n = (*n + self.per_poll).min(*last - *first + 1);
-                            *n
-                        }
-                        None => self.recorded,
-                    };
-                    self.first_valid |= n > 0;
-                    if n > 0 {
+                    self.record_triggers(self.per_poll);
+                    let count = self.rec.map_or(self.recorded, |(_, _, count)| count);
+                    self.first_valid |= count > 0;
+                    if count > 0 {
                         scu::PLAYINFO_DONE
                     } else {
                         0

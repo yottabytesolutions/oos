@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::super::{
-    dma_source::ArmedBatch,
     segmented::SegRun,
     trim::{self, TrimPending},
     units::{dvm_reading, dvm_step, DvmKey, DvmStep},
@@ -43,28 +42,29 @@ impl Units {
     pub(super) fn poll<P: Port>(
         &mut self,
         io: &mut Io<P>,
-        (armed, segments): (&mut Option<ArmedBatch>, Option<&SegRun>),
+        segments: Option<&SegRun>,
         out: &HwShared,
         (settings, mode): (&Settings, Slow),
         (request, generator_on): (&Request, bool),
+        mut disarm: impl FnMut(&mut Io<P>),
     ) {
         if segments.is_some_and(SegRun::recording) {
             return;
         }
-        self.dvm(io, armed, out, settings, request.dvm);
+        self.dvm(io, out, settings, request.dvm, &mut disarm);
         if mode != Slow::Off {
             return;
         }
         if let Some(pending) = self.trim_pending.filter(|t| !request.run.hold && t.due(io.clock.now())) {
             self.trim_pending = None;
             if !generator_on && pending.mode == io.state.mode.min(10) && io.cal_adc.is_some() {
-                io.disarm(armed);
+                disarm(io);
                 self.trim_tries[pending.mode] += 1;
                 self.trim_done[pending.mode] = P::trim(io, pending.mask);
             }
         }
         if let Some(id) = request.slots.filter(|&id| self.slots_done != Some(id)) {
-            io.disarm(armed);
+            disarm(io);
             let result =
                 oos_hal::dho::levels::run(&mut io.bar, &mut |us| io.clock.wait(Duration::from_micros(us.into())));
             lock(out).slots =
@@ -73,25 +73,25 @@ impl Units {
         }
     }
 
-    fn dvm(
+    fn dvm<P: Port>(
         &mut self,
-        io: &mut Io<impl Port>,
-        armed: &mut Option<ArmedBatch>,
+        io: &mut Io<P>,
         out: &HwShared,
         settings: &Settings,
         want: Option<crate::board::DvmWant>,
+        disarm: impl FnOnce(&mut Io<P>),
     ) {
         let elapsed = self.dvm_run.map_or(0.0, |run| io.clock.now().duration_since(run.1).as_secs_f64());
         let (step, key) = dvm_step(want, settings.mask, self.configs, self.dvm_run.map(|run| run.0), elapsed);
         let reading = match step {
             DvmStep::Idle => return,
             DvmStep::Start(lane) => {
-                io.disarm(armed);
+                disarm(io);
                 io.bar.apply(&dvm::start(lane, dvm::EXP));
                 None
             }
             DvmStep::Stop => {
-                io.disarm(armed);
+                disarm(io);
                 io.bar.apply(&dvm::stop());
                 None
             }

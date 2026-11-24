@@ -2,7 +2,6 @@
 
 use super::super::super::{publication, roll as output};
 use super::super::{
-    dma_source::ArmedBatch,
     lifecycle,
     roll::{roll_la_t0, scan_gap, scan_la_pos, scan_write},
 };
@@ -116,19 +115,19 @@ impl Stream {
     }
 
     /// Returns false if a read error requires the acquisition to be configured again.
-    pub(super) fn poll(
+    pub(super) fn poll<P: Port>(
         &mut self,
-        io: &mut Io<impl Port>,
-        armed: &mut Option<ArmedBatch>,
+        io: &mut Io<P>,
         out: &HwShared,
         (settings, params, mode): (&Settings, &hz::Params, Slow),
         (seq, identity): (&mut u64, Identity),
+        disarm: impl FnOnce(&mut Io<P>),
     ) -> bool {
         if !self.poll_control(io, out, mode) {
             std::thread::sleep(Duration::from_millis(5));
             return true;
         }
-        io.disarm(armed);
+        disarm(io);
         let scan = match mode {
             Slow::Scan { delay, single } => Some(((delay * 1e15) as i128, single)),
             _ => None,

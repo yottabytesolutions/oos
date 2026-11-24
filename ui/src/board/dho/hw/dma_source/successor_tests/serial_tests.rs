@@ -38,13 +38,15 @@ fn prepare_read<T>(
     (now, release): (Instant, impl Fn()),
     capture: impl FnOnce() -> T,
 ) -> T {
-    let (mut dma, mut armed) = (DmaSource::default(), None);
+    let (mut dma, mut armed) = (DmaSource::default(), Successor::default());
     plan.prearm(&mut dma, &mut armed, None, Some(grant), || false, |_, _| pipe.in_flight());
-    assert_eq!(armed.take().is_some(), !grant.serial());
+    assert_eq!(armed.is_some(), !grant.serial());
     assert!(plan
         .prepare(&mut dma, &mut armed, &oos_hal::dho::seq::time::Real, || true, |_| panic!("canceled before arm"))
         .is_none());
 
+    assert_eq!(armed.is_some(), !grant.serial(), "cancellation leaves the successor for disarm");
+    let mut armed = Successor::default();
     let armed_at = Cell::new(None);
     assert!(plan
         .prepare(

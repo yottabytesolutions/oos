@@ -83,6 +83,7 @@ pub(super) enum Event {
     Stop,
     Run,
     SourceWake,
+    RingClear(oos_core::change::Identity),
     Calibration(service::CalRequest),
     Generator(Option<Gen>),
     Trim(u32),
@@ -102,21 +103,58 @@ pub(super) struct Trace {
 
 type Engine = Rc<RefCell<sim::Engine>>;
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum DoneRead {
+    #[default]
+    Normal,
+    Cleared,
+    AllOnes,
+}
+
+#[derive(Default)]
+struct StopSignals {
+    elapsed: Cell<Duration>,
+    pulse_at: Cell<Option<Duration>>,
+    delay: Cell<Duration>,
+    hide_stopped: Cell<bool>,
+    done: Cell<DoneRead>,
+}
+
 pub(super) struct SimBus {
     engine: sim::SimBus,
     trace: Rc<RefCell<Trace>>,
-    hide_stopped: Rc<Cell<bool>>,
+    stop: Rc<StopSignals>,
 }
 
 impl Bus for SimBus {
     fn wr(&mut self, reg: u32, value: u32) {
         self.trace.borrow_mut().events.push(Event::Write(reg, value));
+        let armed = self.engine.0.borrow().capture_armed();
         self.engine.wr(reg, value);
+        if reg == 0x4004 && value >> 31 != 0 && armed {
+            self.stop.pulse_at.set(Some(self.stop.elapsed.get()));
+        } else if !armed && self.engine.0.borrow().capture_armed() {
+            self.stop.pulse_at.set(None);
+        }
     }
 
     fn rd(&mut self, reg: u32) -> u32 {
-        let mut value = self.engine.rd(reg);
-        if self.hide_stopped.get() && reg == 0x4034 {
+        use oos_hal::dho::scu::{status::WAIT_TRIG, PLAYINFO_DONE};
+
+        let mut value = match (reg, self.stop.pulse_at.get(), self.stop.done.get()) {
+            (0x4080, Some(_), DoneRead::AllOnes) => u32::MAX,
+            (0x4080, Some(_), DoneRead::Cleared) => 0,
+            args => match (args, self.engine.rd(reg)) {
+                // The canceled first-trigger wait captured on the unit had one completed record.
+                ((0x4034, None, DoneRead::Cleared), flags) if flags == WAIT_TRIG | 0x20 => 0x0cd2,
+                ((0x4080, None, DoneRead::Cleared), PLAYINFO_DONE) => 0x4000_0010,
+                ((0x4034, Some(_), DoneRead::Cleared), _) => 0x20c0,
+                ((0x4034, _, _), WAIT_TRIG) => 0x12,
+                (_, value) => value,
+            },
+        };
+        let late = self.stop.pulse_at.get().is_some_and(|at| self.stop.elapsed.get() - at < self.stop.delay.get());
+        if reg == 0x4034 && (self.stop.hide_stopped.get() || late) {
             value &= !oos_hal::dho::scu::status::STOPPED;
         }
         self.trace.borrow_mut().events.push(Event::Read(reg, value));
@@ -129,13 +167,15 @@ pub(super) struct SimStream {
     trace: Rc<RefCell<Trace>>,
     edge_at: Option<usize>,
     run: Run,
+    stop: Rc<StopSignals>,
 }
 
 impl Read for SimStream {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
         let count = self.stream.read(bytes)?;
         self.trace.borrow_mut().events.push(Event::Dma(count));
-        let mark_first_sample = matches!(self.run, Run::Live(_) | Run::CompressedTap);
+        let mark_first_sample =
+            matches!(self.run, Run::Live(_) | Run::CompressedTap) || self.stop.done.get() == DoneRead::Cleared;
         let mark_entire_record = matches!(self.run, Run::Pictures(_));
         if self.edge_at.is_some() || mark_first_sample || mark_entire_record {
             let engine = self.stream.0.borrow();
@@ -170,7 +210,6 @@ type Driver = Box<dyn FnMut(&Virtual, Pause)>;
 
 pub(super) struct Virtual {
     origin: Instant,
-    elapsed: Cell<Duration>,
     engine: Engine,
     out: HwShared,
     trace: Rc<RefCell<Trace>>,
@@ -179,12 +218,12 @@ pub(super) struct Virtual {
     timed_out: Cell<bool>,
     stop_fill: Cell<Option<u32>>,
     driver: RefCell<Option<Driver>>,
-    hide_stopped: Rc<Cell<bool>>,
+    signals: Rc<StopSignals>,
 }
 
 impl Clock for Virtual {
     fn now(&self) -> Instant {
-        self.origin + self.elapsed.get()
+        self.origin + self.signals.elapsed.get()
     }
 
     fn wait(&self, duration: Duration) {
@@ -240,9 +279,9 @@ impl Virtual {
 
     fn elapse(&self, duration: Duration, event: Event) {
         let mut trace = self.trace.borrow_mut();
-        assert!(self.elapsed.get() < Duration::from_secs(30), "script did not reach its completion event");
+        assert!(self.signals.elapsed.get() < Duration::from_secs(30), "script did not reach its completion event");
         trace.events.push(event);
-        self.elapsed.set(self.elapsed.get() + duration);
+        self.signals.elapsed.set(self.signals.elapsed.get() + duration);
     }
 
     pub(super) fn stop(&self) {
@@ -337,8 +376,7 @@ impl Port for Sim {
         false
     }
 
-    fn generator(_: &mut service::Service, bar: &mut SimBus, out: &HwShared, want: Option<Gen>) {
-        assert!(lock(out).hold, "generator must be dispatched while held");
+    fn generator(_: &mut service::Service, bar: &mut SimBus, _: &HwShared, want: Option<Gen>) {
         bar.trace.borrow_mut().events.push(Event::Generator(want));
     }
 
@@ -349,6 +387,10 @@ impl Port for Sim {
     fn trim(io: &mut Io<Self>, mask: u32) -> bool {
         io.clock.mark(Event::Trim(mask));
         true
+    }
+
+    fn stream_cleared(io: &Io<Self>, identity: oos_core::change::Identity) {
+        io.clock.mark(Event::RingClear(identity));
     }
 }
 
@@ -363,18 +405,17 @@ pub(super) fn fixture(
     let per_poll = if matches!(run, Run::StopDuring) { 0 } else { records };
     let (engine, bus, stream) = sim::engine(sim::Engine::new(10_000_000_000, 1_000_000_000, per_poll, 1));
     let trace = Rc::new(RefCell::new(Trace::default()));
-    let hide_stopped = Rc::new(Cell::new(false));
+    let signals = Rc::new(StopSignals::default());
     let state = seq::State::handover(settings.mask, None);
     let edge_at = on_trigger.then(|| {
         let (_, params) = seq::State::handover(settings.mask, None).configure(settings, None, None).unwrap();
         params.pre as usize
     });
     let io = Io {
-        bar: SimBus { engine: bus, trace: trace.clone(), hide_stopped: hide_stopped.clone() },
-        c2h: SimStream { stream, trace: trace.clone(), edge_at, run },
+        bar: SimBus { engine: bus, trace: trace.clone(), stop: signals.clone() },
+        c2h: SimStream { stream, trace: trace.clone(), edge_at, run, stop: signals.clone() },
         clock: Virtual {
             origin: Instant::now(),
-            elapsed: Cell::default(),
             engine,
             out,
             trace: trace.clone(),
@@ -383,7 +424,7 @@ pub(super) fn fixture(
             timed_out: Cell::default(),
             stop_fill: Cell::new(matches!(run, Run::StopDuring).then_some(1)),
             driver: RefCell::default(),
-            hide_stopped,
+            signals,
         },
         port: Sim,
         cal: None,

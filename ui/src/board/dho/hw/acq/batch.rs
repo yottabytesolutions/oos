@@ -4,14 +4,14 @@ use super::super::{
     batch, batch_plan, batch_timing,
     comparator::{is_stall, logs_acquire_error, mask_map, unit_key},
     dma_source::{self, ArmPlan},
-    lifecycle, single, stop,
+    lifecycle, single,
     window::prearm_keeps_replay,
     Settings,
 };
 use super::dispatch::{Handoff, Published};
 use super::pacing::PacingPolicy;
 use super::read::{Capture, ReadIo};
-use super::{replay, status, AcqLoop, BatchState, Io, LoopClock, Port, Request};
+use super::{replay, status, AcqLoop, BatchState, Io, LoopClock, Port, Replay, Request};
 use crate::sysconf::Switches;
 use crate::{
     board::HwShared,
@@ -37,9 +37,8 @@ impl<T: PacingPolicy> AcqLoop<T> {
         request: Request,
         last_read: bool,
     ) {
-        let out = &self.out;
         if std::mem::take(&mut self.replay.paused) {
-            lock(out).clear_queue(drawpipe::Lost::Settings);
+            lock(&self.out).clear_queue(drawpipe::Lost::Settings);
         }
         let mut b = batch_plan(settings, params, self.switches.board.zone_batch);
         let (deposit, uncapped) = batch::deposit_plan(&b, params, request.identity, request.route);
@@ -47,7 +46,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
         let grant = batch::grant(
             (deposit, uncapped),
             &self.batch.cap,
-            (out, request.identity),
+            (&self.out, request.identity),
             (&b, params),
             self.switches.source.work_budget(),
         );
@@ -57,23 +56,29 @@ impl<T: PacingPolicy> AcqLoop<T> {
             self.batch.armed.as_ref(),
             (request.pair(), request.route, deposit),
         );
-        if !self.batch.single_ready(io, settings, &request) {
+        if !self.single_ready(io, settings, &request) {
             return;
         }
-        self.batch.clear_average(io, out, request.avg_clear);
+        self.clear_average(io, request.avg_clear);
         let plan = ArmPlan::new(&b, request.identity, request.route, deposit, grant.serial());
+        let out = &self.out;
         let obsolete = || plan.obsolete(out, (request.want.as_ref(), request.mode));
-        let Some((ahead, tap, timing)) =
-            self.batch.arm(io, out, (&b, params), (&plan, deposit, grant, uncapped > 0), obsolete)
-        else {
-            self.replay.fresh = last_read;
+        let Some((ahead, tap, timing)) = Self::arm(
+            (&mut self.batch, &mut self.replay),
+            io,
+            out,
+            (&b, params),
+            (&plan, deposit, grant, uncapped > 0),
+            obsolete,
+        ) else {
+            self.replay.fresh = last_read && self.replay.last_batch.is_some();
             return;
         };
         let capture = Capture { settings: &b, params, request: &request, uncapped };
         self.capture(io, capture, (&plan, deposit), (ahead, tap, timing, last_read));
     }
 
-    fn capture(
+    pub(super) fn capture(
         &mut self,
         io: &mut Io<impl Port>,
         capture: Capture<'_>,
@@ -93,12 +98,8 @@ impl<T: PacingPolicy> AcqLoop<T> {
         ) {
             Ok(completed) => completed,
             Err(error) => {
-                let frames = if !plan.serial() && (error == seq::NEW_SETTINGS || is_stall(&error)) {
-                    1
-                } else {
-                    seq::frames(b, params)
-                };
-                self.replay.fresh = stop::retain_replay(&mut self.replay.last_batch, frames, last_read);
+                self.replay.invalidate(out, seq::frames(b, params));
+                self.replay.fresh = last_read && self.replay.last_batch.is_some();
                 self.batch.failed(&read_io, &capture, out, error);
                 return;
             }
@@ -120,39 +121,27 @@ impl<T: PacingPolicy> AcqLoop<T> {
                 self.replay.fresh = false;
             }
             Published::Rejected => {
-                if self.batch.armed.is_some() {
-                    (self.replay.last_batch, self.replay.fresh) = (None, false);
-                }
-                io.disarm(&mut self.batch.armed);
+                io.disarm(&mut self.batch.armed, &mut self.replay, out);
                 self.batch.prearm_timing = None;
             }
         }
     }
-}
-
-impl BatchState {
-    pub(super) fn configured(&mut self, mode: Mode, kind: avg::Kind, avg_clear: u64) {
-        self.avg = match mode {
-            Mode::Average { count } => Some((avg::Tracker::new(kind, count), avg_clear, 0)),
-            _ => None,
-        };
-    }
 
     fn single_ready(&mut self, io: &mut Io<impl Port>, settings: &Settings, request: &Request) -> bool {
-        if single::progress(settings, self.single_done, request.pair(), false, 0).1 == single::Poll::Wait {
-            io.disarm(&mut self.armed);
+        if single::progress(settings, self.batch.single_done, request.pair(), false, 0).1 == single::Poll::Wait {
+            io.disarm(&mut self.batch.armed, &mut self.replay, &self.out);
             io.clock.wait(Duration::from_millis(2));
             return false;
         }
         true
     }
 
-    fn clear_average(&mut self, io: &mut Io<impl Port>, out: &HwShared, clear: u64) {
-        if let Some((tracker, seen, logged)) = self.avg.as_mut().filter(|avg| avg.1 != clear) {
-            io.disarm(&mut self.armed);
+    fn clear_average(&mut self, io: &mut Io<impl Port>, clear: u64) {
+        if let Some((tracker, seen, logged)) = self.batch.avg.as_mut().filter(|avg| avg.1 != clear) {
+            io.disarm(&mut self.batch.armed, &mut self.replay, &self.out);
             let steps = io.state.avg_clear_steps();
             if let Err(e) = io.execute(&steps) {
-                status(out, format!("average clear: {}", e));
+                status(&self.out, format!("average clear: {}", e));
             }
             tracker.reset();
             (*seen, *logged) = (clear, 0);
@@ -160,7 +149,7 @@ impl BatchState {
     }
 
     fn arm<P: Port>(
-        &mut self,
+        (batch, replay): (&mut BatchState, &mut Replay),
         io: &mut Io<P>,
         out: &HwShared,
         (b, p): (&Settings, &hz::Params),
@@ -170,7 +159,7 @@ impl BatchState {
         let records_can_arm = plan.read_ahead();
         if !has_records
             || (!records_can_arm
-                && self.record_wait.poll(out, deposit, &io.clock, &obsolete, |message| status(out, message)))
+                && batch.record_wait.poll(out, deposit, &io.clock, &obsolete, |message| status(out, message)))
         {
             return None;
         }
@@ -181,37 +170,54 @@ impl BatchState {
             }
             g.record_flow.serial = plan.serial();
         }
-        let (mut ahead, tap) = plan.prepare(&mut self.dma, &mut self.armed, &io.clock, obsolete, |armed| {
-            super::disarm(armed, &mut io.state, &mut io.bar, &mut io.c2h, &io.clock);
+        let clock = &io.clock;
+        let (mut ahead, tap) = plan.prepare(&mut batch.dma, &mut batch.armed, clock, obsolete, |armed| {
+            armed.disarm(replay, out, || super::disarm(&mut io.state, &mut io.bar, &mut io.c2h, clock, out));
         })?;
-        let prearm = self.prearm_timing.take().filter(|_| ahead);
+        let prearm = batch.prearm_timing.take().filter(|_| ahead);
         let mut timing = batch_timing::SourceTiming::new(prearm, grant);
         // Force uses a single pulse after arming, except when a hardware average counts triggers.
-        if std::mem::take(&mut lock(out).force) && self.avg.is_none() {
-            let armed = ahead
-                || timing
-                    .arm(&io.clock, || {
-                        lifecycle::prearm(b.single, || {
-                            let steps = io.state.arm_only_steps(b, p);
-                            seq::time::execute_bus_with_clock(
-                                &steps,
-                                &mut io.port.batch_bus(&mut io.bar),
-                                &mut io.c2h,
-                                self.dma.destination(),
-                                &mut |_| {},
-                                &|| false,
-                                &io.clock,
-                            )
-                        })
-                    })
-                    .map_err(|e| status(out, format!("force: arm: {}", e)))
-                    .is_ok();
-            if armed {
-                io.bar.apply(&oos_hal::dho::tpu::force(&io.state.ts));
-                ahead = true;
-            }
+        let force = std::mem::take(&mut lock(out).force);
+        if force && batch.avg.is_none() && (ahead || batch.arm_for_force(io, out, (b, p), &mut timing)) {
+            io.bar.apply(&oos_hal::dho::tpu::force(&io.state.ts));
+            ahead = true;
         }
         Some((ahead, tap, timing))
+    }
+}
+
+impl BatchState {
+    fn arm_for_force(
+        &mut self,
+        io: &mut Io<impl Port>,
+        out: &HwShared,
+        (settings, params): (&Settings, &hz::Params),
+        timing: &mut batch_timing::SourceTiming,
+    ) -> bool {
+        timing
+            .arm(&io.clock, || {
+                lifecycle::prearm(settings.single, || {
+                    let steps = io.state.arm_only_steps(settings, params);
+                    seq::time::execute_bus_with_clock(
+                        &steps,
+                        &mut io.port.batch_bus(&mut io.bar),
+                        &mut io.c2h,
+                        self.dma.destination(),
+                        &mut |_| {},
+                        &|| false,
+                        &io.clock,
+                    )
+                })
+            })
+            .map_err(|e| status(out, format!("force: arm: {}", e)))
+            .is_ok()
+    }
+
+    pub(super) fn configured(&mut self, mode: Mode, kind: avg::Kind, avg_clear: u64) {
+        self.avg = match mode {
+            Mode::Average { count } => Some((avg::Tracker::new(kind, count), avg_clear, 0)),
+            _ => None,
+        };
     }
 
     fn failed(

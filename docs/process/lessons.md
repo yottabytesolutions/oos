@@ -44,6 +44,8 @@ pull request that fixes a mistake: what happened, then the rule.
 
 ## Tests and CI
 
+- The disarm simulator preserved DONE through the stop pulse, hiding a hardware assumption in ring replay. Exercise
+  alternate register behavior in host tests and keep the default conservative until the unit confirms the behavior.
 - Concurrent golden runs in one build profile removed each other's scratch directories. Run the full golden
   runner once at a time for each profile and target directory.
 - Even vblank sequences ran the UI at 48.7 Hz on the DHO900 timing. Derive the flip stride from the mode timing

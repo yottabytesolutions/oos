@@ -10,6 +10,11 @@ use oos_hal::dho::seq::Settings;
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(any(target_os = "linux", test))]
+mod armed;
+#[cfg(any(target_os = "linux", test))]
+pub(super) use armed::Successor;
+
 const POOL: usize = 3;
 #[cfg(any(target_os = "linux", test))]
 const HOUSEKEEPING: Duration = Duration::from_millis(100);
@@ -348,71 +353,6 @@ impl<'a> ArmPlan<'a> {
         }
         Ok(next)
     }
-
-    pub(super) fn prepare(
-        &self,
-        dma: &mut DmaSource<oos_hal::dho::bus::DmaBuf>,
-        armed: &mut Option<ArmedBatch>,
-        clock: &impl LoopClock,
-        obsolete: impl Fn() -> bool,
-        disarm: impl FnOnce(&mut Option<ArmedBatch>),
-    ) -> Option<(bool, Option<Arc<TapReservation>>)> {
-        if !dma.ready(self.identity, clock, &obsolete) {
-            return None;
-        }
-        let ahead = armed.as_ref().is_some_and(|a| a.matches(self.settings, self.pair(), self.route, self.deposit));
-        let tap = if ahead {
-            armed.as_ref().and_then(|a| a.tap.clone())
-        } else {
-            disarm(armed);
-            super::batch::source_reservation(self.deposit, self.identity, &obsolete).ok()?
-        };
-        if obsolete() {
-            return None;
-        }
-        *armed = None;
-        Some((ahead, tap))
-    }
-
-    /// Read LA and raw replay before calling this. An owned destination and any funded tap are required before arming.
-    /// When the current buffer will be loaned, keep a reserved spare available even if ahead arm is deferred.
-    #[cfg(any(target_os = "linux", test))]
-    pub(super) fn prearm(
-        &self,
-        dma: &mut DmaSource<oos_hal::dho::bus::DmaBuf>,
-        armed: &mut Option<ArmedBatch>,
-        loan: Option<&Pipe>,
-        successor: Option<Grant>,
-        obsolete: impl Fn() -> bool,
-        arm: impl FnOnce(&Settings, Option<&TapReservation>) -> bool,
-    ) -> Option<oos_hal::dho::bus::DmaBuf> {
-        let Grant::Overlapping(frames) = successor? else { return None };
-        if obsolete() {
-            return None;
-        }
-        let next = loan.and_then(|pipe| dma.spare(pipe));
-        if loan.is_some() && next.is_none() {
-            // No free destination: defer prearm until a returned buffer is owned.
-            return None;
-        }
-        let funded = self.deposit.filter(|pipe| pipe.staged_taps());
-        let tap = funded.and_then(|pipe| pipe.try_prearm_tap(self.identity));
-        if funded.is_none() || tap.is_some() {
-            let mut successor = self.settings.clone();
-            apply_count(&mut successor, frames);
-
-            if !obsolete() && arm(&successor, tap.as_deref()) {
-                *armed = Some(ArmedBatch {
-                    settings: successor,
-                    pair: self.pair(),
-                    route: self.route,
-                    deposit: self.deposit.is_some(),
-                    tap,
-                });
-            }
-        }
-        next
-    }
 }
 
 #[cfg(test)]
@@ -432,7 +372,7 @@ fn calibration_cancels_prepare_with_every_funded_grant_held() {
     std::thread::scope(|threads| {
         let worker = threads.spawn(|| {
             let mut dma = DmaSource::default();
-            let mut armed = None;
+            let mut armed = Successor::default();
             let result = plan.prepare(
                 &mut dma,
                 &mut armed,
@@ -484,7 +424,7 @@ fn force_keeps_waiting_for_funded_capacity_before_prepare_can_arm() {
     std::thread::scope(|threads| {
         let worker = threads.spawn(|| {
             let mut dma = DmaSource::default();
-            let mut armed = None;
+            let mut armed = Successor::default();
             let result = plan.prepare(
                 &mut dma,
                 &mut armed,
@@ -522,7 +462,7 @@ fn prearm_never_arms_without_a_distinct_destination_or_after_a_command() {
     let s = Settings::default();
     let plan = ArmPlan::new(&s, id, true, Some(&pipe), false);
     let calls = Cell::new(0);
-    let mut armed = None;
+    let mut armed = Successor::default();
     let first = plan
         .prearm(
             &mut source,
@@ -611,7 +551,7 @@ fn prearm_runs_before_the_admission_check_and_cancellation_returns_its_spare() {
     pipe.publish_view(&crate::model::Model::default(), 16, 16, crate::sparse::Interp::Exact, id);
     let plan = ArmPlan::new(&settings, id, true, Some(&pipe), false);
     let mut dma = DmaSource::default();
-    let mut armed = None;
+    let mut armed = Successor::default();
     let did_arm = Cell::new(false);
     let result = plan.prearm_and_wait(
         Some(&pipe),
@@ -636,7 +576,7 @@ fn prearm_runs_before_the_admission_check_and_cancellation_returns_its_spare() {
         },
     );
     assert!(result.is_err());
-    assert!(armed.take().is_some());
+    assert!(armed.is_some());
     assert!(dma.completed().is_some(), "the completed DMA has not been loaned");
     assert!(pipe.take_buffer().is_some());
 }

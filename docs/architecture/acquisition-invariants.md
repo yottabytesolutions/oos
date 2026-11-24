@@ -49,7 +49,8 @@ The source defers settings edits while held with an applied configuration. A hel
 configuration, such as after calibration or at source startup, applies the current request once before
 polling the acquisition side units. The mask/zone fallback status stays with the applied configuration
 while held. DVM uses its channel mask, scale and gain, and levels reads the configured ADC layout.
-Side units run before a stopped-view read or its 20 ms unchanged-view poll.
+Side units run before a stopped-view read or its 20 ms unchanged-view poll. If a side unit disarms
+and the slot rule drops the retained batch, the pass skips the replay and takes the 5 ms held poll.
 Counter service waits for an applied configuration. Generator dispatch and XADC service remain available.
 Automatic ADC core trim waits for RUN or SINGLE because it writes offsets. RUN or SINGLE applies the
 latest request before arming if the effective settings still differ.
@@ -62,7 +63,23 @@ Unapplied edits preserve a valid batch and its capture identity. An eligible sto
 window in that batch and reads it using the captured channel layout, memory depth, sample rate and
 acquisition mode. An already armed successor makes the ring reference unsafe even when STOP coincides
 with an identity change. The source keeps the last published frame for that case.
+
+Both STOP rereads use the newest retained slot. Every batch arms at frame zero and can write its entire
+programmed range, including while the source waits for read admission or polls before disarm. A slot outside
+that range stays valid. The source drops every in-range slot and clears pending replay regardless
+of the disarm status. STOP keeps the published capture when the retained slot is invalid.
+
+The stop pulse can clear DONE even after a record completes. The fill count cannot bound writes
+before STOPPED.
+
+A cancelled first-trigger wait disarms before the next hardware operation, including before hold.
+The acquisition thread spends about 10 ms on disarm once per cancel (settings, identity or route
+change, force, or stopped view). Ordinary RUN batches add no observation work. A stopped view
+published before hold polls every 20 ms until held or withdrawn. The host simulator exercises the
+slot rules, including a stop pulse that clears DONE after a record completes.
 [Held trace](../../ui/src/board/dho/hw/acq/tests/stopped_pass.rs) ·
+[Ring validity traces](../../ui/src/board/dho/hw/acq/tests/ring_validity.rs) ·
+[Slot and wait traces](../../ui/src/board/dho/hw/acq/tests/stopped_slots.rs) ·
 [Calibration and held startup traces](../../ui/src/board/dho/hw/acq/tests/calibration_hold.rs) ·
 [Side service](../../ui/src/board/dho/hw/acq/tests/side_service.rs)
 

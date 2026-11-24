@@ -49,6 +49,38 @@ See [[First start and choosing how OOS starts]] and [[Troubleshooting]].
 Open `http://<scope>:8080/update` and choose the `.oosupd` file of a release. See
 [Updates](Daily-use#updates).
 
+## Why does stock say “No firmware available”?
+
+The start menu's **Upgrade** icon opens the online updater. Use **Storage > Upgrade** for a USB GEL.
+See [the stock install route](Troubleshooting#no-firmware-available).
+
+## Why does stock ignore my USB stick or keep stopping?
+
+Use a [FAT32 stick](Troubleshooting#the-stock-system-does-not-see-the-stick). If the modified stock app keeps
+stopping, unplug the stick and [insert it after the app starts](Troubleshooting#the-stock-scope-app-keeps-stopping).
+
+## Why does OOS say “SD card is in slow mode”?
+
+The card negotiated a slower mode than expected. A warm restart after a GEL or bridge install can leave it in
+High Speed (HS). See [SD card is in slow mode](Troubleshooting#sd-card-is-in-slow-mode).
+
+## What do the data area messages mean?
+
+[The data area was repaired](Troubleshooting#the-data-area-was-repaired) means `/oos` mounted after a checked
+repair. Check your recent changes. [The data area is unavailable](Troubleshooting#the-data-area-is-unavailable)
+means `/oos` could not be prepared or mounted. Save `/tmp/oos-data.log` and contact support before changing the card.
+
+## What if the power went off during an update?
+
+Check the `last event` in `oos-update status`. A missed SDR104 trial can make the next install select High Speed.
+See [what status says after a power cut and how to retry SDR104](Troubleshooting#an-update-did-not-finish-after-a-power-cut).
+
+## How do I tell what is running and what will start next?
+
+In `oos-update status`, `running` shows the current build and `boot magic` shows the next power-on selection.
+See [Read the update status](Troubleshooting#read-the-update-status) for the recovery image, rollback, tracking
+and trial fields.
+
 ## Can I try OOS without a scope?
 
 Yes, with simulated signals. See [[Try it without a scope]].

@@ -57,22 +57,30 @@ class DataShutdown(unittest.TestCase):
         source = source.replace('setsid "$0"', '"$STUBS/setsid" "$0"')
         source = source.replace("/bin/sync", '"$STUBS/sync"')
         source = source.replace('    shift\n    case $1 in', '    printf "%s\\n" "$$" > "$WORKER_PID"\n    shift\n    case $1 in')
-        source = source.replace(
-            '    if read -r -t',
-            '    if [ "$REAL_TIMEOUT" = 1 ]; then exec 4<"$SLEEPING"; read -r sleeper <&4; fi\n    if read -r -t',
-        )
-        stubs = ("killall", "pidof", "umount", "mount", "sleep", "mktemp", "mkfifo")
+        stubs = ("killall", "pidof", "umount", "mount", "mktemp", "mkfifo")
         # The image's standalone ash can prefer applets to PATH, so point test functions at fixtures.
         shim = "".join(f'{name}() {{ "$STUBS/{name}" "$@"; }}\n' for name in stubs)
         shim += '''
+sleep() {
+    if [ -n "$SETUP_FAIL" ]; then
+        read -r fallback < "$FALLBACK"
+        printf 'deadline %s\\n' "$*" >> "$TRACE"
+    fi
+    if [ "$LATE_WORKER" = 1 ]; then
+        printf 'late umount completes\\n' >> "$TRACE"
+        grep -v 'ext4' "$MOUNTS" > "$MOUNTS.new"
+        mv "$MOUNTS.new" "$MOUNTS"
+    fi
+}
+
 kill() {
     if [ "$1" = -0 ] && [ "$2" = "-42" ]; then
         printf 'probe %s\n' "$2" >> "$TRACE"
         [ "$LATE_WORKER" = 1 ] && grep -q 'ext4' "$MOUNTS"
     else
         command kill "$@"
-        if [ "$REAL_TIMEOUT" = 1 ] && [ "$1" = -KILL ] && [ "$2" = "-$worker" ]; then
-            # The sleeper alone holds this FIFO open. EOF proves the group signal reached it.
+        if [ "$CHECK_GROUP_KILL" = 1 ] && [ "$1" = -KILL ] && [ "$2" = "-$worker" ]; then
+            # The sync child alone holds this FIFO open. EOF proves the group signal reached it.
             if read -r unexpected <&4; then exit 90; fi
         fi
     fi
@@ -97,33 +105,23 @@ kill() {
 ''')
         for name in ("mktemp", "mkfifo"):
             self.stub(name, f'[ "$SETUP_FAIL" != {name} ] || exit 1\nexec {shlex.quote(shutil.which(name))} "$@"\n')
-        self.stub("sleep", '''
-if [ -n "$SETUP_FAIL" ]; then
-    read -r fallback < "$FALLBACK"
-    printf 'deadline %s\n' "$*" >> "$TRACE"
-fi
-if [ "$LATE_WORKER" = 1 ]; then
-    printf 'late umount completes\n' >> "$TRACE"
-    grep -v 'ext4' "$MOUNTS" > "$MOUNTS.new"
-    mv "$MOUNTS.new" "$MOUNTS"
-fi
-''')
-        self.stub("sleep-worker", r'''import os
+        self.stub("blocked-sync", r'''import os
 from pathlib import Path
 Path(os.environ["SLEEPER_PID"]).write_text(f"{os.getpid()} {os.getpgrp()}\n")
 with open(os.environ["SLEEPING"], "w") as ready:
-    ready.write("sleeping\n")
+    ready.write("blocked\n")
     ready.flush()
-    os.set_inheritable(ready.fileno(), True)
-    os.execl("/bin/sleep", "sleep", "600")
+    with open(os.environ["BLOCKED"]) as blocked:
+        blocked.read()
 ''', sys.executable)
         self.stub("sync", '''printf 'sync %s\n' "$*" >> "$TRACE"
 if [ -n "$SETUP_FAIL" ]; then
+    [ "$FALLBACK_BLOCKED" = 1 ] || exit 0
     printf 'started\n' > "$FALLBACK"
     exec cat "$BLOCKED"
 fi
-if [ "$REAL_TIMEOUT" = 1 ]; then
-    exec "$STUBS/sleep-worker"
+if [ "$CHECK_GROUP_KILL" = 1 ]; then
+    exec "$STUBS/blocked-sync"
 fi
 [ -d "$CLOSING" ] || exit 2
 if [ "$TIMEOUT_AT" = sync ]; then
@@ -159,7 +157,7 @@ case "$*" in
             echo '/dev/example /oos ext4 rw,noatime 0 0' >> "$MOUNTS"
         fi ;;
     '-t tmpfs -o ro oos-closed /oos')
-        [ "$COVER_EXIT" = 0 ] || exit "$COVER_EXIT"
+        [ "$COVER_EXIT" = 0 ] || { echo "$MOUNT_ERROR" >&2; exit "$COVER_EXIT"; }
         echo 'oos-closed /oos tmpfs ro 0 0' >> "$MOUNTS" ;;
 esac
 exit "$MOUNT_EXIT"
@@ -170,7 +168,7 @@ exit "$MOUNT_EXIT"
         path.write_text(f"#!{interpreter}\n{body}")
         path.chmod(0o700)
 
-    def run_helper(self, mode="ui-drained", *args, code=0, real_timeout=False, **overrides):
+    def run_helper(self, mode="ui-drained", *args, code=0, **overrides):
         if mode == "restore" and not self.closing.exists():
             self.closing.mkdir()
         if overrides.get("SETUP_FAIL") == "marker":
@@ -187,8 +185,9 @@ exit "$MOUNT_EXIT"
             "FALLBACK": str(self.root / "fallback"),
             "SLEEPING": str(self.root / "sleeping"),
             "SLEEPER_PID": str(self.root / "sleeper.pid"),
-            "REAL_TIMEOUT": str(int(real_timeout)),
+            "CHECK_GROUP_KILL": "0",
             "SETUP_FAIL": "",
+            "FALLBACK_BLOCKED": "0",
             "UMOUNT_EXIT": "0",
             "COVER_EXIT": "0",
             "MOUNT_EXIT": "0",
@@ -206,14 +205,16 @@ exit "$MOUNT_EXIT"
 read() {
     if [ "$2" != -t ]; then command read "$@"; return; fi
     [ "$1" = -r ] && [ "$3" = "$EXPECTED_BOUND" ] || return 2
+    if [ "$CHECK_GROUP_KILL" = 1 ]; then
+        exec 4<"$SLEEPING"
+        command read -r ready <&4 && [ "$ready" = blocked ] || exit 91
+        return 1
+    fi
     command read -r "$4" || return
     [ "$result" != "IO in progress" ]
 }
 . "$0"
 '''
-        if real_timeout:
-            # Start with job control on to check the helper explicitly disables it.
-            driver = 'set -m\n. "$0"'
         try:
             result = subprocess.run([*SHELL, "-c", driver, str(self.script), mode, *args],
                                     env=env, capture_output=True, text=True, timeout=30)
@@ -315,8 +316,8 @@ read() {
         self.assertEqual(self.mounts.read_text(), BASE + WRITABLE)
         self.assertFalse(self.closing.exists())
 
-    def test_real_read_deadline_kills_the_worker_and_its_sleeping_child(self):
-        calls, _, receipt = self.run_helper(code=124, real_timeout=True)
+    def test_timeout_kills_the_worker_group_including_its_sync_child(self):
+        calls, _, receipt = self.run_helper(code=124, CHECK_GROUP_KILL="1")
         self.assertEqual(calls, [SYNC])
         sleeper, group = (self.root / "sleeper.pid").read_text().split()
         self.assertNotEqual(sleeper, group)
@@ -327,10 +328,15 @@ read() {
         for setup, mode, seconds in [("mktemp", "ui-drained", 2), ("mkfifo", "ui-drained", 2), ("marker", "stop-ui", 5)]:
             with self.subTest(setup=setup):
                 self.trace.write_text("")
-                calls, logs, receipt = self.run_helper(mode, code=73, SETUP_FAIL=setup)
+                calls, logs, receipt = self.run_helper(mode, code=73, SETUP_FAIL=setup, FALLBACK_BLOCKED="1")
                 self.assertEqual((calls, receipt), ([SYNC, f"deadline {seconds}"], ""))
                 self.assertIn(f"cannot start {mode}", logs[-1])
                 self.assertFalse(self.closing.exists())
+
+    def test_setup_failure_returns_when_sync_finishes_before_the_deadline(self):
+        calls, logs, receipt = self.run_helper(code=73, SETUP_FAIL="mkfifo")
+        self.assertEqual((calls, receipt), ([SYNC], ""))
+        self.assertEqual(logs, ["oos-shutdown-data: cannot start ui-drained"])
 
     def test_hung_unmount_returns_after_sealing_the_mount(self):
         calls, _, receipt = self.run_helper(code=124, TIMEOUT_AT="umount")
@@ -370,8 +376,9 @@ read() {
             self.assertTrue(self.closing.exists())
 
     def test_base_protects_unmounted_area_when_cover_cannot_mount(self):
-        calls, _, receipt = self.run_helper(code=1, COVER_EXIT="1")
+        calls, logs, receipt = self.run_helper(COVER_EXIT="1")
         self.assertEqual(calls, CLEANUP)
+        self.assertEqual(logs, ["oos-shutdown-data: could not mount /oos cover: Input/output error"])
         self.assertEqual(self.mounts.read_text(), BASE)
         self.trace.write_text("")
         calls, _, _ = self.run_helper("restore", "", *receipt.split()[1:])

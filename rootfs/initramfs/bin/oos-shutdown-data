@@ -80,7 +80,10 @@ close_data() {
         log "could not unmount /oos: $error; leaving /oos read-only"
         return 1
     fi
-    mount -t tmpfs -o ro oos-closed /oos
+    if ! error=$(mount -t tmpfs -o ro oos-closed /oos 2>&1); then
+        log "could not mount /oos cover: $error"
+    fi
+    return 0
 }
 
 wait_for_worker() {
@@ -137,15 +140,29 @@ case $mode in
     *) exit 2 ;;
 esac
 
+sync_without_fifo() {
+    /bin/sync -f /oos </dev/null >/dev/null 2>&1 &
+    sync_pid=$!
+    # A trapped signal interrupts wait even if sync is blocked in the kernel.
+    trap 'kill -KILL "$sync_pid" 2>/dev/null; exit 73' USR1
+    (
+        sleep_pid=
+        trap '[ -z "$sleep_pid" ] || kill -TERM "$sleep_pid" 2>/dev/null; exit 0' TERM
+        sleep "$seconds" &
+        sleep_pid=$!
+        wait "$sleep_pid"
+        kill -USR1 "$$"
+    ) </dev/null >/dev/null 2>&1 &
+    timer_pid=$!
+    wait "$sync_pid" 2>/dev/null
+    trap '' USR1
+    kill -TERM "$timer_pid" 2>/dev/null
+    wait "$timer_pid" 2>/dev/null
+}
+
 setup_failed() {
     log "cannot start $mode"
-    if [ "$mode" != restore ]; then
-        # A failed FIFO setup leaves no completion channel. Never wait on sync itself.
-        /bin/sync -f /oos </dev/null >/dev/null 2>&1 &
-        sync_pid=$!
-        sleep "$seconds"
-        kill -KILL "$sync_pid" 2>/dev/null
-    fi
+    [ "$mode" = restore ] || sync_without_fifo
     exit 73
 }
 

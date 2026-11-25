@@ -9,7 +9,7 @@ w=$(mktemp -d "$CARGO_TARGET_DIR/storage-data.XXXXXX")
 trap 'rm -rf "$w"' EXIT
 trap 'exit 1' HUP INT TERM
 image=$("$root/tools/build-env.sh" resolve initramfs)
-cp "$CARGO_TARGET_DIR/aarch64-unknown-linux-musl/debug/oos-update" "$w/oos-update"
+cp "$CARGO_TARGET_DIR/aarch64-unknown-linux-musl/release/oos-update" "$w/oos-update"
 cp "$root/rootfs/out/e2fsck" "$w/e2fsck"
 cp "$root/rootfs/out/tune2fs" "$w/tune2fs"
 cp "$root/rootfs/initramfs/bin/oos-shutdown-data" "$w/shutdown"

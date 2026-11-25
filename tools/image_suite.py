@@ -50,6 +50,7 @@ def main():
                        cwd=output.ROOT, stdout=manifest, check=True)
     for script in ('gel-sim', 'usb-sim', 'wlan-sim'):
         run(['sh', f'tools/{script}.sh'])
+    run(['sh', 'tools/test_storage_data.sh'])
     print('local image suite passed; no hardware accessed')
 
 

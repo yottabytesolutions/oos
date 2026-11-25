@@ -146,7 +146,7 @@ fn leave_only_clears_tracking_and_reports_the_existing_boot_mode() {
         let f = tracked_card("switch-leave");
         let mut before = f.st();
         before.persist = persist;
-        before.sd_failed = true;
+        before.sd.failed = true;
         before.slot_incomplete = true;
         before.save(&f.state()).unwrap();
         assert_eq!(leave(&f.state()).unwrap(), persist);

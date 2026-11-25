@@ -68,17 +68,16 @@ If power went off while the new image was starting by kexec, `oos-update status`
 while writing the staging slot can instead leave a “Staged update ... was never started” event. The next install
 can reuse that slot.
 
-An interrupted handoff leaves SDR104 available unless the running trial recorded a known slower mode.
-Check the update state before retrying.
+One missed SDR104 start leaves SDR104 available. Two consecutive missed starts select HS. A cold start with
+a known slower timing selects HS immediately when the running image requested SDR104.
 
 ## Retry SDR104 after a slow trial
 
 Restaging requires a tracked, confirmed image in `recovery`. If the image is untracked after a GEL install, try a
 cold start for a slow-mode warning. A successful signed update re-establishes tracking.
 
-1. Select **HS** in **System > Boot card mode**.
-2. If this opens an HS trial, start OOS again and wait for confirmation.
-3. Select **SDR104** and start OOS again. Check the negotiated mode under **Boot card mode**.
+1. Select **SDR104** in **System > Boot card mode** and confirm **Restage**.
+2. Start OOS again and check the negotiated mode under **Boot card mode**.
 
 ## Read the update status
 

@@ -72,7 +72,7 @@ means `/oos` could not be prepared or mounted. Save `/tmp/oos-data.log` and cont
 
 ## What if the power went off during an update?
 
-Check the `last event` in `oos-update status`. A missed SDR104 trial can make the next install select High Speed.
+Check the `last event` in `oos-update status`. Two consecutive missed SDR104 starts make the next install select High Speed.
 See [what status says after a power cut and how to retry SDR104](Troubleshooting#an-update-did-not-finish-after-a-power-cut).
 
 ## How do I tell what is running and what will start next?

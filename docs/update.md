@@ -548,19 +548,38 @@ Reconciliation and `leave` are host-tested and to verify on the unit.
 - The watcher writes `/tmp/oos-update.judged` after applying its verdict and completing any persist arm. A confirmed
   SDR104 trial records the negotiated mode from the startup check in the update event. Confirmation still follows
   the software-health rule when the card is slow.
-- The updater sets `sd.failed` only when a running build matches the pending kexec handoff or the ordinary
-  recovery trial, the marker requests SDR104, the running device tree enables SDR104, and the card reports a
-  known slower timing. A cut before this evidence is saved, a mismatched start, an unknown reading, or a card
-  that reached SDR104 leaves the latch as it was. A missed kexec start discards the pending handoff as before.
-  A recorded failure selects HS for subsequent installs while leaving the running image alone. Once the trial
-  closes, select HS in Boot card mode to clear the latch, confirm an HS trial if one was staged, then select
-  SDR104 to try it again.
 - If the watcher cannot open the card for a persist arm, it logs the failure and publishes completion with boot
   selection unverified. If it cannot open the card for a failed trial's rollback, it issues the same rollback-failed
   notice as a restore error. A failed open leaves boot selection and trial state as they were before the attempt.
 - The Power dialog offers Restart after the watcher finishes. If the marker is missing, Restart becomes available
   190 seconds after the UI starts, with a warning that the stock system may start. The active-update lock still
   gates the action. The watcher completes the power gate after any kexec persist arm and skips the trial verdict.
+
+### SDR104 fallback
+
+| Event | Effect on future installs |
+|---|---|
+| Cold start with an SDR104 device tree and a known slower timing | Latch HS immediately. |
+| Slower timing in kexec or in the start identified by the updater's automatic restart marker | Leave the latch and missed-start count as they were. A later cold start can still answer the SDR104 question after the software trial closes. |
+| A start negotiates SDR104 | Reset the missed-start count and preserve any existing latch. |
+| First SDR104 handoff missed or trial abandoned without a known timing | Record one miss. SDR104 stays available. |
+| Second consecutive SDR104 handoff missed or trial abandoned without a known timing | Latch HS. |
+| Explicit SDR104 selection in **System > Boot card mode** or `oos-update sd-mode sdr104 --execute` | Clear the latch and missed-start count. An HS selection preserves both. |
+
+`sd.failed` persists the latch. The update state also records the count under `sd.missed`, a key that older
+builds and upstream ignore. A miss is recorded as the pending handoff or trial is cleared. A power cut before
+the handoff is marked or while recovery is still being written leaves a write to retry. A missed SDR104 kexec
+handoff reports the possible card-mode cause and points to **System > Boot card mode**.
+The latch changes later installs and leaves the running image alone.
+
+If a restage is interrupted after saving `sd.mode`, its recovery path depends on how far the write got.
+
+- Before recovery is disarmed, the old image is still usable. Repeat the restage to reclaim a partially written
+  slot or use the verified HS rollback already recorded.
+- While the recovery write is pending verification, stock is selected and the verified HS image is in the slot.
+  Restore the rollback image before repeating the restage.
+- After the trial is recorded, the new image and HS rollback are both verified. If stock is still selected,
+  arm OOS for the trial with `oos-boot-oos-again`.
 
 Install requests wait for the current trial to be confirmed, with a direct retry available after an interrupted
 recovery write. The receiver keeps the confirmed or hand-installed

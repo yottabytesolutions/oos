@@ -300,8 +300,12 @@ fn state_text_round_trip() {
         slot_incomplete: false,
         recovery: RecoveryTracking { loader_id: Some([3; 20]), ..Default::default() },
         event: "installed 20261105-170000".into(),
-        sd_failed: false,
-        sd_trial: None,
+        sd: crate::update::sd::Tracking {
+            failed: true,
+            missed: 2,
+            trial: Some(crate::update::sd::Mode::Sdr104),
+            observed: true,
+        },
     };
     assert_eq!(State::parse(&s.text()), s);
     assert_eq!(State::parse(""), State::default());
@@ -379,7 +383,7 @@ fn mode_and_lock() {
         locking::lock_with(path, true)
     })
     .unwrap_err();
-    assert!(error.starts_with("locking the update state:"), "{error}");
+    assert!(error.starts_with("locking the update state lock:"), "{error}");
     assert!(f.st().persist, "a contended mode change must not write state");
     let t = std::thread::spawn(move || set_mode(&p, false).unwrap());
     drop(l);

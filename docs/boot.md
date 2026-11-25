@@ -135,8 +135,8 @@ this boot. The shell equivalent is
 `oos-update sd-mode hs|sdr104 --execute`. Omit `--execute` to preview, or omit the mode to use the setting in
 `/oos/system.conf`. A tracked, confirmed active image is required. The updater keeps an HS rollback image and stages
 the chosen tree in recovery for the next OOS boot. The ordinary watcher confirms the trial after a stable start or
-restores HS on failure. A recorded SDR104 negotiation failure suppresses SDR104 for later installs. Select HS,
-complete an HS trial if staged, then select SDR104 to try it again. See [update trials](update.md).
+restores HS on failure. A slow cold start or two consecutive missed SDR104 starts suppress SDR104 for later
+installs. Select SDR104 explicitly to try it again. See [SDR104 fallback](update.md#sdr104-fallback).
 
 **Safety boundary, not yet verified on hardware:** the stock loader cannot read the setting or update state.
 Rollback runs in rcS and therefore cannot run when a voltage-switch failure wedges the card before userspace.

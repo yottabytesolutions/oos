@@ -876,6 +876,8 @@ enum Item {
     Update,
     UpdateRollback,
     BootMode,
+    BootCardMode,
+    NegotiatedCardMode,
     Overclock,
     ViewExit,
     ViewSettings,
@@ -6767,15 +6769,7 @@ impl Ui {
     }
 
     fn open_menu(&mut self, id: MenuId) {
-        self.zoom_arm = false;
-        self.zoom_path.clear();
-        self.zoom_map = None;
-        self.menu = id;
-        self.menu_open = true;
-        self.parent = None;
-        self.menu_history.clear();
-        self.pick = None;
-        self.focus = 0;
+        menu::open_menu(self, id);
     }
 
     fn open_submenu(&mut self, id: MenuId) {
@@ -6957,27 +6951,7 @@ impl Ui {
             }
             return;
         }
-        if it == Item::EyePlace {
-            // a placement choice always places the eye, also the one it already has while it floats
-            if let Some(place) = [(EyePlace::Full, "Full"), (EyePlace::Side, "Side"), (EyePlace::Under, "Under")]
-                .into_iter()
-                .find(|(_, l)| *l == want)
-                .map(|(p, _)| p)
-            {
-                self.workspace.eye_float = None;
-                self.eye_set_place(place);
-                self.relayout();
-            }
-            return;
-        }
-        if it == Item::StripDock {
-            // every dock choice docks the card, also the one already selected after it was floated
-            if let Some(dock) = StripDock::ALL.into_iter().find(|d| d.label() == want) {
-                self.m.strip_dock = dock;
-                self.workspace.measure_docked = true;
-                self.workspace.measure_float = None;
-                self.relayout();
-            }
+        if menu::select_direct_option(self, it, want) {
             return;
         }
         let opts = self.options(it);
@@ -7407,6 +7381,9 @@ impl Ui {
         let f = self.fonts();
         self.draw_osk(cv);
         power::draw(self, cv);
+        if update::boot_card::draw_confirmation(self, cv) {
+            return;
+        }
         if self.dialog.is_some() && self.sysinfo.is_some() {
             self.draw_sysinfo(cv);
         } else if let Some(lines) = &self.dialog {
@@ -7439,7 +7416,10 @@ impl Ui {
     }
 
     pub fn handle(&mut self, ev: Ev) {
-        if power::handle_warning(self, &ev) || self.start_up_input(&ev) {
+        if power::handle_warning(self, &ev)
+            || self.start_up_input(&ev)
+            || update::boot_card::handle_confirmation(self, &ev)
+        {
             return;
         }
         change::intake(self, |ui| match ev {
@@ -7571,8 +7551,7 @@ impl Ui {
         if self.wlan.osk.is_some() {
             return self.osk_key(k);
         }
-        if self.dialog.is_some() {
-            self.dialog = None;
+        if update::boot_card::cancel_confirmation(self) || self.dialog.take().is_some() {
             return;
         }
         if self.record_key(k) {

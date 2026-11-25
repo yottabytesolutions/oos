@@ -10,7 +10,7 @@
 516 file ui/src/measures/standard.rs
 3200 file ui/src/scpi.rs
 1460 file ui/src/store.rs
-8197 file ui/src/ui.rs
+8178 file ui/src/ui.rs
 1485 file ui/src/ui/analysis.rs
 504 file ui/src/ui/autoset.rs
 826 file ui/src/ui/bode.rs
@@ -74,7 +74,7 @@
 75 fn ui/src/ui.rs Ui::draw_refs_at
 66 fn ui/src/ui.rs Ui::draw_strip_band
 68 fn ui/src/ui.rs Ui::draw_top
-159 fn ui/src/ui.rs Ui::key
+158 fn ui/src/ui.rs Ui::key
 117 fn ui/src/ui.rs Ui::knob
 76 fn ui/src/ui.rs Ui::menu_title
 100 fn ui/src/ui.rs Ui::multi_touch

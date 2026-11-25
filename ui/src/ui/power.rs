@@ -56,7 +56,7 @@ impl Warning {
             mode => mode.label(),
         };
         let (action, advise) = if sd.degraded_in_a_row() >= 3 {
-            (PowerAction::Off, "The card has been slow for three starts in a row. Power off and remove power for 10 s. If it stays slow, set sd.mode = hs.")
+            (PowerAction::Off, "The card has been slow for three starts in a row. Power off and remove power for 10 s. If it stays slow, select HS in System.")
         } else if one_shot {
             (PowerAction::Off, "Power off and remove power for 10 s before starting again.")
         } else {
@@ -76,6 +76,7 @@ fn slow_card(ui: &Ui) -> Option<Status> {
 }
 
 pub(super) fn open(ui: &mut Ui) {
+    super::update::boot_card::cancel_confirmation(ui);
     ui.close_menu();
     ui.dialog = None;
     ui.power_dlg = true;
@@ -172,13 +173,13 @@ pub(super) fn draw(ui: &Ui, cv: &mut Canvas) {
     draw_button(ui, cv, cancel, "Cancel", TEXT);
 }
 
-fn draw_box(ui: &Ui, cv: &mut Canvas, r: Rect, title: &str) {
+pub(super) fn draw_box(ui: &Ui, cv: &mut Canvas, r: Rect, title: &str) {
     cv.blend(ui.scr.rect(), rgb(0, 0, 0), 160);
     cv.framed(r, 8, 2, ACCENT, 7, DLG_BG);
     cv.text_in(&ui.fonts().lb, Rect::new(r.x, r.y + 18, r.w, 28), 1, title, ACCENT);
 }
 
-fn draw_button(ui: &Ui, cv: &mut Canvas, r: Rect, label: &str, color: Rgb) {
+pub(super) fn draw_button(ui: &Ui, cv: &mut Canvas, r: Rect, label: &str, color: Rgb) {
     btn(cv, r, mix(DLG_BG, color, 40), color);
     cv.text_in(&ui.fonts().mb, r, 1, label, color);
 }

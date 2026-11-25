@@ -41,6 +41,14 @@ fn boot_card_record_reaches_all_system_page_rows() {
         assert!(cols[0].iter().skip(1).take_while(|row| !matches!(row, Row::Head(_))).any(|row| {
             matches!(row, Row::Kv(label, text, c) if label == "SD card" && text == value && *c == color)
         }));
+        assert_eq!(
+            ui.value(Item::NegotiatedCardMode),
+            match mode {
+                "hs" => "HS",
+                "unknown" => "not reported",
+                _ => value,
+            }
+        );
         let reply = Scpi::disconnected().exec_line(&mut ui, &Canvas::new(1, 1), ":SYSTem:STATe?");
         let state_fields = format!(
             "sd.mode={mode} sd.expected={expected} sd.state={state} sd.degraded_in_a_row={streak} sd.repair=none"

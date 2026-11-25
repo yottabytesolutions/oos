@@ -82,7 +82,7 @@ pub struct State {
     pub trial: Option<u32>,
     /// Arm OOS again after every confirmed start.
     pub persist: bool,
-    /// Suppress an SDR104 retry after an unconfirmed boot.
+    /// Suppress SDR104 after a trial observed the card negotiate a slower mode.
     sd_failed: bool,
     /// A same-build DTB trial must actually start before it can be confirmed.
     sd_trial: Option<sd::Mode>,
@@ -204,6 +204,7 @@ pub fn rollback(
         if execute && (st.trial.is_some() || st.current.as_ref().map(|c| c.sha256) != Some(prev.sha256)) {
             st.track_recovery(prev, id);
             st.trial = None;
+            st.sd_trial = None;
             st.save(state_path).map_err(io("writing the update state"))?;
         }
         return Ok(r);
@@ -215,7 +216,7 @@ pub fn rollback(
         return Ok(r);
     }
     // the state keeps naming the image and its trial until the write is done: a cut write stays a rollback to repeat
-    st.fail_sd_trial();
+    st.sd_trial = None;
     st.event = format!("rolling back from {} to {}", from, short(&prev.build));
     st.save(state_path).map_err(io("writing the update state (nothing written to the card)"))?;
     card.disarm_oos()?;
@@ -290,6 +291,15 @@ pub enum Boot {
 /// Early in rcS: count this start of a trial image. `running`: the build id of the running image; the count only
 /// applies when it is the image on trial.
 pub fn boot_started(state_path: &Path, running: Option<&str>) -> Result<Boot, String> {
+    boot_started_with_card(state_path, running, crate::bootcard::Status::default())
+}
+
+/// Count an ordinary trial start and record its card observation in the same state save.
+pub fn boot_started_with_card(
+    state_path: &Path,
+    running: Option<&str>,
+    status: crate::bootcard::Status,
+) -> Result<Boot, String> {
     let _l = lock(state_path)?;
     let mut st = State::load(state_path).map_err(io("reading the update state"))?;
     let Some(n) = st.trial else { return Ok(Boot::NoTrial) };
@@ -304,7 +314,7 @@ pub fn boot_started(state_path: &Path, running: Option<&str>) -> Result<Boot, St
                 short(run),
                 short(&cur)
             );
-            st.fail_sd_trial();
+            st.sd_trial = None;
             st.trial = None;
             st.current = None;
             st.recovery = Default::default();
@@ -312,6 +322,9 @@ pub fn boot_started(state_path: &Path, running: Option<&str>) -> Result<Boot, St
             st.save(state_path).map_err(io("writing the update state"))?;
             return Ok(Boot::Dropped(msg));
         }
+    }
+    if running.is_some_and(|build| !build.trim().is_empty()) && !status.is_kexec() && !st.recovery.writing {
+        st.observe_sd_trial(status);
     }
     st.trial = Some(n + 1);
     st.save(state_path).map_err(io("writing the update state"))?;

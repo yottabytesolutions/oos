@@ -194,7 +194,7 @@ impl Ui {
     /// Writes the settings (not in tests: there `sys_path` is none). False: not written, the toast says why.
     pub(super) fn sys_save(&mut self) -> bool {
         let Some(p) = self.sys_path.clone() else { return true };
-        if let Err(e) = self.sys.save(&p) {
+        if let Err(e) = self.sys.save_settings(&p) {
             self.toast(&format!("Not saved: {}", e));
             return false;
         }

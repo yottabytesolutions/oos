@@ -2,6 +2,7 @@
 
 use super::messages;
 use crate::{die, need_data, notice, put, restart_for_trial, restart_mark, state_path, tell, Args, STDOUT_CLOSED};
+use oos_hal::bootcard;
 use oos_hal::update::{self, card, hash::hex, kexec, pkg, State};
 use std::io::ErrorKind;
 use std::path::Path;
@@ -74,6 +75,9 @@ pub(crate) fn status(a: &Args) {
         None => out!("trial        none"),
     }
     out!("mode         {}", if st.persist { "persist" } else { "oneshot" });
+    if let Some(reason) = st.sd_fallback() {
+        out!("card mode    {reason}");
+    }
     if !st.event.is_empty() {
         out!("last event   {}", st.event);
     }
@@ -133,6 +137,16 @@ pub(crate) fn boot(a: &Args) {
         }
         return; // no update state yet
     }
+    let running = read_text("/etc/oos-build");
+    let running = running.as_deref().map(str::trim).filter(|build| !build.is_empty());
+    let observed = bootcard::read_state(Path::new(bootcard::STATE_PATH));
+    if word.is_some() {
+        if let Some(build) = running {
+            if let Err(error) = update::sd::observe_handoff(&p, build, observed) {
+                tell(&error);
+            }
+        }
+    }
     match kx {
         // not the trial start of anything: a failed install, or the install, whose trial begins at the next start
         Some(source) => {
@@ -149,9 +163,7 @@ pub(crate) fn boot(a: &Args) {
         }
         None => record_ordinary_start(a, &p),
     }
-    let running = read_text("/etc/oos-build");
-    let running = running.as_deref().map(str::trim).filter(|build| !build.is_empty());
-    match update::boot_started(&p, running) {
+    match update::boot_started_with_card(&p, running, observed) {
         Ok(update::Boot::NoTrial) => {}
         Ok(update::Boot::Trial(n)) => {
             tell(&format!("build {} on trial (start {})", update::short(running.unwrap_or("?")), n))

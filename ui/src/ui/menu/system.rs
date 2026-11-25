@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Julian Decker
 
 use super::*;
+use update::boot_card;
 
 pub(super) const AREA: Area = Area { descriptors: ROWS, adjust, activate, ..Area::EMPTY };
 
@@ -34,6 +35,14 @@ const ROWS: &[Descriptor] = {
             |_| ["One-shot", "Persist"].into_iter().map(String::from).collect(),
         ),
         Descriptor::choice(
+            BootCardMode,
+            "Boot card mode",
+            |u| u.sys.card_mode().map_or("Invalid", oos_hal::update::sd::Mode::label).into(),
+            |_| boot_card::MODES.iter().map(|mode| mode.label().into()).collect(),
+        ),
+        Descriptor::text(NegotiatedCardMode, "Negotiated", boot_card::negotiated),
+        Descriptor::action(Update, "Update"),
+        Descriptor::choice(
             Overclock,
             "Overclock",
             |u| overclock::label(u.clock_next),
@@ -47,7 +56,6 @@ const ROWS: &[Descriptor] = {
         Descriptor::reference(Open(MenuId::Time)),
         Descriptor::action(SysInfo, "System info"),
         Descriptor::action(About, "About OOS"),
-        Descriptor::action(Update, "Update"),
         Descriptor::action(UpdateRollback, "Roll back update"),
         Descriptor::action(Stock, "Back to stock"),
     ]
@@ -65,6 +73,14 @@ fn adjust(ui: &mut Ui, it: Item, d: i32) -> bool {
             m.quick = QUICKS[cyc(i, QUICKS.len(), d)];
         }
         Item::BootMode => ui.boot_mode_toggle(),
+        Item::BootCardMode => {
+            let index = boot_card::requested_index(ui);
+            let next = index.map_or(0, |index| cyc(index, boot_card::MODES.len(), d));
+            if index != Some(next) {
+                boot_card::request(ui, boot_card::MODES[next]);
+            }
+            return true;
+        }
         Item::Overclock => ui.overclock_step(d),
         _ => {}
     }

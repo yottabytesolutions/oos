@@ -16,6 +16,7 @@ const BIN: &str = "/bin/oos-update";
 const UPLOAD: &str = "/tmp/oos-update.upload";
 const JOB_LOG: &str = "/tmp/oos-update.job";
 
+pub(super) mod boot_card;
 mod notice;
 mod upload;
 #[cfg(test)]
@@ -32,6 +33,7 @@ struct PendingUpload {
 pub(super) struct UpdateUi {
     pub(super) power: super::power::BootPower,
     job: Option<(std::process::Child, String)>,
+    card_confirmation: Option<boot_card::Confirmation>,
     #[cfg(test)]
     trusted_keys: Option<Vec<[u8; 32]>>,
     /// Immutable image identity, resolved once and injectable by host tests, including read errors.
@@ -255,6 +257,9 @@ impl Ui {
                 d.extend(wrap_lines(&out, 44).into_iter().rev().take(9).collect::<Vec<_>>().into_iter().rev());
                 d.push("Tap to close".into());
                 self.dialog = Some(d);
+                if what == boot_card::JOB {
+                    boot_card::refresh(self);
+                }
                 if what == "Install" {
                     let _ = std::fs::remove_file(UPLOAD);
                 }

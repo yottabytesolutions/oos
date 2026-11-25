@@ -106,7 +106,7 @@ fn warning_text_and_action_follow_speed_streak_and_boot_mode() {
         let warning = Warning::new(sd, one_shot);
         assert_eq!(warning.action, PowerAction::Off);
         assert!(warning.lines.join(" ").ends_with(
-            "three starts in a row. Power off and remove power for 10 s. If it stays slow, set sd.mode = hs."
+            "three starts in a row. Power off and remove power for 10 s. If it stays slow, select HS in System."
         ));
     }
 }
@@ -130,11 +130,25 @@ fn warning_preserves_scpi_and_acquisition_and_later_leaves_a_system_note() {
     assert!(ui.last[0].is_some());
     touch(&mut ui, 0, Phase::Up);
     assert!(ui.power_action.is_none());
-    touch(&mut ui, 1, Phase::Down);
-    touch(&mut ui, 1, Phase::Up);
+    touch(&mut ui, 2, Phase::Down);
+    touch(&mut ui, 2, Phase::Up);
     assert!(ui.power_action.is_none());
     assert!(ui.upd.power.warning.is_none());
     assert_system_note(&mut ui);
+}
+
+#[test]
+fn warning_opens_the_boot_card_setting_without_a_power_action() {
+    let mut ui = fixture(armed);
+    poll_fixture(&mut ui);
+    touch(&mut ui, 1, Phase::Down);
+    touch(&mut ui, 1, Phase::Up);
+    assert!(ui.upd.power.warning.is_none());
+    assert!(ui.upd.power.deferred());
+    assert!(ui.power_action.is_none());
+    assert!(ui.menu_open);
+    assert_eq!(ui.menu, MenuId::Utility);
+    assert_eq!(ui.menu_items(MenuId::Utility)[ui.focus], Item::BootCardMode);
 }
 
 fn assert_system_note(ui: &mut Ui) {
@@ -143,6 +157,24 @@ fn assert_system_note(ui: &mut Ui) {
         .iter()
         .flatten()
         .any(|row| matches!(row, sysinfo::Row::Note(text, _) if text.contains("SD card is in slow mode"))));
+}
+
+#[test]
+fn slow_card_warning_matches_the_panel_reference() {
+    let mut ui = fixture(armed);
+    poll_fixture(&mut ui);
+    let mut canvas = Canvas::new(ui.scr.w, ui.scr.h);
+    ui.draw_overlay(&mut canvas);
+    let png = crate::store::png_of(&canvas);
+    let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let output = std::env::var_os("CARGO_TARGET_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| root.parent().unwrap().join("target"))
+        .join("update-golden");
+    std::fs::create_dir_all(&output).unwrap();
+    std::fs::write(output.join("slow-card.png"), &png).unwrap();
+    let expected = std::fs::read(root.join("tests/golden/update/slow-card.png.ref")).unwrap();
+    assert!(png == expected, "slow-card warning differs from its reference");
 }
 
 #[test]
@@ -236,7 +268,7 @@ fn web_view_touches_the_warning_and_keys_and_knobs_defer_it() {
     assert_eq!(ui.m.run, RunState::Run);
     assert!(ui.upd.power.warning.is_some());
 
-    let [act, later] = panel::layout(&ui, ui.upd.power.warning.as_ref().unwrap()).1;
+    let [act, _, later] = panel::layout(&ui, ui.upd.power.warning.as_ref().unwrap()).1;
     remote_command(&mut ui, &format!("drag {} {} {} {}", later.x + 5, later.y + 5, act.x + 5, act.y + 5));
     assert!(ui.upd.power.warning.is_some());
     assert!(ui.power_action.is_none());

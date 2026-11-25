@@ -174,6 +174,19 @@ impl Status {
         self.mode
     }
 
+    /// Why the boot card's negotiated timing could not be displayed.
+    pub fn mode_unavailable_reason(self) -> Option<&'static str> {
+        (self.mode == Mode::Unknown).then_some(match self.reason {
+            Reason::BootHost => "Card host unavailable",
+            Reason::DebugfsUnavailable => "Debugfs unavailable",
+            Reason::IosUnavailable => "Kernel timing unavailable",
+            Reason::MalformedTiming => "Invalid kernel timing",
+            Reason::UnknownTiming => "Unrecognized timing",
+            Reason::StateUnavailable => "Boot record unavailable",
+            Reason::None | Reason::DeviceTree => "No timing reported",
+        })
+    }
+
     pub const fn expected(self) -> Mode {
         self.expected
     }

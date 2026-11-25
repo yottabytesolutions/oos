@@ -118,7 +118,7 @@ impl State {
             t.push_str("sd.failed yes\n");
         }
         if let Some(mode) = self.sd_trial {
-            t.push_str(if mode == sd::Mode::Hs { "sd.trial hs\n" } else { "sd.trial sdr104\n" });
+            t.push_str(&format!("sd.trial {}\n", mode.as_str()));
         }
         t.push_str(if self.persist { "mode persist\n" } else { "mode oneshot\n" });
         if let Some(b) = &self.kexec {
@@ -197,23 +197,22 @@ impl State {
         }
         Ok(())
     }
-    pub(super) fn fail_sd_trial(&mut self) {
-        if self.sd_trial == Some(sd::Mode::Sdr104) {
+    pub(super) fn observe_sd_trial(&mut self, status: crate::bootcard::Status) -> bool {
+        use crate::bootcard::Mode;
+        if !self.sd_failed
+            && self.sd_trial == Some(sd::Mode::Sdr104)
+            && status.ceiling() == Mode::Sdr104
+            && !matches!(status.mode(), Mode::Sdr104 | Mode::Unknown)
+        {
             self.sd_failed = true;
+            return true;
         }
-        self.sd_trial = None;
+        false
     }
 
-    pub(super) fn sd_fallback(&self) -> Option<&'static str> {
-        self.sd_failed.then_some("SDR104 trial was not confirmed: falling back to hs; select hs before retrying")
-    }
-    pub(super) fn missed_sd_trial(&mut self) -> &'static str {
-        if self.sd_trial == Some(sd::Mode::Sdr104) {
-            self.fail_sd_trial();
-            "; SDR104 was not confirmed: falling back to hs"
-        } else {
-            ""
-        }
+    /// Why a requested SDR104 image will be staged in HS.
+    pub fn sd_fallback(&self) -> Option<&'static str> {
+        self.sd_failed.then_some("SDR104 fallback is active. Select HS before retrying SDR104.")
     }
 }
 

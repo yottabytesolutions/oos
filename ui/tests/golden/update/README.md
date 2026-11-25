@@ -9,4 +9,6 @@ M1 PNG inventory. The test writes actual PNGs under the selected target's
 
 The panel shows the trial state and automatic confirmation timing.
 Pending and kexec trials explicitly request the required power cycle.
-No existing scripted reference changes.
+
+`slow-card.png.ref` covers the slow-card notice's Open System shortcut alongside its power
+and deferral controls. `slow_card_warning_matches_the_panel_reference` checks the overlay.

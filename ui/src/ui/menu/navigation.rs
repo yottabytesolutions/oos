@@ -101,6 +101,21 @@ pub(super) fn open(ui: &mut Ui, it: Item) {
     }
 }
 
+pub(in crate::ui) fn open_menu(ui: &mut Ui, id: MenuId) {
+    if id == MenuId::Utility {
+        update::boot_card::refresh(ui);
+    }
+    ui.zoom_arm = false;
+    ui.zoom_path.clear();
+    ui.zoom_map = None;
+    ui.menu = id;
+    ui.menu_open = true;
+    ui.parent = None;
+    ui.menu_history.clear();
+    ui.pick = None;
+    ui.focus = 0;
+}
+
 pub(in crate::ui) fn main_groups(ui: &Ui) -> Vec<(&'static str, Vec<Item>)> {
     use Item::*;
     let mut disp = vec![Open(MenuId::Display), Open(MenuId::Horizontal), NavHist];

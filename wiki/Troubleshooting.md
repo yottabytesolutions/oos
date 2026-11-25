@@ -38,11 +38,12 @@ A modified stock scope application can crash at start when a stick is already mo
 ## SD card is in slow mode
 
 The card negotiated a slower mode than expected. This can happen on a warm restart after a GEL or bridge install.
-Check the negotiated mode in **System > System info**. Choose **Later** to keep using the scope in the current mode.
+Choose **Open System** in the warning to see the requested and negotiated modes beside **Boot mode**.
+Choose **Later** to keep using the scope in the current mode.
 
 1. Choose **Restart** if offered, or **Power off** and remove power for 10 seconds before starting again.
 2. In one-shot mode, expect stock at the next power-on. See [[First start and choosing how OOS starts]].
-3. If status says the updater is falling back to HS, follow the [SDR104 restaging steps](#an-update-did-not-finish-after-a-power-cut).
+3. If status says the updater is falling back to HS, follow the [SDR104 restaging steps](#retry-sdr104-after-a-slow-trial).
 
 ## The data area was repaired
 
@@ -67,15 +68,17 @@ If power went off while the new image was starting by kexec, `oos-update status`
 while writing the staging slot can instead leave a “Staged update ... was never started” event. The next install
 can reuse that slot.
 
-If the interrupted start was an SDR104 trial, status also says “SDR104 trial was not confirmed: falling back to hs”.
-The running system keeps its negotiated mode. The next install selects High Speed (HS) until you clear the fallback.
+An interrupted handoff leaves SDR104 available unless the running trial recorded a known slower mode.
+Check the update state before retrying.
+
+## Retry SDR104 after a slow trial
+
 Restaging requires a tracked, confirmed image in `recovery`. If the image is untracked after a GEL install, try a
 cold start for a slow-mode warning. A successful signed update re-establishes tracking.
 
-1. Set `sd.mode = hs` in `/oos/system.conf` and run `oos-update sd-mode --execute` from a shell on OOS.
-2. If this opens an HS trial, start OOS again and wait for the trial to be confirmed.
-3. Set `sd.mode = sdr104` and run `oos-update sd-mode --execute` again.
-4. Start OOS again to try SDR104. Check the negotiated mode in **System > System info**.
+1. Select **HS** in **System > Boot card mode**.
+2. If this opens an HS trial, start OOS again and wait for confirmation.
+3. Select **SDR104** and start OOS again. Check the negotiated mode under **Boot card mode**.
 
 ## Read the update status
 

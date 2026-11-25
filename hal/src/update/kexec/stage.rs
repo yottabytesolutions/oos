@@ -178,9 +178,9 @@ pub fn kexec_missed(state_path: &Path, kexec_start: bool) -> Result<Option<Strin
     let mut state = State::load(state_path).map_err(io("reading the update state"))?;
     let candidate = state.staged.take();
     let message = if let Some(build) = state.kexec.take() {
-        let fallback = state.missed_sd_trial();
+        state.sd_trial = None;
         let payload = state.take_kexec_payload();
-        format!("Update {} did not finish when started by kexec (its kernel or start-up hung, or the power went off): not installed{fallback}{payload}", short(&build))
+        format!("Update {} did not finish when started by kexec (its kernel or start-up hung, or the power went off): not installed{payload}", short(&build))
     } else if let Some(candidate) = candidate {
         format!("Staged update {} was never started: the next install will overwrite its slot", short(&candidate.build))
     } else {

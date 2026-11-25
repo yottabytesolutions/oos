@@ -13,6 +13,20 @@ pub enum Mode {
 }
 
 impl Mode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Hs => "hs",
+            Self::Sdr104 => "sdr104",
+        }
+    }
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Hs => "HS",
+            Self::Sdr104 => "SDR104",
+        }
+    }
+
     pub fn parse(text: &str) -> Result<Self, String> {
         let mut selected = "hs".to_string();
         for line in text.lines() {
@@ -34,14 +48,60 @@ impl Mode {
     }
 }
 
-pub(super) fn requested(state_path: &Path) -> Result<Mode, String> {
+/// Record a card observation from the running kexec candidate when it matches the pending handoff.
+pub fn observe_handoff(state_path: &Path, running: &str, status: crate::bootcard::Status) -> Result<(), String> {
+    let _lock = super::lock(state_path)?;
+    let mut state = State::load(state_path).map_err(io("reading update state"))?;
+    if status.is_kexec()
+        && !running.trim().is_empty()
+        && state.kexec.as_deref().map(str::trim) == Some(running.trim())
+        && state.observe_sd_trial(status)
+    {
+        state.save(state_path).map_err(io("recording the SDR104 handoff observation"))?;
+    }
+    Ok(())
+}
+
+fn config_path(state_path: &Path) -> Result<std::path::PathBuf, String> {
     let data = state_path.parent().and_then(Path::parent).ok_or("update state has no data directory")?;
-    let text = match std::fs::read_to_string(data.join("system.conf")) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
-        Err(e) => return Err(format!("reading device system.conf: {}", e)),
-    };
+    Ok(data.join("system.conf"))
+}
+
+fn read_config(path: &Path) -> std::io::Result<String> {
+    match std::fs::read_to_string(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        result => result,
+    }
+}
+
+pub(super) fn requested(state_path: &Path) -> Result<Mode, String> {
+    let text = read_config(&config_path(state_path)?).map_err(io("reading device system.conf"))?;
     Mode::parse(&text)
+}
+
+/// Serialize read-modify-replace of system.conf by the updater and the panel.
+pub fn lock_config(path: &Path) -> Result<super::Lock, String> {
+    super::locking::lock_with(path, true)
+}
+
+fn save_preference(state_path: &Path, mode: Mode) -> Result<(), String> {
+    let path = config_path(state_path)?;
+    let _lock = lock_config(&path)?;
+    let text = read_config(&path).map_err(io("reading device system.conf"))?;
+    let mut updated = String::new();
+    for line in text.split_inclusive('\n') {
+        if !line.split_once('=').is_some_and(|(key, _)| key.trim() == "sd.mode") {
+            updated.push_str(line);
+        }
+    }
+    if !updated.is_empty() && !updated.ends_with('\n') {
+        updated.push('\n');
+    }
+    updated.push_str(&format!("sd.mode = {}\n", mode.as_str()));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    crate::system::durable_replace(&path, &path.with_extension("sd.new"), updated.as_bytes(), &options)
+        .map_err(io("saving boot card preference"))
 }
 
 pub(super) fn configured(state_path: &Path, state: &State) -> Result<Mode, String> {
@@ -134,44 +194,95 @@ fn patched_second(second: &[u8], mode: Mode) -> Result<Option<Vec<u8>>, String> 
 
 /// Re-stage a confirmed active image for the next boot using the updater's verified write path.
 pub fn restage(card: &mut Card, state_path: &Path, execute: bool) -> Result<Report, String> {
+    restage_preference(card, state_path, None, execute)
+}
+
+/// Explain why an existing update blocks a boot card restage.
+pub fn restage_blocker(state: &State) -> Option<String> {
+    super::install::check_can_start(state).err()
+}
+
+/// Restage using an explicit preference, and save it to system.conf on execution.
+pub fn restage_preference(
+    card: &mut Card,
+    state_path: &Path,
+    preference: Option<Mode>,
+    execute: bool,
+) -> Result<Report, String> {
     card.check_layout()?;
-    let _lock = if execute { Some(super::lock(state_path)?) } else { None };
+    let _lock = execute.then(|| lock_for_restage(state_path)).transpose()?;
     let mut state = State::load(state_path).map_err(io("reading update state"))?;
-    if state.trial.is_some() || state.kexec.is_some() {
-        return Err("an update is on trial or being staged: SD mode left unchanged".into());
-    }
+    super::install::check_can_start(&state)?;
     let current = state.current.clone().ok_or("SD mode needs a tracked, confirmed active image")?;
     let (old, sha) = card.read_image(card::Region::Recovery, current.len as usize).map_err(io("reading recovery"))?;
     if sha != current.sha256 {
         return Err("active image SHA-256 differs from update state: nothing written".into());
     }
-    let requested = requested(state_path)?;
+    let requested = match preference {
+        Some(mode) => mode,
+        None => requested(state_path)?,
+    };
     if requested == Mode::Hs {
         state.sd_failed = false;
     }
     let mode = if state.sd_failed { Mode::Hs } else { requested };
     let next = image(&old, mode)?;
     let mut report = Report::default();
-    report.say(format!("boot card mode: {:?}; takes effect on the next boot", mode));
+    report.say(format!("Boot card mode {} takes effect on the next OOS boot", mode.label()));
     report.lines.extend(state.sd_fallback().map(str::to_string));
-    if next == old {
-        if execute {
-            state.save(state_path).map_err(io("writing update state"))?;
-        }
-        report.unchanged = true;
-        return Ok(report);
+    let changed = next != old;
+    if changed {
+        super::check_slot(card, &state)?;
     }
-    super::check_slot(card, &state)?;
-    let previous = image(&old, Mode::Hs)?;
     if !execute {
+        report.unchanged = !changed;
         report.say("dry run: nothing written (--execute)");
         return Ok(report);
     }
-    let entry = Entry { build: current.build.clone(), sha256: hash::sha256(&previous), len: previous.len() as u64 };
-    super::state::write_slot(card, state_path, &previous, entry, &mut state)?;
-    state.sd_trial = Some(mode);
-    super::write_trial(card, state_path, &next, &current.build, &mut state, &mut report)?;
+    let backup = if changed {
+        let previous = image(&old, Mode::Hs)?;
+        let entry = Entry { build: current.build, sha256: hash::sha256(&previous), len: previous.len() as u64 };
+        Some((previous, entry))
+    } else {
+        None
+    };
+    if let Some(preference) = preference {
+        save_preference(state_path, preference)?;
+    }
+    let result = if let Some(backup) = backup {
+        write_mode_trial(card, state_path, &mut state, backup, &next, mode, &mut report)
+    } else {
+        report.unchanged = true;
+        report.say("Recovery already has this boot card mode");
+        state.save(state_path).map_err(io("writing update state"))
+    };
+    result.map_err(|error| match preference {
+        Some(mode) => format!("Requested mode {} was saved. Restaging failed: {error}", mode.label()),
+        None => error,
+    })?;
     Ok(report)
+}
+
+fn lock_for_restage(state_path: &Path) -> Result<super::Lock, String> {
+    super::locking::lock_with(state_path, true).map_err(|error| {
+        format!("Cannot change boot card mode while the update state is busy or unavailable ({error})")
+    })
+}
+
+fn write_mode_trial(
+    card: &mut Card,
+    state_path: &Path,
+    state: &mut State,
+    backup: (Vec<u8>, Entry),
+    next: &[u8],
+    mode: Mode,
+    report: &mut Report,
+) -> Result<(), String> {
+    let (previous, entry) = backup;
+    let build = entry.build.clone();
+    super::state::write_slot(card, state_path, &previous, entry, state)?;
+    state.sd_trial = Some(mode);
+    super::write_trial(card, state_path, next, &build, state, report)
 }
 
 pub(super) fn trial_tree(

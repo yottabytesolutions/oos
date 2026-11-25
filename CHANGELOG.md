@@ -6,6 +6,8 @@
   power loss. Missing or rejected WLAN configuration starts with an empty network list.
 - Restart, power-off and staged updates cleanly unmount the data area when storage is healthy.
 - Bound stalled acquisition DMA reads to 1 s by default, record timeout evidence and reset playback before re-arming. Correct the DMA length for the smallest raw windows.
+- Set the next boot's SD card mode in System > Boot card mode. An interrupted update handoff leaves SDR104 available
+  for the next install unless the running trial recorded a slower card timing.
 
 ## 0.2.1: Fixes from the first release
 

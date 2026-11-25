@@ -16,7 +16,14 @@ pub(crate) fn run(args: &Args) {
     let mut card = args.open_card(execute).unwrap_or_else(|e| die(&e));
     let state = state_path(args);
     let result = if args.command() == "sd-mode" {
-        update::sd::restage(&mut card, &state, execute)
+        match args.rest.get(1).map(String::as_str) {
+            None => update::sd::restage(&mut card, &state, execute),
+            Some("hs") => update::sd::restage_preference(&mut card, &state, Some(update::sd::Mode::Hs), execute),
+            Some("sdr104") => {
+                update::sd::restage_preference(&mut card, &state, Some(update::sd::Mode::Sdr104), execute)
+            }
+            Some(_) => Err("sd-mode expects hs or sdr104".into()),
+        }
     } else {
         update::rollback(&mut card, &state, "by hand", execute, None)
     };

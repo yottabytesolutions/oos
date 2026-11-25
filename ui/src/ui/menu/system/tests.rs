@@ -19,6 +19,8 @@ fn every_system_row_keeps_its_metadata_and_menu_order() {
             (Update, Action, "Update", "".into(), vec![]),
             (UpdateRollback, Action, "Roll back update", "".into(), vec![]),
             (BootMode, Choice, "Boot mode", "One-shot".into(), strings(&["One-shot", "Persist"])),
+            (BootCardMode, Choice, "Boot card mode", "HS".into(), strings(&["SDR104", "HS"])),
+            (NegotiatedCardMode, Text, "Negotiated", "not reported".into(), vec![]),
         ],
     );
     assert_eq!(
@@ -28,6 +30,9 @@ fn every_system_row_keeps_its_metadata_and_menu_order() {
             QuickAct,
             AuxOut,
             BootMode,
+            BootCardMode,
+            NegotiatedCardMode,
+            Update,
             Overclock,
             Graphics,
             Shot,
@@ -37,7 +42,6 @@ fn every_system_row_keeps_its_metadata_and_menu_order() {
             Open(MenuId::Time),
             SysInfo,
             About,
-            Update,
             UpdateRollback,
             Stock
         ]

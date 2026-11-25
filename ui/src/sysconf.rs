@@ -314,6 +314,43 @@ impl SysConf {
         }
     }
 
+    /// Keep the updater's preference when saving settings loaded before a card restage.
+    pub(crate) fn save_settings(&mut self, path: &Path) -> std::io::Result<()> {
+        let _lock = if path == Path::new(PATH) {
+            Some(oos_hal::update::sd::lock_config(path).map_err(std::io::Error::other)?)
+        } else {
+            None
+        };
+        if _lock.is_some() {
+            self.preserve_card_mode(path)?;
+        }
+        self.save(path)
+    }
+
+    fn preserve_card_mode(&mut self, path: &Path) -> std::io::Result<()> {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => return Err(error),
+        };
+        self.replace_card_mode(&text);
+        Ok(())
+    }
+
+    pub(crate) fn card_mode(&self) -> Option<oos_hal::update::sd::Mode> {
+        use oos_hal::update::sd::Mode;
+        self.extra
+            .iter()
+            .rfind(|line| crate::netacl::value(line, "sd.mode").is_some())
+            .map_or(Some(Mode::Hs), |line| Mode::parse(line).ok())
+    }
+
+    pub(crate) fn replace_card_mode(&mut self, text: &str) {
+        let mode_line = |line: &str| crate::netacl::value(line, "sd.mode").is_some();
+        self.extra.retain(|line| !mode_line(line));
+        self.extra.extend(text.lines().filter(|line| mode_line(line)).map(str::trim).map(str::to_owned));
+    }
+
     /// From a file over the image defaults (`image`: the text of `IMAGE_PATH`, none on most images, supplied by the
     /// UI's host); a missing file gives the defaults. Problems go to the log.
     pub fn load_with_image(path: &Path, image: &str) -> SysConf {
@@ -416,6 +453,21 @@ mod tests {
         // no shell on the network unless an image or the user switches it on
         assert!(!c.remote_ssh && c.ssh_password);
         assert_eq!(SysConf::parse("").0, c);
+    }
+
+    #[test]
+    fn saving_after_restage_preserves_the_current_card_mode() {
+        let path = std::env::temp_dir().join(format!("oos-card-preference-{}", std::process::id()));
+        let (mut settings, _) = SysConf::parse("ntp = off\nsd.mode = hs\nplugin = value");
+        std::fs::write(&path, "sd.mode = sdr104\n").unwrap();
+        settings.ntp = true;
+        settings.preserve_card_mode(&path).unwrap();
+        settings.save(&path).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(oos_hal::update::sd::Mode::parse(&text).unwrap(), oos_hal::update::sd::Mode::Sdr104);
+        assert!(text.contains("ntp = on"));
+        assert!(text.contains("plugin = value"));
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]

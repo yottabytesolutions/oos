@@ -36,6 +36,7 @@ pub(super) fn index(u: &Ui, it: Item) -> Option<usize> {
                 u.m.aux_out,
             )
         }
+        Item::BootCardMode => return update::boot_card::requested_index(u),
         Item::StoreDest => return position(&crate::store::StoreDest::ALL, u.store_dest),
         Item::StoreSlot => return (u.store_slot as usize).checked_sub(1),
         Item::QuickAct => return position(&QUICKS, u.m.quick),

@@ -3,6 +3,8 @@
 
 use super::*;
 
+pub(super) use {navigation::open_menu, picker::select_direct_option};
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) enum Kind {
     Text,
@@ -242,7 +244,7 @@ areas! {
     bode { [Item::BodeOn | Item::BodeRun | Item::BodeStart | Item::BodeStop | Item::BodePoints | Item::BodeAmp | Item::BodeIn | Item::BodeOut | Item::BodeGen | Item::BodeAddr | Item::BodeLink | Item::BodeCur | Item::BodeMode | Item::BodeSwTime | Item::BodeSwLog | Item::BodeSync | Item::BodeSyncEdge | Item::BodeSyncLvl | Item::BodeRef], [MenuId::Bode] }
     calibration { [Item::CalCh | Item::CalZero | Item::CalAdc | Item::CalStart | Item::CalCancel | Item::CalStatus], [MenuId::SelfCal] }
     zone { [Item::ZoneSel | Item::ZoneOn | Item::ZoneSrc | Item::ZoneMode | Item::ZoneBox | Item::ZoneShape | Item::ZoneClear], [MenuId::Zone] }
-    system { [Item::About | Item::SysInfo | Item::Shot | Item::AuxOut | Item::Stock | Item::Update | Item::UpdateRollback | Item::BootMode | Item::Overclock | Item::QuickAct], [MenuId::Utility] }
+    system { [Item::About | Item::SysInfo | Item::Shot | Item::AuxOut | Item::Stock | Item::Update | Item::UpdateRollback | Item::BootMode | Item::BootCardMode | Item::NegotiatedCardMode | Item::Overclock | Item::QuickAct], [MenuId::Utility] }
     view_more { [Item::ViewExit | Item::ViewSettings], [MenuId::ViewMore] }
     network { [Item::NetEth | Item::NetMac | Item::NetPorts | Item::NetWlan | Item::WlanInfo | Item::WlanScan | Item::WlanForget | Item::WlanNet | Item::WlanForgetNet], [MenuId::Network] }
     remote { [Item::NetWeb | Item::RemWeb | Item::RemScpi | Item::RemVxi | Item::RemHislip | Item::RemSsh | Item::RemScpiInfo | Item::RemVxiInfo | Item::RemHislipInfo | Item::RemMdns | Item::RemName | Item::RemAllow | Item::RemFirewall], [MenuId::Remote] }

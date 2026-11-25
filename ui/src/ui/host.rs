@@ -171,6 +171,11 @@ impl Host {
     }
 
     #[cfg(test)]
+    pub(super) fn set_directory_reader(&mut self, directory: fn(&Path) -> bool) {
+        self.directory = directory;
+    }
+
+    #[cfg(test)]
     pub(super) fn enable_fixture_services(&mut self) {
         self.services = true;
         self.time_budgets = false;

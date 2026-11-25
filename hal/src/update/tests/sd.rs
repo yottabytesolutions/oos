@@ -3,6 +3,9 @@
 use super::*;
 use crate::update::sd::{self, Mode};
 
+mod preference;
+mod trial_evidence;
+
 fn base_tree() -> Vec<u8> {
     dtb(
         &[("model", b"test\0")],
@@ -208,10 +211,14 @@ fn restaging_is_a_next_boot_trial_with_verified_hs_rollback() {
     assert_eq!(f.st().trial, Some(0));
     assert!(confirm_running(&f.state(), None, Some(KX_BUILD)).unwrap_err().contains("not booted"));
     assert!(sd::restage(&mut f.card(), &f.state(), true).is_err());
-    assert_eq!(boot_started(&f.state(), Some(KX_BUILD)).unwrap(), Boot::Trial(1));
+    assert_eq!(
+        boot_started_with_card(&f.state(), Some(KX_BUILD), trial_evidence::observation(&f, "hs", "sdr104", false))
+            .unwrap(),
+        Boot::Trial(1)
+    );
     assert_eq!(boot_started(&f.state(), Some(KX_BUILD)).unwrap(), Boot::Rollback);
     let r = rollback(&mut f.card(), &f.state(), "unconfirmed SD mode", true, None).unwrap();
-    assert!(r.lines.iter().any(|l| l.contains("falling back to hs")));
+    assert!(r.lines.iter().any(|l| l.contains("SDR104 fallback")));
     assert_eq!(f.region(Region::Recovery), hs);
     assert!(f.st().sd_failed);
     assert!(sd::restage(&mut f.card(), &f.state(), true).unwrap().unchanged);
@@ -230,8 +237,8 @@ fn a_confirmed_sd_trial_survives_and_switching_back_to_hs_works() {
     sd::restage(&mut f.card(), &f.state(), true).unwrap();
     boot_started(&f.state(), Some(KX_BUILD)).unwrap();
     let sha = f.st().current.unwrap().sha256;
-    assert!(confirm_with_sd_mode(&f.state(), sha, crate::bootcard::Mode::Hs).unwrap());
-    assert!(f.st().event.ends_with(" (SDR104 trial, observed hs)"));
+    assert!(confirm_with_sd_mode(&f.state(), sha, crate::bootcard::Mode::Sdr104).unwrap());
+    assert!(f.st().event.ends_with(" (SDR104 trial, observed sdr104)"));
     assert!(sd::restage(&mut f.card(), &f.state(), true).unwrap().unchanged);
     set_mode(&f, "hs");
     assert!(sd::restage(&mut f.card(), &f.state(), true).unwrap().written);
@@ -258,11 +265,9 @@ fn install_and_kexec_use_the_same_selected_tree_after_signature_checks() {
     assert_eq!(staged.tree.unwrap(), sd::patch_tree(&base_tree(), Mode::Sdr104).unwrap());
     assert_eq!(f.region(Region::Recovery), hs, "kexec keeps the installed HS fallback untouched");
     let missed = kexec_missed(&f.state(), false).unwrap().unwrap();
-    assert!(missed.contains("falling back to hs"));
-    assert_eq!(sd::configured(&f.state(), &f.st()).unwrap(), Mode::Hs);
-    set_mode(&f, "hs");
-    sd::restage(&mut f.card(), &f.state(), true).unwrap();
-    set_mode(&f, "sdr104");
+    assert!(missed.contains("not installed"));
+    assert_eq!(f.st().sd_trial, None);
+    assert_eq!(sd::configured(&f.state(), &f.st()).unwrap(), Mode::Sdr104);
     let mut damaged = package.clone();
     *damaged.last_mut().unwrap() ^= 1;
     let before = card_bytes(&f);

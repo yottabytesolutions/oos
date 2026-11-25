@@ -129,14 +129,14 @@ boot image's RSCE `second` and for kexec's staged tree, before loader changes ar
 and unchanged; the locally derived image gets a recomputed Android loader id and a SHA-256 in the update state.
 No device build input is needed. Nothing writes stock `resource`, `kernel` or U-Boot.
 
-To change an already installed image, edit `sd.mode` in `/oos/system.conf`, then run `oos-update sd-mode` to inspect
-the dry run, followed by `oos-update sd-mode --execute`. This requires a tracked, confirmed active image and refuses
-an update already on trial. The existing verified slot-write path retains an HS rollback image and writes the selected
-DTB into OOS recovery, on trial. Reboot through the authorized unit procedure. There is no kexec on every boot.
-The running session cannot confirm a same-build DTB trial until it has booted. The ordinary start-up watcher confirms
-it after a stable start, or restores HS on failure. An unconfirmed second start also restores HS and logs the fallback.
-After fallback, SDR104 is suppressed while `system.conf` still requests it. Select `hs` and run `sd-mode --execute`
-before explicitly retrying `sdr104`; updates do not rewrite the device setting.
+To change an already installed image, select **System > Boot card mode**. The selected value is the
+requested mode. Confirm **Restage** to apply it at the next OOS start. The negotiated mode shows the timing of
+this boot. The shell equivalent is
+`oos-update sd-mode hs|sdr104 --execute`. Omit `--execute` to preview, or omit the mode to use the setting in
+`/oos/system.conf`. A tracked, confirmed active image is required. The updater keeps an HS rollback image and stages
+the chosen tree in recovery for the next OOS boot. The ordinary watcher confirms the trial after a stable start or
+restores HS on failure. A recorded SDR104 negotiation failure suppresses SDR104 for later installs. Select HS,
+complete an HS trial if staged, then select SDR104 to try it again. See [update trials](update.md).
 
 **Safety boundary, not yet verified on hardware:** the stock loader cannot read the setting or update state.
 Rollback runs in rcS and therefore cannot run when a voltage-switch failure wedges the card before userspace.
@@ -165,8 +165,8 @@ caches it at launch and shows the SD card under System > System info and in `:SY
 the history file. Detection and learning still need verification on hardware.
 
 An ordinary degraded or worse start can show a panel warning once after startup and the update watcher's verdict.
-It offers Restart and Later in persistent mode for the first two consecutive slow starts. In one-shot mode or
-after three consecutive slow starts it offers Power off and Later and recommends removing power for 10 s. Later
+It offers Open System and Later, plus Restart in persistent mode for the first two consecutive slow starts.
+In one-shot mode or after three consecutive slow starts it offers Power off and recommends removing power for 10 s. Later
 leaves a note in System info for the rest of the boot. A front-panel or web remote key or knob also dismisses the
 warning and performs its usual action.
 The warning uses the same screen overlay as the Power dialog, which can appear in captures and live mirrors.

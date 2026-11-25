@@ -1441,9 +1441,9 @@
           456
         ]
       ],
-      "rgb_sha256": "f2389ac94513ed05ec92bfbe0e7d4b5561503efac92eee998880c2bf4dec1adb",
+      "rgb_sha256": "7c7988ec5329988c7dad5a6cb95a842604f26d426db278c34384a393d0aa84d6",
       "script_sha256": "b57667c571cc5100fc391b21f744c0f150075369d6a684eae4e4d28ca5909fdb",
-      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=12 records=72 menu_open=true Demo acq.pipeline=batch",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=12 records=72 menu_open=true Demo records",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
     },
@@ -5292,9 +5292,9 @@
         ]
       ],
       "release_version": "0.2.1",
-      "rgb_sha256": "1d87b5174477946d6f4305b036a8388dcc0dacf4b46f4608283825688440861d",
+      "rgb_sha256": "1a7792f392784778d7c0aeb6a676b363d00661f93251811e125df6cc564c5c98",
       "script_sha256": "f78c42846b9c96df2288bbb039bcc6c8a72c084acf1926fcee904e3f1f4bfca2",
-      "settings": "settings dots=Auto channels=3 tdiv=0.0002 persist=6 grade=false zoom=false acquisition=Normal run=Run frames=123 records=738 menu_open=true Demo acq.pipeline=batch",
+      "settings": "settings dots=Auto channels=3 tdiv=0.0002 persist=6 grade=false zoom=false acquisition=Normal run=Run frames=123 records=738 menu_open=true Demo records",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
     },
@@ -5532,9 +5532,9 @@
           456
         ]
       ],
-      "rgb_sha256": "cd2ff2de190f1242ee72ba8aefc97b34fe4b60e79153cae256194fa8b84569be",
+      "rgb_sha256": "3f4bee44d0b0f696cee096f30632ed355028216ae45864a1a81471c2eaab2af3",
       "script_sha256": "113f0c0b7020dfad414de7ba6fc10b0b7c8060a0130ed325ace4706035e45bc1",
-      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=50 records=136 menu_open=true Demo acq.pipeline=batch",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=50 records=136 menu_open=true Demo records",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
     },
@@ -8033,9 +8033,9 @@
           456
         ]
       ],
-      "rgb_sha256": "10537a0afc0cb1b91ed433dad81b3286a9b1056f9165420ad4296c0b50181f15",
+      "rgb_sha256": "1ce966a7c3332bea52a18df21dcf20662b4dc51ea0af55afdb57965060b345dd",
       "script_sha256": "07efaf9160bd7e3c651e7969345ca7e420205d23d3fa7ac6edce6f0c4f2dae2b",
-      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=12 records=72 menu_open=true Demo acq.pipeline=batch",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=12 records=72 menu_open=true Demo records",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
     },
@@ -11884,9 +11884,9 @@
         ]
       ],
       "release_version": "0.2.1",
-      "rgb_sha256": "e39de21843770c439b83bcbfa8e08d1bd3ab7a949179d4a0f4fdeeb07e550321",
+      "rgb_sha256": "252dcc91a6f0e9306f063f947e7c201ac96588ef85905ece59748ff439a71a9f",
       "script_sha256": "2e4e07c9bada5cf129894deeb2b477b9f77649c2a9832842746fc6384b4a07f0",
-      "settings": "settings dots=Auto channels=3 tdiv=0.0002 persist=6 grade=false zoom=false acquisition=Normal run=Run frames=123 records=738 menu_open=true Demo acq.pipeline=batch",
+      "settings": "settings dots=Auto channels=3 tdiv=0.0002 persist=6 grade=false zoom=false acquisition=Normal run=Run frames=123 records=738 menu_open=true Demo records",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
     },
@@ -12124,9 +12124,9 @@
           456
         ]
       ],
-      "rgb_sha256": "c207a309a7b5ee41a1b5e0ef4ed04c52e8a03378fb38377014dd9d0a3c485a0e",
+      "rgb_sha256": "461fae07bffec219a620419d5094e65a8340cb7f1c5265861dfccc4755f63564",
       "script_sha256": "383737cdbb2d28e84aebee80d75e04c5b41e61f017d45b21f00871096acf6b2c",
-      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=50 records=136 menu_open=true Demo acq.pipeline=batch",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=50 records=136 menu_open=true Demo records",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
     },
@@ -14625,9 +14625,9 @@
           456
         ]
       ],
-      "rgb_sha256": "b170e06f094843be7a063905dec36a36d9ee53faeec0be4b11dc9b3a0a0b9ec6",
+      "rgb_sha256": "25c5bbb7d12d4f1de664523be4b4fbb88a962f6144885f7b5df0de9a2b73faf8",
       "script_sha256": "11aee2c96d11b4520505e9a686654927cf0c8bf81bb4700d1836dda4bfe639b5",
-      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=12 records=72 menu_open=true Demo acq.pipeline=batch",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=12 records=72 menu_open=true Demo records",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
     },
@@ -18476,9 +18476,9 @@
         ]
       ],
       "release_version": "0.2.1",
-      "rgb_sha256": "f6eee04ed626053e695b93c0952897f54cc1b158bfcb29c204394cc2bc6f2da6",
+      "rgb_sha256": "5aa06ac73d38e022412452ab5181d4bc7f5139b69fce91a8244586a9e902cd24",
       "script_sha256": "825f59c6aa635647300315fb08ef98b1b5287edc8dd488245de478b7bf195eb9",
-      "settings": "settings dots=Auto channels=3 tdiv=0.0002 persist=6 grade=false zoom=false acquisition=Normal run=Run frames=123 records=738 menu_open=true Demo acq.pipeline=batch",
+      "settings": "settings dots=Auto channels=3 tdiv=0.0002 persist=6 grade=false zoom=false acquisition=Normal run=Run frames=123 records=738 menu_open=true Demo records",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
     },
@@ -18716,9 +18716,9 @@
           456
         ]
       ],
-      "rgb_sha256": "280b826bdc7a231b51df1179d9a43b38b92aa64defd66035eef069a565ce05b8",
+      "rgb_sha256": "c74f16c352235a7515804599c042e9baf02909229b2e114fe54e64637058a7ea",
       "script_sha256": "61cdce0d156a53520719304cabff57772d58c652b39bbfe83aaf905b59cbcbee",
-      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=50 records=136 menu_open=true Demo acq.pipeline=batch",
+      "settings": "settings dots=Auto channels=1 tdiv=0.0002 persist=0 grade=false zoom=false acquisition=Normal run=Run frames=50 records=136 menu_open=true Demo records",
       "source_route": "Demo records; acq.pipeline=batch",
       "width": 1024
     },

@@ -23,9 +23,11 @@ Code: `hal/src/update/` (hashes, Ed25519, package, card, state, kexec), `fpgad/s
 
 Boot card mode is device-local: `sd.mode` in `/oos/system.conf` defaults to `hs`. Package verification precedes
 DTB selection; the signed package stays unchanged while the selected image's loader id and local update hash
-are recomputed. Kexec stages the selected tree too. `oos-update sd-mode [--execute]` restages a confirmed active
-image for a mode-only trial with an HS rollback image. See [boot mode](boot.md#device-boot-card-mode) for the retry
-rule and the pre-rcS safety boundary. This boot path is host-tested only and still needs a unit run.
+are recomputed. Kexec stages the selected tree too. **System > Boot card mode** shows the requested
+mode and the timing negotiated by this boot. Choose **Restage** to confirm. The updater keeps an HS rollback image
+and uses the same path as `oos-update sd-mode [hs|sdr104] [--execute]`. An update in progress, pending handoff,
+or open trial blocks a change. A successful restage takes effect on the next OOS boot. See
+[boot mode](boot.md#device-boot-card-mode) for the pre-rcS safety boundary. The new paths still need a unit run.
 
 ## What it protects against
 
@@ -546,10 +548,13 @@ Reconciliation and `leave` are host-tested and to verify on the unit.
 - The watcher writes `/tmp/oos-update.judged` after applying its verdict and completing any persist arm. A confirmed
   SDR104 trial records the negotiated mode from the startup check in the update event. Confirmation still follows
   the software-health rule when the card is slow.
-- An update whose new image never reports back, including one cut by a power loss during the handoff, counts as
-  a failed SDR104 trial: `oos-update status` says "SDR104 was not confirmed: falling back to hs". The running
-  image keeps its mode. The next install selects HS until `sd.mode` is set to `hs` and restaged once with
-  `oos-update sd-mode --execute`, and then set to `sdr104` and restaged again.
+- The updater sets `sd.failed` only when a running build matches the pending kexec handoff or the ordinary
+  recovery trial, the marker requests SDR104, the running device tree enables SDR104, and the card reports a
+  known slower timing. A cut before this evidence is saved, a mismatched start, an unknown reading, or a card
+  that reached SDR104 leaves the latch as it was. A missed kexec start discards the pending handoff as before.
+  A recorded failure selects HS for subsequent installs while leaving the running image alone. Once the trial
+  closes, select HS in Boot card mode to clear the latch, confirm an HS trial if one was staged, then select
+  SDR104 to try it again.
 - If the watcher cannot open the card for a persist arm, it logs the failure and publishes completion with boot
   selection unverified. If it cannot open the card for a failed trial's rollback, it issues the same rollback-failed
   notice as a restore error. A failed open leaves boot selection and trial state as they were before the attempt.

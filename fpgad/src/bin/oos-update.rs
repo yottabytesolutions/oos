@@ -16,7 +16,7 @@
 //!                                          it starts on trial at the next power-on
 //!   oos-update kexec-check FILE.oosupd     load the package's kernel and initramfs for a kexec start and unload them
 //!                                          again: nothing written, no restart
-//!   oos-update sd-mode [--execute]         restage sd.mode from system.conf for the next boot, on trial
+//!   oos-update sd-mode [hs|sdr104] [--execute]  restage the selected mode or sd.mode from system.conf, on trial
 //!   oos-update card-check                  record the running boot card mode for diagnostics
 //!   oos-update rollback [--execute]        write the rollback image back to recovery and arm OOS
 //!   oos-update gel-install FILE.oosupd --save DIR [--any-model] [--reinstall] [--execute]

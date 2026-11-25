@@ -67,6 +67,35 @@ fn activate(ui: &mut Ui, it: Item) -> bool {
     true
 }
 
+pub(in crate::ui) fn select_direct_option(ui: &mut Ui, item: Item, option: &str) -> bool {
+    match item {
+        Item::BootCardMode => update::boot_card::select(ui, option),
+        Item::EyePlace => {
+            // Place the eye even when the chosen position is already selected but the panel floats.
+            if let Some(place) = [(EyePlace::Full, "Full"), (EyePlace::Side, "Side"), (EyePlace::Under, "Under")]
+                .into_iter()
+                .find(|(_, label)| *label == option)
+                .map(|(place, _)| place)
+            {
+                ui.workspace.eye_float = None;
+                ui.eye_set_place(place);
+                ui.relayout();
+            }
+        }
+        Item::StripDock => {
+            // A dock selection redocks the card after it was floated.
+            if let Some(dock) = StripDock::ALL.into_iter().find(|dock| dock.label() == option) {
+                ui.m.strip_dock = dock;
+                ui.workspace.measure_docked = true;
+                ui.workspace.measure_float = None;
+                ui.relayout();
+            }
+        }
+        _ => return false,
+    }
+    true
+}
+
 fn menu_items(ui: &Ui, menu: MenuId) -> Vec<Item> {
     match menu {
         MenuId::Pick => {

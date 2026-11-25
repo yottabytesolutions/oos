@@ -74,3 +74,32 @@ that spacing. An unresolved crossing returns the usual unavailable value.
 - **Say what was tested.** Write in the module's doc comment against what the numbers were checked (a reference
   instrument, a datasheet, a closed-form signal).
 - Text, comments and names in English; no code from other firmware (see CONTRIBUTING.md).
+
+## Benchmark released builds over SCPI
+
+With the unit released for testing, take a test lease with `tools/scope-lease`
+and run `cargo xtask public-bench` on the host. Feed the selected channel a
+stable signal with a rising zero crossing. Keep the signal, front-end setup
+and display configuration matched between builds.
+The benchmark changes the scope settings and leaves the final view active.
+
+```sh
+cargo xtask public-bench --host example.invalid --label reference --signal-channel 2 --out /path/to/results
+cargo xtask public-bench compare /path/to/results/public-reference.json /path/to/results/public-candidate.json
+```
+
+The command uses one TCP connection on port 5555. It runs the 18 views three times
+by default (`--runs` overrides this), settles for 6 s per view and samples a
+12 s window. The report includes the actual elapsed time, checked settings
+(including unsupported or mismatched readbacks), firmware version field,
+start time in Unix seconds and boot card mode when available.
+
+Pictures/s is the UI frame-counter delta. Acquired/s, shown/s and dropped/s
+come from the acquired, used and dropped counters. Rates use the elapsed
+monotonic time between the midpoints of the two state queries. Reported FPS
+and step, render and present milliseconds come from the last state reply.
+`*OPC?` median and max are host round-trip times during the window and include
+transport and scheduling. Missing fields and counters that decrease during
+a window have no rate. Compare shows B/A of the medians alongside each
+build's median, min, max and observation count, with warnings for different
+recorded settings or card modes.

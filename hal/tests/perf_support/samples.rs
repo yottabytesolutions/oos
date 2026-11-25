@@ -2,7 +2,7 @@
 
 //! Host-only timing. Keep identical to the other crate copy (tested by the budget checker).
 //! Each sample is one fixed-size run, with reference/candidate order reversed each round.
-//! Both ratios use CPU time. Worker comparisons account for all threads in the serial test process.
+//! Worker comparisons account for all threads in the serial test process.
 //! Quantiles are computed separately: p99(candidate) / p99(reference), never p99 of paired ratios.
 
 use std::time::Duration;
@@ -14,6 +14,26 @@ pub const ROUNDS: usize = 101;
 pub struct Pair {
     pub best: (Duration, Duration),
     pub p99: (Duration, Duration),
+    instructions: Option<(u64, u64)>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct Sample {
+    cpu: Duration,
+    instructions: u64,
+}
+
+impl Sample {
+    fn add(&mut self, other: Self) {
+        self.cpu += other.cpu;
+        self.instructions += other.instructions;
+    }
+}
+
+impl From<Duration> for Sample {
+    fn from(cpu: Duration) -> Self {
+        Self { cpu, instructions: 0 }
+    }
 }
 
 fn summary(mut samples: Vec<Duration>) -> (Duration, Duration) {
@@ -22,39 +42,50 @@ fn summary(mut samples: Vec<Duration>) -> (Duration, Duration) {
     (samples[0], samples[(99 * samples.len()).div_ceil(100) - 1])
 }
 
-fn collect(rounds: usize, runs: u32, matched: bool, mut time: impl FnMut(bool, u32) -> Duration) -> Pair {
+fn collect(rounds: usize, runs: u32, matched: bool, mut observe: impl FnMut(bool, u32) -> Sample) -> Pair {
     assert!(rounds > 0, "a comparison needs rounds");
     let (mut reference, mut candidate) = (Vec::with_capacity(rounds), Vec::with_capacity(rounds));
+    let mut instructions = Vec::new();
     let (pairs, iterations) = if matched { (runs, 1) } else { (1, runs) };
     for round in 0..rounds {
-        let mut times = [Duration::ZERO; 2];
+        let mut samples = [Sample::default(); 2];
         for pair in 0..pairs {
             let first = (round + pair as usize) % 2;
-            times[first] += time(first == 1, iterations);
-            times[1 - first] += time(first == 0, iterations);
+            samples[first].add(observe(first == 1, iterations));
+            samples[1 - first].add(observe(first == 0, iterations));
         }
-        reference.push(times[0] / runs);
-        candidate.push(times[1] / runs);
+        reference.push(samples[0].cpu / runs);
+        candidate.push(samples[1].cpu / runs);
+        if samples[0].instructions > 0 {
+            instructions.push((samples[0].instructions, samples[1].instructions));
+        }
     }
-    let paired = matched.then(|| matched_best(&reference, &candidate));
+    let instructions = (!instructions.is_empty()).then(|| median_instruction_pair(&mut instructions));
+    let paired = (matched && instructions.is_none()).then(|| matched_best(&reference, &candidate));
     let (ref_best, ref_p99) = summary(reference);
     let (new_best, new_p99) = summary(candidate);
-    Pair { best: paired.unwrap_or((ref_best, new_best)), p99: (ref_p99, new_p99) }
+    Pair { instructions, ..Pair::cpu(paired.unwrap_or((ref_best, new_best)), (ref_p99, new_p99)) }
 }
 
-// Independent minima can pair different CPU scheduling regimes in a threaded fixture.
-// Minimize total CPU over matched windows that cover two thirds of the run. A full
-// window captures repeated work across dispatches and preserves both sides of each pair.
+fn median_instruction_pair(pairs: &mut [(u64, u64)]) -> (u64, u64) {
+    let ratio = |&(a, b): &(u64, u64)| b as f64 / a as f64;
+    let middle = pairs.len() / 2;
+    let (_, median, _) = pairs.select_nth_unstable_by(middle, |a, b| ratio(a).total_cmp(&ratio(b)));
+    *median
+}
+
+// Scheduler and core-placement noise can add CPU cost to either side. Rank whole
+// pairs by combined cost to find quiet rounds, even when they are scattered.
+// Take the median ratio within the fastest quarter so one cheap but skewed pair
+// cannot hide a regression. Retain both times from the selected pair for reporting.
 fn matched_best(reference: &[Duration], candidate: &[Duration]) -> (Duration, Duration) {
-    let width = (2 * reference.len()).div_ceil(3);
-    let total = |times: &[Duration]| times.iter().sum::<Duration>();
-    let (a, b) = reference
-        .windows(width)
-        .zip(candidate.windows(width))
-        .map(|(a, b)| (total(a), total(b)))
-        .min_by_key(|&(a, b)| a + b)
-        .expect("a sampled run has at least one matched window");
-    (a / width as u32, b / width as u32)
+    let mut pairs: Vec<_> = reference.iter().copied().zip(candidate.iter().copied()).collect();
+    pairs.sort_by_key(|&(a, b)| a + b);
+    pairs.truncate(pairs.len().div_ceil(4));
+    let ratio = |&(a, b): &(Duration, Duration)| b.as_secs_f64() / a.as_secs_f64();
+    let middle = pairs.len() / 2;
+    let (_, median, _) = pairs.select_nth_unstable_by(middle, |a, b| ratio(a).total_cmp(&ratio(b)));
+    *median
 }
 
 pub fn measure(rounds: usize, runs: usize, reference: impl FnMut(), candidate: impl FnMut()) -> Pair {
@@ -67,8 +98,8 @@ pub fn measure_workers(rounds: usize, runs: usize, reference: impl FnMut(), cand
     measure_cpu(process_cpu, false, rounds, runs, reference, candidate)
 }
 
-/// Alternate the paths after each picture on the same workers, then compare the fastest
-/// matched window. Long uninterrupted runs otherwise give each path its own scheduling period.
+/// Alternate the paths after each picture on the same workers and count their retired instructions
+/// when the host exposes them. CPU p99 always measures all rounds.
 pub fn measure_matched_workers(rounds: usize, runs: usize, reference: impl FnMut(), candidate: impl FnMut()) -> Pair {
     measure_cpu(process_cpu, true, rounds, runs, reference, candidate)
 }
@@ -87,14 +118,43 @@ fn measure_cpu(
 ) -> Pair {
     let count = u32::try_from(runs).expect("sample run count fits u32");
     assert!(count > 0, "a sample needs at least one run");
+    let count_instructions = matched && process_instructions() != 0;
     collect(rounds, count, matched, |is_candidate, iterations| {
         let f: &mut dyn FnMut() = if is_candidate { &mut candidate } else { &mut reference };
+        let first = if count_instructions { process_instructions() } else { 0 };
         let start = now();
         for _ in 0..iterations {
             f();
         }
-        now() - start
+        let cpu = now() - start;
+        let instructions = if count_instructions {
+            let last = process_instructions();
+            assert!(last > first, "the process instruction counter must advance");
+            last - first
+        } else {
+            0
+        };
+        Sample { cpu, instructions }
     })
+}
+
+#[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+fn process_instructions() -> u64 {
+    let mut usage = std::mem::MaybeUninit::<libc::rusage_info_v4>::uninit();
+    // SAFETY: RUSAGE_INFO_V4 requests the exact layout allocated for the current process.
+    let status = unsafe {
+        libc::proc_pid_rusage(std::process::id() as libc::pid_t, libc::RUSAGE_INFO_V4, usage.as_mut_ptr().cast())
+    };
+    if status != 0 {
+        return 0;
+    }
+    // SAFETY: a successful call initializes the requested rusage structure.
+    unsafe { usage.assume_init() }.ri_instructions
+}
+
+#[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+fn process_instructions() -> u64 {
+    0
 }
 
 fn thread_cpu() -> Duration {
@@ -110,14 +170,21 @@ fn cpu_time(clock: libc::clockid_t) -> Duration {
 }
 
 impl Pair {
+    pub(crate) fn cpu(best: (Duration, Duration), p99: (Duration, Duration)) -> Self {
+        Self { best, p99, instructions: None }
+    }
+
+    pub fn matched_ratio(&self) -> f64 {
+        self.instructions
+            .map_or_else(|| self.best.1.as_secs_f64() / self.best.0.as_secs_f64(), |(a, b)| b as f64 / a as f64)
+    }
+
     pub fn report(&self, id: &str) {
-        eprintln!(
-            "CPU_BUDGET {id} {} {} {} {}",
-            self.best.0.as_nanos(),
-            self.best.1.as_nanos(),
-            self.p99.0.as_nanos(),
-            self.p99.1.as_nanos()
-        );
+        let (marker, a, b) =
+            self.instructions.map_or(("CPU_BUDGET", self.best.0.as_nanos(), self.best.1.as_nanos()), |(a, b)| {
+                ("INSTRUCTION_BUDGET", u128::from(a), u128::from(b))
+            });
+        eprintln!("{marker} {id} {a} {b} {} {}", self.p99.0.as_nanos(), self.p99.1.as_nanos());
     }
 
     pub fn check_tail(&self, limit: f64) {
@@ -146,7 +213,7 @@ mod tests {
         let mut order = Vec::new();
         let pair = collect(ROUNDS, 1, false, |candidate, _| {
             order.push(candidate);
-            Duration::from_nanos(if candidate { 2000 } else { 4000 })
+            Duration::from_nanos(if candidate { 2000 } else { 4000 }).into()
         });
         assert_eq!(&order[..8], &[false, true, true, false, false, true, true, false]);
         assert_eq!(pair.best.0, pair.best.1 * 2);
@@ -161,7 +228,7 @@ mod tests {
         let pair = collect(ROUNDS, 1, false, |candidate, _| {
             let round = calls / 2;
             calls += 1;
-            Duration::from_nanos(if candidate && round % 10 == 0 { 5000 } else { 1000 })
+            Duration::from_nanos(if candidate && round % 10 == 0 { 5000 } else { 1000 }).into()
         });
         assert_eq!(pair.best.0, pair.best.1);
         pair.check_tail(1.5);
@@ -172,7 +239,7 @@ mod tests {
         let mut order = Vec::new();
         let pair = collect(2, 3, true, |candidate, runs| {
             order.push((candidate, runs));
-            Duration::from_nanos(if candidate { 5 } else { 4 })
+            Duration::from_nanos(if candidate { 5 } else { 4 }).into()
         });
         assert_eq!(
             order,
@@ -195,15 +262,41 @@ mod tests {
     }
 
     #[test]
-    fn minimum_cost_matched_pairs_require_comparable_rounds() {
-        let samples = |times: [u64; 12]| times.map(Duration::from_nanos);
-        let reference = samples([500, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1950, 1950, 1950]);
-        let mut candidate = samples([2000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1000, 1950, 1950, 1950]);
-        assert_eq!(matched_best(&reference, &candidate), (Duration::from_nanos(1000), Duration::from_nanos(1000)));
-        for duration in &mut candidate[1..9] {
-            *duration += Duration::from_nanos(30);
-        }
-        assert_eq!(matched_best(&reference, &candidate).1, Duration::from_nanos(1030));
+    fn matched_cost_rejects_a_regression_between_scattered_noisy_rounds() {
+        let measure = |added: u64| {
+            let mut calls = 0;
+            collect(20, 2, true, |is_candidate, _| {
+                let round = calls / 4;
+                calls += 1;
+                let nanos = match (round % 4, is_candidate) {
+                    (0, true) if round == 0 => 950,
+                    (0, true) => 1000 + added,
+                    (1 | 2, true) | (3, false) => 1200,
+                    _ => 1000,
+                };
+                Duration::from_nanos(nanos).into()
+            })
+        };
+        assert_eq!(measure(0).best, (Duration::from_nanos(1000), Duration::from_nanos(1000)));
+        assert_eq!(measure(20).best, (Duration::from_nanos(1000), Duration::from_nanos(1020)));
+    }
+
+    #[test]
+    fn matched_instructions_detect_work_even_when_candidate_cpu_is_lower() {
+        let mut calls = 0;
+        let pair = collect(9, 2, true, |is_candidate, _| {
+            let round = calls / 4;
+            calls += 1;
+            let instructions = match (is_candidate, round) {
+                (true, 0) => 900,
+                (true, 8) => 1100,
+                (true, _) => 1020,
+                (false, _) => 1000,
+            };
+            Sample { cpu: Duration::from_nanos(if is_candidate { 500 } else { 1000 }), instructions }
+        });
+        assert_eq!(pair.matched_ratio(), 1.02);
+        assert_eq!(pair.p99, (Duration::from_nanos(1000), Duration::from_nanos(500)));
     }
 
     #[test]

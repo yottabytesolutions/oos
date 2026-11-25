@@ -37,12 +37,13 @@ F0 staging raised it to 1.02 after repeated runs of the same binary reported rat
 0.99706, 1.01651 and 1.01684. The 1.02 limit left about 0.316 percentage points above the
 highest observation. The CPU p99 limit was 1.515 throughout.
 
-The current guard compares matched CPU time. It alternates diagnostics on and off after each
-picture and sums 16 pictures per side in each of 101 rounds. It selects the window spanning
-two thirds of those rounds with the lowest combined CPU time. Both sides reuse the same
-workers and buffers and wait for the same batch completion. This measures the CPU work of
-the caller, coordinator and workers with less sensitivity to host descheduling. At frame cutover,
-the matched CPU ratio returns to a cap of 1.01. The CPU p99 cap stays at 1.515.
+The guard alternates diagnostics on and off after each picture and sums 16 pictures per side
+in each of 101 rounds. Both sides reuse the same workers and buffers and wait for the same
+batch completion. On Apple silicon, the process counter covers retired instructions across the
+caller, coordinator and workers. The median paired instruction ratio filters occasional differences
+in the scheduler's wake path. On hosts without the counter, rank paired rounds by combined CPU
+time and compare the median ratio in the fastest quarter to reduce transient load noise.
+The matched cost ratio cap is 1.01 and the independent CPU p99 ratio cap is 1.515.
 
 The six workloads use one, two and four channels at 1 and 10 µs/div. Keep eight warmups,
 picture and record counts, and deterministic pixel and pacing equivalence checks. Release

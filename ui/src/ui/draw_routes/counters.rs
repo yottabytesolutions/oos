@@ -82,9 +82,9 @@ fn perf_guard_pipeline_counters() {
             let build = build.borrow();
             println!("PIPELINE_COUNTERS channels={channels} tdiv={tdiv} frames={}", build.frames);
             pair.report("perf_guard_pipeline_counters");
-            // ADR 0031: compare the matched worker CPU cost at the cutover limit.
-            let ratio = pair.best.1.as_secs_f64() / pair.best.0.as_secs_f64();
-            println!("COUNTERS_CPU_MATCHED ratio={ratio:.9} limit=1.01");
+            // ADR 0031: compare matched worker cost at the cutover limit.
+            let ratio = pair.matched_ratio();
+            println!("COUNTERS_MATCHED ratio={ratio:.9} limit=1.01");
             assert!(ratio <= 1.01, "{pair:?}");
             pair.check_tail(1.515);
             assert_eq!(build.route.ui.batch_picture.frames as usize, build.frames);

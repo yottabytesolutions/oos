@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parent.parent
 ALLOCATIONS = {'deposit_spans', 'deposit_dots', 'deposit_codes', 'cheap_measurements',
                'core_matching_learn_and_decode', 'core_matching_worker_decode'}
 WORK_CASES = {'DMA_READ_WORK': 5, 'SPAN_WORK': 18, 'DOT_WORK': 9, 'UPLOAD_WORK': 2, 'BATCH_PICTURE_WORK': 2}
+PIPELINE_COUNTERS = 'perf_guard_pipeline_counters'
 
 
 def budgets(text):
@@ -35,14 +36,15 @@ def check(rows, log):
     work = dict.fromkeys(WORK_CASES, 0)
     for line in log.splitlines():
         # libtest may prefix an observation with its test name without a newline.
-        if 'CPU_BUDGET ' in line:
-            fields = line.split('CPU_BUDGET ', 1)[1].split()
+        marker = next((marker for marker in ('CPU_BUDGET ', 'INSTRUCTION_BUDGET ') if marker in line), None)
+        if marker:
+            fields = line.split(marker, 1)[1].split()
             name, *values = fields
-            if name not in rows or len(values) != 4:
-                raise ValueError('unknown or malformed CPU observation')
+            if name not in rows or len(values) != 4 or (marker == 'INSTRUCTION_BUDGET ' and name != PIPELINE_COUNTERS):
+                raise ValueError('unknown or malformed host ratio observation')
             a, b, p, q = map(int, values)
             if min(a, b, p, q) <= 0:
-                raise ValueError('invalid CPU distribution')
+                raise ValueError('invalid host ratio distribution')
             best, tail = rows[name]
             if b / a > best or q / p > tail:
                 raise ValueError(f'{name}: best {b/a:.3f} <= {best}, p99 {q/p:.3f} <= {tail} failed')
@@ -59,7 +61,7 @@ def check(rows, log):
         raise ValueError(f'missing observations: cpu={sorted(set(rows)-seen)}, allocations={sorted(ALLOCATIONS-allocations)}')
     if work != WORK_CASES:
         raise ValueError(f'expected deterministic work observations {WORK_CASES}, got {work}')
-    return (f'{len(seen)} CPU ratio budgets, {len(allocations)} zero-allocation budgets and '
+    return (f'{len(seen)} host ratio budgets, {len(allocations)} zero-allocation budgets and '
             f'{sum(work.values())} bounded-work cases passed')
 
 
@@ -79,7 +81,7 @@ def main():
         print(check(rows, args.log.read_text()))
     else:
         for name, (best, tail) in rows.items():
-            print(f'{name}: best CPU <= {best}, p99 CPU <= {tail}')
+            print(f'{name}: cost ratio <= {best}, p99 CPU ratio <= {tail}')
         print('unit absolute budgets: not measured on the host')
 
 

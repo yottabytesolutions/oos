@@ -22,7 +22,7 @@ class PerfBudgets(unittest.TestCase):
     def test_real_table_and_samplers(self):
         self.assertEqual(len(self.rows), 10)
         BUDGET.sampler_copies_match(ROOT)
-        self.assertIn('10 CPU ratio budgets', BUDGET.check(self.rows, '\n'.join(self.lines)))
+        self.assertIn('10 host ratio budgets', BUDGET.check(self.rows, '\n'.join(self.lines)))
 
     def test_missing_unknown_and_nonpositive_fail(self):
         for lines in [[], self.lines[1:], self.lines + ['CPU_BUDGET unknown 1 1 1 1'],
@@ -66,6 +66,7 @@ class PerfBudgets(unittest.TestCase):
         source = (ROOT / 'ui/src/ui/draw_routes/counters.rs').read_text()
         self.assertIn('assert!(ratio <= 1.01', source)
         self.assertIn('pair.check_tail(1.515)', source)
+        self.assertIn('let ratio = pair.matched_ratio()', source)
         for contract in ['for channels in [1, 2, 4]', 'for tdiv in [1e-6, 10e-6]',
                          'for _ in 0..8', 'measure_matched_workers(crate::perfguard::ROUNDS, 16, baseline, counted)',
                          'assert_eq!(build.route.ui.batch_picture.frames as usize, build.frames)',
@@ -74,6 +75,16 @@ class PerfBudgets(unittest.TestCase):
                          'sampled claims must be exercised', 'compare(&picture(',
                          'reference.route.ui.wfm_total, candidate.route.ui.wfm_total']:
             self.assertIn(contract, source)
+
+    def test_instructions_can_supply_only_the_pipeline_cost_ratio(self):
+        name = BUDGET.PIPELINE_COUNTERS
+        lines = [line.replace('CPU_BUDGET ', 'INSTRUCTION_BUDGET ') if name in line else line for line in self.lines]
+        self.assertIn('10 host ratio budgets', BUDGET.check(self.rows, '\n'.join(lines)))
+        for invalid in (f'INSTRUCTION_BUDGET {name} 1000 1020 1000 1000',
+                        f'INSTRUCTION_BUDGET {name} 1000 1010 1000 1516',
+                        'INSTRUCTION_BUDGET batch_decode 1000 100 1000 100'):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                BUDGET.check(self.rows, '\n'.join(lines + [invalid]))
 
     def test_each_pipeline_case_still_rejects_best_or_cpu_tail_regression(self):
         name = 'perf_guard_pipeline_counters'

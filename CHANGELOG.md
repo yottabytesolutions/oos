@@ -1,13 +1,72 @@
 # Changes
 
-## 0.2.2
+## 0.2.2: Acquisition and update reliability
 
-- Protect the kexec restart marker, kexec diagnostic files and saved WLAN settings against torn writes during
-  power loss. Missing or rejected WLAN configuration starts with an empty network list.
-- Restart, power-off and staged updates cleanly unmount the data area when storage is healthy.
-- Bound stalled acquisition DMA reads to 1 s by default, record timeout evidence and reset playback before re-arming. Correct the DMA length for the smallest raw windows.
-- Set the next boot's SD card mode in System > Boot card mode. One power cut during an SDR104 update start leaves
-  SDR104 available. Two consecutive missed SDR104 starts or a known slower timing on a cold SDR104 start select HS.
+Restart and update now cleanly unmount healthy storage, and acquisition can recover from a stalled DMA read.
+
+From 0.2.1, upload the release's signed `.oosupd` on the scope's web Update page. From upstream OOS, verify the
+labelled bridge against this release's `SHA256SUMS` and upload it on the upstream web Update page. See the
+[switching guide](docs/switching.md) for the bridge procedure.
+
+Fixed:
+
+- Restart, power-off and staged updates sync the data area, remount it read-only and unmount it. A busy or failed
+  mount operation is reported separately from the read-only cover. Removable media gets a bounded unmount before
+  the data area. If shutdown returns, OOS verifies that writable data access has been restored before saving again.
+- Stalled acquisition DMA waits use a 1 s default. `acq_dma_timeouts` counts timeouts, and a rate-limited log
+  records the transfer, playback plan and FPGA state. The worker discards the failed read, services requests during
+  bounded reset and re-arm, and backs off if the FPGA stays wedged. Capture requests wait for playback to recover.
+- Corrected the smallest raw playback lengths, including the CH1+CH2 and CH1+CH3 plans at 1 ns/div.
+- Kexec restart markers, diagnostic files and saved Wi-Fi settings are replaced durably. The update paths share
+  one restart marker writer. Transient Wi-Fi start failures preserve saved networks. Missing or rejected Wi-Fi
+  configuration starts with an empty network list.
+- RUN clock floors are verified before they are reported as applied. Rollback receipts survive retryable failures
+  and are resolved for clock devices that are absent.
+
+Changed:
+
+- Closing the data area blocks new persistent writes while an admitted update or rollback can finish. Device
+  settings saves share the update lock.
+- SDR104 trials check the negotiated timing. A known slower cold SDR104 start or two consecutive missed SDR104
+  starts latch High Speed (HS) for future installs. The first counted miss leaves SDR104 available. An explicit
+  SDR104 selection clears the latch and miss count.
+- The pipeline performance guard counts retired instructions where available, including worker threads. Other
+  performance guards still use CPU time.
+- Updated the install and switching guides and documented the planned I/O layer.
+
+Added:
+
+- **System > Boot card mode** shows the requested and negotiated modes and can restage HS or SDR104 for the next
+  boot. A manual restage does not run a trial before reboot. Choosing SDR104 on a card that cannot switch to it
+  can require a card reader to recover.
+- `cargo xtask public-bench` runs a SCPI benchmark with a pinned trigger, proves acquisition is running before
+  sampling and restores the starting settings on completion or interruption.
+- `cargo xtask bump` updates the release version across the workspace and changelog.
+- An observer build can arm a one-shot DMA stall to test timeout diagnosis and recovery.
+
+Verified on a DHO924S on 2026-11-25 with observer build `20261125-141053`:
+
+- Two staged installs confirmed as “SDR104 trial, observed sdr104”. Configuration and the calibration copy stayed
+  unchanged. `c2h_timeout` read `1` after a kexec install, a restart and a cold start.
+- At 1 ns/div, every channel combination ran at 32.5 pictures/s without a stall. The CH1+CH2 and CH1+CH3 pictures
+  were stable through the trigger point, confirming the `128/ratio` playback rule on this unit.
+- A restart logged the data unmount. The next start mounted it without journal replay or a notice. A power cut just
+  after a restart command found the data area clean at startup, with configuration and calibration unchanged.
+- A power cut during the staged slot write returned to the running build and reported that the staged update was
+  never started. Startup repair recovered the journal. Configuration and calibration stayed unchanged, SDR104
+  remained selected and no fallback latched.
+- A forced DMA stall timed out after 1 s with 0 of 2,703,368 bytes read. The timeout counter reached 1, one log
+  record captured the plan and FPGA state, and acquisition resumed unaided at the normal rate.
+- In three pinned-trigger `public-bench` runs, shown waveforms/s across 18 views were 0.989 to 1.036 times 0.2.1,
+  with 32.5 pictures/s in every view.
+
+Other coverage is host-only, including USB shutdown, a cut during unmount, the counted single SDR104 miss, FPGA
+back-off, a link fault, a failed 1.8 V switch, Wi-Fi, clock floors under kernel cooling and manual use of the Boot
+card mode menu. See [known issues](docs/known-issues.md).
+
+Code growth: The shutdown helper adds bounded filesystem cleanup and recovery. The DMA and clock paths add
+diagnostics and keep enough state to limit or retry recovery. The updater adds durable storage operations and
+SDR104 trial evidence. The new host tools automate repeatable benchmarks and version bumps.
 
 ## 0.2.1: Fixes from the first release
 

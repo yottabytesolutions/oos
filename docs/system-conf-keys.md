@@ -61,7 +61,8 @@ touch /tmp/oos-observe-dma-stall-once && killall -TERM oos-ui
 The `rootfs/initramfs/bin/oos-ui-loop` supervisor removes the RAM marker and passes
 `OOS_OBSERVE_DMA_STALL_ONCE=1` for the next start. The first ordinary batch DMA asks for eight extra
 bytes. Inspect the result with `grep -F 'c2h DMA timeout' /tmp/oos-ui.log`. A release-configuration build
-ignores the variable. The one-second configuration, injection and restart still need verification on hardware.
+ignores the variable. On a DHO924S on 2026-11-25, `c2h_timeout` read `1` after a kexec install, a restart and a
+cold start. Observer build `20261125-141053` logged one injected timeout and resumed acquisition unaided.
 
 ## Acquisition and rendering switches
 

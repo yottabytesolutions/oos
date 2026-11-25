@@ -311,7 +311,8 @@ intended software writes.
 1. For the stock minimum (roundup4(n)/ratio == 8), OOS writes 128/ratio to 0x11f0. It reads 256 sample bytes
    per frame plus any header, then keeps the logical frame bytes. The previous plan requested just the logical
    bytes, for example 32 bytes with two channels at 1 ns/div after programming 512 bytes. The 1 ns/div
-   host matrix plans for masks 0x3 (CH1 + CH2) and 0x5 (CH1 + CH3) exercise the assumed 128/ratio rule.
+   host matrix plans for masks 0x3 (CH1 + CH2) and 0x5 (CH1 + CH3) exercise the 128/ratio rule. Both pictures
+   were stable through the trigger point on a DHO924S on 2026-11-25.
    Confirm it on a DHO924S. If the FPGA sends fewer bytes than requested, DMA can time out and leave the
    display blank or frozen. If the FPGA sends extra bytes, they can shift later frames, producing
    traces that jump in phase or show the wrong channel's samples.

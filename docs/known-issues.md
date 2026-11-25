@@ -1,6 +1,6 @@
 # Known issues
 
-Observed on a DHO924S on 2026-11-23 and 2026-11-24.
+Limits for 0.2.2. Observations are from a DHO924S unless otherwise noted.
 
 | Condition | What you see | Workaround | Status |
 |---|---|---|---|
@@ -8,7 +8,8 @@ Observed on a DHO924S on 2026-11-23 and 2026-11-24.
 | Experimental capture reduction with `acq.capture = auto` | At 10 µs/div, the FPGA read falls from 17.4 ms to about 3 ms, but the picture rate falls to about 25 per second. The full-rate reference record takes a picture slot five times per second. | Leave `acq.capture = full` (the default). | Experimental. |
 | Explicit memory depth of 1 M points or more | 27–28 pictures per second, compared with 32.5 in other views. | Use a shallower depth when the measurement allows it. | Measured throughput limit. |
 | Four channels active or measurements enabled | To keep an even cadence, pictures can appear one refresh later, 30.8 ms after the acquisition step instead of 20.5 ms. In the measurement view, 2.2% of pictures still missed their target. | Reduce active channels or disable measurements when possible. | Measured scheduling behavior. |
-| A DMA read stalls | The default timeout is 1 s per DMA transfer wait. The worker drops the failed read and waits for the FPGA to report stopped after reset. | Check `acq_dma_timeouts` in `:SYSTem:STATe?` and the acquisition log. | The observed stall was tied to an invalid playback plan. The new bound and recovery await unit verification. |
+| A DMA read stalls | The default timeout is 1 s per DMA transfer wait. The worker drops the failed read and attempts bounded recovery. | Check `acq_dma_timeouts` in `:SYSTem:STATe?` and the acquisition log. | A forced stall timed out and recovered on a DHO924S on 2026-11-25. Persistent FPGA failure and link-fault handling are host-tested only. |
+| A DMA read needs a millisecond-scale timeout | The driver timeout parameter accepts whole seconds. The shortest configurable wait is 1 s. | Use the 1 s default. | A millisecond read bound is still pending. |
 | A kexec update payload exceeds 90 MiB | The updater refuses the kexec payload. See the [measured margin at 89.1 MB](update.md#purgatory-and-the-watchdog-budget) for the test conditions. | Use a signed package whose staged payload fits the limit. | Size limit in effect. |
 | A rolled-back or foreign image is in `recovery` | Start-up marks the update state untracked when no trial is open, so the next signed install is not refused as older. A build this fork tracked itself keeps the downgrade guard. | Run `oos-update status` to see the reason. Before leaving for another system, run `oos-update leave`. | By design. |
 | Logic analyser acquisition | The logic analyser reads data for one record per batch. | None known. | Current acquisition limit. |
@@ -19,7 +20,9 @@ Observed on a DHO924S on 2026-11-23 and 2026-11-24.
 | The stock start menu's Upgrade icon is used for a GEL install | The icon opens the online updater, which says “No firmware available”. | Open **Start menu > Storage > Upgrade** and select the GEL under **File Path**. | Separate stock update paths. |
 | A USB stick is already mounted when the modified stock scope application starts | The application can keep stopping. | Unplug the stick. Insert it after the stock application is up. | Observed on a modified stock scope application. |
 | A warm restart follows a GEL or bridge install | The card can negotiate High Speed (HS) during an SDR104 trial. The panel can show “SD card is in slow mode”. | Try a cold start. To clear an active fallback, select SDR104 in **System > Boot card mode**. | Both modes were observed during switching. The updater ignores the slowdown for fallback after its own marked restart. |
-| Power is lost or the card wedges during an SDR104 update start | The next install still offers SDR104 after one missed start. Two consecutive missed SDR104 starts select HS. | If the card wedges, remove power. Check the last update event and use **System > Boot card mode** to retry SDR104 explicitly. | The fallback rule is tested with a card fake and awaits a unit run. |
+| Power is lost or the card wedges during an SDR104 update start | The next install still offers SDR104 after one counted miss. Two consecutive missed SDR104 starts select HS. | If the card wedges, remove power. Check the last update event and use **System > Boot card mode** to retry SDR104 explicitly. | The counted miss and fallback are host-tested. A cut during the earlier slot write left SDR104 available on a DHO924S on 2026-11-25. |
+| SDR104 is selected by hand on a card that cannot switch to it | The mode is restaged without a live trial before reboot. A failed 1.8 V switch can prevent startup before software rollback can run. | Use a card reader to recover. Keep HS for cards that cannot switch. | Manual selection and the failed voltage switch were not exercised on the unit. |
+| A performance guard other than the pipeline guard runs on a busy host | It still measures CPU time, which can vary with host conditions. | Rerun the performance guard on a quiet host. | Only the pipeline guard uses retired instructions where available. |
 
 Trigger refinement was checked with the probe compensation output, a bursty logic signal and a 100 kHz,
 3.3 V square wave. Sine and slow-edge signals remain untested.

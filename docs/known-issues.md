@@ -20,8 +20,6 @@ Observed on a DHO924S on 2026-11-23 and 2026-11-24.
 | A USB stick uses exFAT | The stock system does not show the stick in Storage. It mounts FAT filesystems only. | Use a FAT32 stick. | Observed on stock. |
 | The stock start menu's Upgrade icon is used for a GEL install | The icon opens the online updater, which says “No firmware available”. | Open **Start menu > Storage > Upgrade** and select the GEL under **File Path**. | Separate stock update paths. |
 | A USB stick is already mounted when the modified stock scope application starts | The application can keep stopping. | Unplug the stick. Insert it after the stock application is up. | Observed on a modified stock scope application. |
-| A GEL runs under stock | `oos-install.log` can say `could not save vendor key cache: No such file or directory` even on a successful install. | Check for `OOS selected for the next power-on` and `exit code 0` in the log. | Harmless when the install succeeds. |
-| The same build is reinstalled from a GEL | Start-up drops the tracked rollback entry. `oos-update status` reports `untracked (recovery changed since build ...)`. | Check `running` and `recovery` in the status report. A subsequent successful signed update re-establishes tracking. | Reconciliation checks the image as well as the build stamp. |
 | A warm restart follows a GEL or bridge install | The card can negotiate High Speed (HS) during an SDR104 trial. The panel can show “SD card is in slow mode”. | Try a cold start. If `oos-update status` reports an SDR104 fallback, restage HS and then SDR104 as described above. | Both modes were observed during switching. |
 
 Trigger refinement was checked with the probe compensation output, a bursty logic signal and a 100 kHz,

@@ -6,9 +6,9 @@ again. The table includes fixes that need the card in a reader, so you have to o
 
 | What you see | Meaning | What to do |
 |---|---|---|
-| The stock system starts instead of OOS | one-shot mode, or the loader refused the OOS image and used the fallback | `boot/switch.py show`, then select OOS again. If that repeats, rebuild the image. |
+| The stock system starts instead of OOS | one-shot mode, or the loader refused the OOS image and used the fallback | With the card in a reader, run `sudo python3 boot/switch.py show /dev/rdiskM`, substituting your card device. Select OOS again. |
 | Rigol logo stays, nothing else, on every start | the kernel hangs before OOS runs | `sudo python3 boot/switch.py stock /dev/rdiskM --execute`, then install a working image |
-| Black screen; a Rockchip USB device (2207:330c) appears | the loader refused `recovery` and has no fallback | `switch.py stock`. If needed, `sudo python3 boot/card-install.py restore /dev/rdiskM --backup backups/recovery-<date>.bin --execute` |
+| Black screen; a Rockchip USB device (2207:330c) appears | the loader refused `recovery` and has no fallback | Follow [Return to stock from the card](Going-back-to-stock#return-to-stock-from-the-card). If recovery needs restoring, run `sudo python3 boot/card-install.py restore /dev/rdiskM --backup RECOVERY.bin --execute` with your card device and saved recovery backup. |
 | Start-up screen stops at a step | a hardware step failed | Read the stage on the screen. Logs are at `/tmp/oos-boot.status` and `/tmp/oos-cold.log` over SSH. |
 | A new build misbehaves | | System > Roll back update, or `oos-update rollback --execute` |
 | Nothing helps | | Write `sd-original.img` to the second card again ([write the clone](Install-on-a-second-card#write-the-clone-to-the-second-card)) |
@@ -67,7 +67,7 @@ If power went off while the new image was starting by kexec, `oos-update status`
 while writing the staging slot can instead leave a “Staged update ... was never started” event. The next install
 can reuse that slot.
 
-If the interrupted start was an SDR104 trial, status also says “SDR104 was not confirmed: falling back to hs”.
+If the interrupted start was an SDR104 trial, status also says “SDR104 trial was not confirmed: falling back to hs”.
 The running system keeps its negotiated mode. The next install selects High Speed (HS) until you clear the fallback.
 Restaging requires a tracked, confirmed image in `recovery`. If the image is untracked after a GEL install, try a
 cold start for a slow-mode warning. A successful signed update re-establishes tracking.
@@ -87,7 +87,7 @@ Run `oos-update status` in a shell on OOS. Read these lines together.
 | `boot magic` | The next power-on selection. `OOSK` selects OOS, and `KRNL` selects stock Android. |
 | `mode` | `persist` reselects OOS after a healthy start. `oneshot` leaves stock selected. Read `boot magic` for the immediate next power-on. |
 | `recovery` and `rollback` | The image in the OOS boot slot and the previous image, if available. The rollback slot may temporarily hold a staged candidate. Full status checks the loader IDs and compares image hashes with saved tracking entries. |
-| `tracking` | Why the image is untracked. This can follow a GEL reinstall of the same build or `oos-update leave`. |
+| `tracking` | Why the image is untracked, for example after `oos-update leave` or a GEL install of a different build. As of 0.2.1, reinstalling the same tracked build preserves tracking. |
 | `trial` and `last event` | Whether an update still awaits confirmation, and the last recorded result or interruption. Look for `confirmed (trial passed)` to verify success. `trial none` also appears after a rollback. |
 | `data journal` and `trusted keys` | Whether the data area has a journal and which signing keys the running updater trusts. |
 

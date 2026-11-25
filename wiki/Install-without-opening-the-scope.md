@@ -51,14 +51,16 @@ If the image is already byte-for-byte identical, the log says `recovery already 
 
 You need `adb` on your computer and stock already offering root ADB on port 55555. Build `oos-update` for the
 scope and prepare the signed package before starting. See [[Building OOS]].
+For 0.2.1 you can use `oos-v0.2.1.oosupd` from the release after checking `SHA256SUMS`. The commands below
+use the local package name `oos-dev.oosupd`. Use the same package name in the copy, install and cleanup commands.
 
 1. Connect to stock, save calibration and licences, and copy the updater and package across. Replace
    `<scope-ip>` with the scope's IP address.
 
    ```sh
-   adb connect <scope-ip>:55555
+   adb connect '<scope-ip>:55555'
    adb root
-   adb connect <scope-ip>:55555   # adb root drops the connection
+   adb connect '<scope-ip>:55555'   # adb root drops the connection
    adb pull /rigol/data rigol-data
    adb push target/aarch64-unknown-linux-musl/release/oos-update /data/local/tmp/
    adb push target/image/oos-dev.oosupd /data/local/tmp/

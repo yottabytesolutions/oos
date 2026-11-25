@@ -29,10 +29,10 @@ fn dma_timeout_discards_the_batch_and_the_next_batch_succeeds() {
         after[..4],
         [Event::Read(STATUS, _), Event::Read(DONE, _), Event::Read(0x4010, _), Event::Read(0x4014, _)]
     ));
-    let retry = after.iter().position(|event| *event == Event::Wait(RETRY)).unwrap();
-    assert!(after[..retry].iter().any(|event| matches!(event, Event::Write(0x1000, v) if v & 0x10 != 0)));
+    let reset = after.iter().position(|event| matches!(event, Event::Write(0x1000, v) if v & 0x10 != 0)).unwrap();
     let rearm = after.iter().position(is_arm).unwrap();
-    assert!(after[retry..rearm].iter().any(|event| matches!(event, Event::Read(STATUS, v) if v & STOPPED != 0)));
+    assert!(after[reset..rearm].iter().any(|event| matches!(event, Event::Read(STATUS, v) if v & STOPPED != 0)));
+    assert!(!after[..rearm].contains(&Event::Wait(Duration::from_millis(20))));
     assert_eq!(outcome.events.iter().filter(|event| is_arm(event)).count(), 2);
     assert_eq!(outcome.events.iter().filter(|event| matches!(event, Event::Dma(_))).count(), 1);
     assert_eq!(outcome.screens, vec![(0..4).map(|slot| Frame::live(u64::from(slot) + 1, slot, 4)).collect::<Vec<_>>()]);

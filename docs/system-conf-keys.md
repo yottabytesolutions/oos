@@ -23,15 +23,15 @@ for the next image. After a persistently slow start, choose `hs` and follow the 
 ## XDMA startup
 
 `xdma.params` accepts space-separated driver arguments. Use each key at most once. An invalid line
-falls back to polling with both timeouts set to 1 second. The image requests `poll_mode=0` on normal
+falls back to polling with a C2H timeout of 1 second. The image requests `poll_mode=0` on normal
 boots. Kexec forces `poll_mode=1` and keeps valid timeout overrides.
 
 - `poll_mode` accepts `0` for interrupt completion or `1` for polling. If neither completion
   argument is present, OOS uses `1`.
 - `interrupt_mode` accepts `0` for auto, `1` for MSI, `2` for legacy INTx or `3` for MSI-X. If
   omitted, the driver uses its own default.
-- `c2h_timeout` and `h2c_timeout` accept decimal integers `1` through `10` seconds. Each defaults
-  to `1` independently.
+- `c2h_timeout` and `h2c_timeout` accept decimal integers `1` through `10` seconds. OOS defaults
+  C2H to `1` and leaves H2C at the driver default of `10` unless explicitly overridden.
 
 The timeouts apply to driver transfer waits. Acquisition can wait longer for a trigger before
 starting DMA. C2H play reads use requests of at most 4 MiB, or about 13.51 ms each at the measured
@@ -47,9 +47,13 @@ Detailed logs are limited to one per five seconds. Bytes transferred inside the 
 inaccessible to userspace. The XDMA timeout message reports any bytes from completed descriptor
 chains within that call.
 
-For a unit verification session, start a debug build with the `private-picture-counts` feature and
+After a timeout the worker disarms, services requests between 20 ms polls and retries disarm every
+200 ms. It reconfigures from the current request after STOPPED, a link error, or a one-second deadline.
+The state report and log distinguish an unreadable FPGA status from a deadline without STOPPED.
+
+For a unit verification session, start an observer build with the `private-picture-counts` feature and
 `OOS_OBSERVE_DMA_STALL_ONCE=1` in the UI process environment. Its first ordinary batch DMA asks for
-eight extra bytes. The injection is compiled out of release builds. The one-second configuration,
+eight extra bytes. Builds without the observer feature exclude the injection. The one-second configuration,
 injection and restart still need verification on hardware.
 
 ## Acquisition and rendering switches

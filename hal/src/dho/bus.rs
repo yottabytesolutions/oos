@@ -52,6 +52,15 @@ pub const MAX_READ: usize = 4 << 20;
 /// buffer that shares a cache line or page with other heap data lets the transfer's cache maintenance corrupt that data
 /// (oos-ui died in `free()` at 100 ns/div with 2500-byte reads, 2026-11-04). The region grows to the largest read and
 /// is never zero-filled again: a read either fills `bytes` completely or fails.
+#[cfg_attr(
+    not(feature = "private-picture-counts"),
+    doc = "The stall injector is absent from builds without the observer feature.
+
+```compile_fail
+use oos_hal::dho::bus::DmaBuf;
+DmaBuf::new().stall_next_play();
+```"
+)]
 #[derive(Default)]
 pub struct DmaBuf {
     raw: Vec<u8>,
@@ -61,7 +70,7 @@ pub struct DmaBuf {
     cap: usize,
     /// valid bytes from `off`
     len: usize,
-    #[cfg(all(feature = "private-picture-counts", debug_assertions))]
+    #[cfg(feature = "private-picture-counts")]
     stall_next: bool,
 }
 
@@ -128,13 +137,13 @@ impl DmaBuf {
         Ok(&mut self.raw[off..off + bytes])
     }
 
-    /// Ask for eight bytes beyond the next sequenced playback, once, in a debug observer build.
-    #[cfg(all(feature = "private-picture-counts", debug_assertions))]
+    /// Ask for eight bytes beyond the next sequenced playback, once, in an observer build.
+    #[cfg(feature = "private-picture-counts")]
     pub fn stall_next_play(&mut self) {
         self.stall_next = true;
     }
 
-    #[cfg(all(feature = "private-picture-counts", debug_assertions))]
+    #[cfg(feature = "private-picture-counts")]
     pub(super) fn observer_read_bytes(&mut self, planned: usize) -> usize {
         planned + 8 * usize::from(std::mem::take(&mut self.stall_next))
     }

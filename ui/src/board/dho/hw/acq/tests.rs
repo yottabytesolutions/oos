@@ -16,6 +16,7 @@ mod bounds;
 mod calibration_hold;
 mod conservation;
 mod deposit;
+mod dma_recovery;
 mod first_trigger;
 mod picture;
 mod raw;

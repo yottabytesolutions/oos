@@ -23,7 +23,10 @@ use oos_hal::dho::{
     avg,
     bus::{Bus, DmaBuf},
     hz,
-    seq::{self, time::Clock},
+    seq::{
+        self,
+        time::{Clock, ExecuteError},
+    },
 };
 use std::{io::Read, sync::Arc, time::Duration};
 
@@ -53,7 +56,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
         );
         let capture = Capture { settings: &b, params, request: &request, uncapped };
         if let Err(error) = seq::validate_readout(&b, params) {
-            self.batch.failed(&mut io.batch_io(), &capture, &self.out, error.to_string());
+            self.batch.failed(&mut io.batch_io(), &capture, &self.out, error.to_string().into());
             return;
         }
         self.clear_average(io, request.avg_clear);
@@ -254,23 +257,23 @@ impl BatchState {
         io: &mut ReadIo<'_, impl Bus, impl Read, impl LoopClock>,
         capture: &Capture<'_>,
         out: &HwShared,
-        error: String,
+        error: ExecuteError,
     ) {
-        if error == seq::NEW_SETTINGS {
+        if error.message() == seq::NEW_SETTINGS {
             return;
         }
-        if error.starts_with("c2h read of ") || super::dma_fault::is_timeout(&error) {
+        if matches!(&error, ExecuteError::DmaRead(_) | ExecuteError::DmaTimeout(_)) {
             drawpipe::counters().acquisition.add(crate::board::counters::Event::BatchDmaFailure);
         }
         let unit = io.state.mask_ctrl().is_some() || io.state.zone_ctrl().is_some();
-        let stalled = is_stall(&error);
+        let stalled = is_stall(error.message());
         if logs_acquire_error(stalled, unit) {
-            io.report_read_error(out, format!("acquire: {error}"));
+            io.report_read_error(out, "acquire", error);
         }
         if self.guard.batch(stalled, unit, unit_key(capture.settings, mask_map()), io.clock.now()) {
             status(out, "mask/zone unit: no acquisition twice, software fallback for these settings".into());
         }
-        if !lock(out).hold {
+        if !io.dma_fault.pending() && !lock(out).hold {
             io.clock.wait(Duration::from_millis(200));
         }
     }

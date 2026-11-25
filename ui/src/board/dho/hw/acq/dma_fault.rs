@@ -1,27 +1,32 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::{disarm, status, HwShared};
+use super::{lifecycle, status, CaptureStatus, HwShared};
 use crate::board::counters::Event;
 use oos_hal::dho::{
     bus::Bus,
     scu,
     seq::{
         self,
-        time::{Clock, DMA_TIMEOUT},
+        time::{Clock, ExecuteError},
     },
 };
 use std::time::{Duration, Instant};
 
+const POLL: Duration = Duration::from_millis(20);
+const RETRY: Duration = Duration::from_millis(200);
+const LIMIT: Duration = Duration::from_secs(1);
+
 #[derive(Default)]
 pub(super) struct DmaFault {
     last_log: Option<Instant>,
-    awaiting_idle: bool,
-    #[cfg(all(feature = "private-picture-counts", debug_assertions))]
+    recovery: Option<Recovery>,
+    #[cfg(feature = "private-picture-counts")]
     pub(super) inject_stall: bool,
 }
 
-pub(super) fn is_timeout(message: &str) -> bool {
-    message.contains(DMA_TIMEOUT)
+struct Recovery {
+    deadline: Instant,
+    retry_at: Instant,
 }
 
 impl DmaFault {
@@ -31,33 +36,71 @@ impl DmaFault {
         bar: &mut impl Bus,
         clock: &impl Clock,
         out: &HwShared,
-        message: String,
+        context: &str,
+        error: ExecuteError,
     ) {
-        if !is_timeout(&message) {
-            status(out, message);
+        let ExecuteError::DmaTimeout(detail) = error else {
+            status(out, format!("{context}: {error}"));
             return;
-        }
+        };
         crate::drawpipe::counters().acquisition.add(Event::DmaTimeout);
         let now = clock.now();
         if self.last_log.is_none_or(|last| now.saturating_duration_since(last) >= Duration::from_secs(5)) {
+            let message = format!("{context}: {detail}");
             #[cfg(all(target_os = "linux", not(test)))]
             persist(&message);
             status(out, message);
             self.last_log = Some(now);
         }
-        disarm(state, bar, clock, out);
-        self.awaiting_idle = true;
+        lifecycle::disarm(|| state.disarm_capture(bar, clock));
+        self.recovery = Some(Recovery { deadline: now + LIMIT, retry_at: now + RETRY });
     }
 
     pub(super) fn pending(&self) -> bool {
-        self.awaiting_idle
+        self.recovery.is_some()
     }
 
-    pub(super) fn ready(&mut self, bar: &mut impl Bus) -> bool {
-        if self.awaiting_idle && bar.try_rd(0x4034).is_ok_and(|v| v != u32::MAX && v & scu::status::STOPPED != 0) {
-            self.awaiting_idle = false;
+    pub(super) fn recover(
+        &mut self,
+        state: &mut seq::State,
+        bar: &mut impl Bus,
+        clock: &impl Clock,
+        out: &HwShared,
+    ) -> bool {
+        let Some(recovery) = self.recovery.as_mut() else { return true };
+        let now = clock.now();
+        let fault = match bar.try_rd(0x4034) {
+            Ok(u32::MAX) => Some((CaptureStatus::DmaStopLink, "0x4034 returned all ones".into())),
+            Err(error) => Some((CaptureStatus::DmaStopLink, format!("0x4034: {error}"))),
+            Ok(value) if value & scu::status::STOPPED != 0 => {
+                self.recovery = None;
+                return true;
+            }
+            Ok(value) if now >= recovery.deadline => {
+                Some((CaptureStatus::DmaStopDeadline, format!("0x4034={value:#010x}")))
+            }
+            Ok(_) => None,
+        };
+        if let Some((fault, detail)) = fault {
+            self.recovery = None;
+            let message = {
+                let mut g = crate::perfguard::deep::acq_lock(out);
+                let publication = g.acquisition;
+                g.status.report(publication, fault, Some(&detail))
+            };
+            eprintln!("oos-ui hw: {message}");
+            return true;
         }
-        !self.awaiting_idle
+        if now >= recovery.retry_at {
+            lifecycle::disarm(|| state.disarm_capture(bar, clock));
+            while recovery.retry_at <= now {
+                recovery.retry_at += RETRY;
+            }
+        }
+        let now = clock.now();
+        let next = recovery.retry_at.min(recovery.deadline).saturating_duration_since(now);
+        clock.wait(POLL.min(next));
+        false
     }
 }
 
@@ -74,49 +117,4 @@ fn persist(message: &str) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::drawpipe::{self, test_scope::Scope};
-    use oos_hal::{dho::bus::Recorder, sync::lock};
-    use std::cell::Cell;
-
-    struct Virtual(Cell<Instant>);
-
-    impl Clock for Virtual {
-        fn now(&self) -> Instant {
-            self.0.get()
-        }
-
-        fn wait(&self, duration: Duration) {
-            self.0.set(self.now() + duration);
-        }
-    }
-
-    #[test]
-    fn counts_every_timeout_and_waits_for_valid_stopped_status() {
-        let _scope = Scope::new();
-        let clock = Virtual(Cell::new(Instant::now()));
-        let mut fault = DmaFault::default();
-        let mut state = seq::State::handover(1, None);
-        let mut bar = Recorder::default();
-        let out = HwShared::default();
-        bar.regs.insert(0x4034, scu::status::STOPPED);
-
-        fault.report(&mut state, &mut bar, &clock, &out, format!("{DMA_TIMEOUT}: first"));
-        assert_eq!(lock(&out).status.take_latest(), format!("{DMA_TIMEOUT}: first"));
-        bar.regs.insert(0x4034, u32::MAX);
-        assert!(!fault.ready(&mut bar));
-        bar.regs.insert(0x4034, 0);
-        assert!(!fault.ready(&mut bar));
-        bar.regs.insert(0x4034, scu::status::STOPPED);
-        assert!(fault.ready(&mut bar));
-
-        clock.wait(Duration::from_secs(1));
-        fault.report(&mut state, &mut bar, &clock, &out, format!("{DMA_TIMEOUT}: second"));
-        assert!(lock(&out).status.take_latest().is_empty());
-        clock.wait(Duration::from_secs(4));
-        fault.report(&mut state, &mut bar, &clock, &out, format!("{DMA_TIMEOUT}: third"));
-        assert_eq!(lock(&out).status.take_latest(), format!("{DMA_TIMEOUT}: third"));
-        assert!(drawpipe::counters().acquisition.text().contains(" acq_dma_timeouts=3"));
-    }
-}
+mod tests;

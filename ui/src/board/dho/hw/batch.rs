@@ -249,7 +249,7 @@ pub(super) fn read_la(
         &impl oos_hal::dho::seq::time::Clock,
     ),
     fails: &mut u32,
-    status: impl FnOnce(String),
+    status: impl FnOnce(oos_hal::dho::seq::time::ExecuteError),
 ) -> Option<Vec<u16>> {
     if settings.la.is_none() || *fails >= 3 {
         return None;
@@ -261,7 +261,7 @@ pub(super) fn read_la(
         }
         Err(error) => {
             *fails += 1;
-            status(format!("LA read ({} of 3): {}", *fails, error));
+            status(error);
             None
         }
     }

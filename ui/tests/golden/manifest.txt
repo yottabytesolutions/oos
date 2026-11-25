@@ -5291,8 +5291,8 @@
           456
         ]
       ],
-      "release_version": "0.2.1",
-      "rgb_sha256": "1a7792f392784778d7c0aeb6a676b363d00661f93251811e125df6cc564c5c98",
+      "release_version": "0.2.2",
+      "rgb_sha256": "e9dd5284663dd4d957ad5cc7604e6c988a5c2d55877edee31cc64c5b3151f7f3",
       "script_sha256": "f78c42846b9c96df2288bbb039bcc6c8a72c084acf1926fcee904e3f1f4bfca2",
       "settings": "settings dots=Auto channels=3 tdiv=0.0002 persist=6 grade=false zoom=false acquisition=Normal run=Run frames=123 records=738 menu_open=true Demo records",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -11883,8 +11883,8 @@
           456
         ]
       ],
-      "release_version": "0.2.1",
-      "rgb_sha256": "252dcc91a6f0e9306f063f947e7c201ac96588ef85905ece59748ff439a71a9f",
+      "release_version": "0.2.2",
+      "rgb_sha256": "b56c9315c32ee97a7fc5f755e59d7ba12871cb86051953993d1e418421c037b5",
       "script_sha256": "2e4e07c9bada5cf129894deeb2b477b9f77649c2a9832842746fc6384b4a07f0",
       "settings": "settings dots=Auto channels=3 tdiv=0.0002 persist=6 grade=false zoom=false acquisition=Normal run=Run frames=123 records=738 menu_open=true Demo records",
       "source_route": "Demo records; acq.pipeline=batch",
@@ -18475,8 +18475,8 @@
           456
         ]
       ],
-      "release_version": "0.2.1",
-      "rgb_sha256": "5aa06ac73d38e022412452ab5181d4bc7f5139b69fce91a8244586a9e902cd24",
+      "release_version": "0.2.2",
+      "rgb_sha256": "4deb80ec31005ef95add47730ab867ca7b95ffc652e5705b7afc55f2dd9c88c5",
       "script_sha256": "825f59c6aa635647300315fb08ef98b1b5287edc8dd488245de478b7bf195eb9",
       "settings": "settings dots=Auto channels=3 tdiv=0.0002 persist=6 grade=false zoom=false acquisition=Normal run=Run frames=123 records=738 menu_open=true Demo records",
       "source_route": "Demo records; acq.pipeline=batch",

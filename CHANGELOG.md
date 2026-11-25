@@ -1,6 +1,6 @@
 # Changes
 
-## Unreleased
+## 0.2.2
 
 - Protect the kexec restart marker, kexec diagnostic files and saved WLAN settings against torn writes during
   power loss. Missing or rejected WLAN configuration starts with an empty network list.

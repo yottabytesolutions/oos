@@ -555,7 +555,7 @@ dependencies = [
 name = "xtask"
 version = "0.2.1"
 dependencies = [
- "oos-hal",
+ "libc",
  "proc-macro2",
  "pulldown-cmark",
  "quote",

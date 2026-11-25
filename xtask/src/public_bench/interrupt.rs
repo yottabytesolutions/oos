@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use std::time::{Duration, Instant};
+mod signals;
 
-use oos_hal::system::TerminationSignals;
+use std::time::{Duration, Instant};
 
 use super::{Clock, Error};
 use crate::unit_tools::scpi::{Scpi, TimedReply};
+use signals::TerminationSignals;
 
 #[derive(Debug)]
 pub(super) struct HostClock {

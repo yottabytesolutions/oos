@@ -14,7 +14,7 @@ const SIGNALS: [libc::c_int; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
 
 /// Listen for a CLI's first termination signal while its main thread can clean up.
 #[derive(Debug)]
-pub struct TerminationSignals {
+pub(super) struct TerminationSignals {
     received: Receiver<io::Result<u8>>,
     exit_code: Cell<Option<u8>>,
 }
@@ -22,7 +22,7 @@ pub struct TerminationSignals {
 impl TerminationSignals {
     /// Call on the CLI's main thread before it spawns any workers. The main
     /// thread and the threads it spawns leave these signals blocked until exit.
-    pub fn listen_until_exit() -> io::Result<Self> {
+    pub(super) fn listen_until_exit() -> io::Result<Self> {
         let set = signal_set()?;
         block_signals(&set)?;
         for signal in SIGNALS {
@@ -41,7 +41,7 @@ impl TerminationSignals {
 
     /// Wait for the first signal and return its shell exit code, remembering it
     /// for future calls. A zero timeout checks for a signal without blocking.
-    pub fn wait(&self, timeout: Duration) -> io::Result<Option<u8>> {
+    pub(super) fn wait(&self, timeout: Duration) -> io::Result<Option<u8>> {
         if let Some(code) = self.exit_code.get() {
             return Ok(Some(code));
         }

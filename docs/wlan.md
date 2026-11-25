@@ -70,9 +70,11 @@ Logs: `/tmp/oos-wlan.log`, `/tmp/wpa_supplicant.log`. By hand: `wpa_cli -p /run/
 
 OOS keeps saved WLAN settings in `/oos/wlan/wpa_supplicant.conf` (mode 0600). The supplicant loads a private
 copy in RAM, then writes that copy on SAVE_CONFIG. After a successful save, oos-ui syncs and replaces the file
-on the data partition. A cut during the save can leave either complete version. When the saved file is missing
-or the supplicant rejects it at startup, WLAN starts with no saved networks and leaves the disk copy in place
-until the next successful save. Without the data partition, settings last until power-off.
+on the data partition. A cut during the save can leave either complete version. WLAN starts with no saved
+networks if the file is missing or the supplicant's parser rejects it. Driver and other startup failures retry
+with the saved configuration. On the first save after a parser rejection, OOS keeps one private copy at
+`/oos/wlan/wpa_supplicant.conf.rejected` before publishing the new list and records that in the log.
+Without the data partition, settings last until power-off.
 
 The file holds the network names and derived keys. A key is enough to join its network, so treat the card as
 you would the password. Use the UI to save or forget networks across boots. A direct `wpa_cli save_config`

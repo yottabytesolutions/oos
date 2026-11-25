@@ -5,6 +5,7 @@ use std::io;
 use std::path::Path;
 
 const RAM: &str = "/run/oos-wlan/wpa_supplicant.conf";
+const REJECTED: &str = "rejected";
 
 pub(super) fn persist() -> io::Result<()> {
     persist_from(Path::new("/oos"), Path::new(RAM))
@@ -21,9 +22,23 @@ fn persist_from(data: &Path, ram: &Path) -> io::Result<()> {
         Err(error) if error.kind() != io::ErrorKind::AlreadyExists => return Err(error),
         _ => {}
     }
-    publish(&mut Disk, &directory.join("wpa_supplicant.conf"), &bytes)?;
+    let saved = directory.join("wpa_supplicant.conf");
+    preserve_rejected(ram, &saved)?;
+    publish(&mut Disk, &saved, &bytes)?;
     // The first successful save must also make the new wlan directory reachable.
     Disk.sync_dir(data)
+}
+
+fn preserve_rejected(ram: &Path, saved: &Path) -> io::Result<()> {
+    let marker = ram.with_added_extension(REJECTED);
+    if marker.try_exists()? {
+        let backup = saved.with_added_extension(REJECTED);
+        publish(&mut Disk, &backup, &std::fs::read(saved)?)?;
+        eprintln!("Rejected WLAN configuration retained at {}", backup.display());
+        // The original is protected from this point on, even when publishing the new list fails.
+        std::fs::remove_file(marker)?;
+    }
+    Ok(())
 }
 
 fn publish(files: &mut impl Files, saved: &Path, bytes: &[u8]) -> io::Result<()> {
@@ -61,5 +76,47 @@ mod tests {
         assert!(persist_from(&dir, &ram).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), CONFIG);
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn supervisor_and_ui_agree_on_ram_paths() {
+        let supervisor = include_str!("../../../rootfs/initramfs/bin/oos-wlan");
+        assert!(supervisor.lines().any(|line| line == format!("CONF={RAM}")));
+        assert!(supervisor.lines().any(|line| line == format!("REJECTED=$CONF.{REJECTED}")));
+    }
+
+    #[test]
+    fn fallback_save_keeps_one_private_backup_before_replacing_the_saved_file() {
+        use std::fs;
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = std::env::temp_dir().join(format!("oos-wlan-fallback-{}", std::process::id()));
+        fs::create_dir(&dir).unwrap();
+        fs::create_dir(dir.join("setups")).unwrap();
+        fs::create_dir(dir.join("wlan")).unwrap();
+        let saved = dir.join("wlan/wpa_supplicant.conf");
+        let backup = saved.with_added_extension("rejected");
+        let ram = dir.join("ram.conf");
+        let marker = ram.with_added_extension("rejected");
+        let rejected = b"invalid saved configuration";
+        fs::write(&saved, rejected).unwrap();
+        fs::write(&ram, CONFIG).unwrap();
+        fs::write(&marker, b"").unwrap();
+        fs::create_dir(&backup).unwrap();
+        assert!(persist_from(&dir, &ram).is_err());
+        assert_eq!(fs::read(&saved).unwrap(), rejected);
+        assert!(marker.exists());
+        fs::remove_dir(&backup).unwrap();
+        fs::write(&backup, b"earlier rejected configuration").unwrap();
+        persist_from(&dir, &ram).unwrap();
+        assert_eq!(fs::read(&saved).unwrap(), CONFIG);
+        assert_eq!(fs::read(&backup).unwrap(), rejected);
+        assert_eq!(fs::metadata(&backup).unwrap().permissions().mode() & 0o777, 0o600);
+        assert!(!marker.exists());
+        fs::write(&ram, b"next save").unwrap();
+        persist_from(&dir, &ram).unwrap();
+        assert_eq!(fs::read(&saved).unwrap(), b"next save");
+        assert_eq!(fs::read(&backup).unwrap(), rejected);
+        fs::remove_dir_all(dir).unwrap();
     }
 }

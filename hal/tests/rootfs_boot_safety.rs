@@ -20,6 +20,47 @@ fn early_panics_hold_before_userspace_can_restore_the_boot_selection() {
     assert!(source("kernel/config").contains("CONFIG_PANIC_TIMEOUT=0"));
 }
 
+#[test]
+fn startup_discards_only_owned_durable_staging_files() {
+    let boot = Boot::new("durable-staging");
+    for dir in ["oos/setups", "oos/update/kexec-last", "oos/wlan"] {
+        fs::create_dir_all(boot.p(dir)).unwrap();
+    }
+    let staged = [
+        "oos/update/state.new",
+        "oos/vendor.keys.new",
+        "oos/update/kexec-restart.new",
+        "oos/update/kexec-last/jump.log.new",
+        "oos/update/kexec-last/stdout.new",
+        "oos/update/kexec-last/stderr.new",
+        "oos/update/kexec-last/merged.dtb.new",
+        "oos/update/kexec-last/staged.log.new",
+        "oos/update/kexec-last/load.log.new",
+        "oos/wlan/wpa_supplicant.conf.new",
+        "oos/wlan/wpa_supplicant.conf.rejected.new",
+    ];
+    let retained = ["oos/setups/slot.new", "oos/update/kexec-last/merged.dtb", "oos/wlan/wpa_supplicant.conf.rejected"];
+    for name in staged.into_iter().chain(retained) {
+        boot.write(name, "keep or discard");
+    }
+    let rcs = source("rootfs/initramfs/etc/rcS");
+    let cleanup = rcs
+        .split_once("# Only the staging files owned")
+        .unwrap()
+        .1
+        .split_once('\n')
+        .unwrap()
+        .1
+        .split_once("# 0c)")
+        .unwrap()
+        .0
+        .replace("/oos/", "./oos/")
+        .replace("/tmp/oos-data.log", "./data.log");
+    assert!(Command::new("sh").args(["-ec", &cleanup]).current_dir(&boot.0).status().unwrap().success());
+    assert!(staged.into_iter().all(|name| !boot.p(name).exists()));
+    assert!(retained.into_iter().all(|name| boot.p(name).is_file()));
+}
+
 struct Boot(PathBuf);
 
 impl Boot {

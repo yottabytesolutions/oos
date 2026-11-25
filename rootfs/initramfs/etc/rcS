@@ -24,6 +24,13 @@ fi
 [ "$boot_safe" = 0 ] || (setsid sh -c '/bin/oos-watchdog >> /tmp/oos-watchdog.log 2>&1' < /dev/null > /dev/null 2>&1 &)
 # 0b) OOS's own data partition at /oos (own calibration, setups, power-on picture; log in /tmp/oos-data.log)
 /bin/oos-mount-data "$boot_safe" > /tmp/oos-data.log 2>&1
+# Only the staging files owned by durable replacement, before starting any of its writers.
+if [ -d /oos/setups ]; then
+	rm -f /oos/update/state.new /oos/vendor.keys.new /oos/update/kexec-restart.new \
+		/oos/update/kexec-last/jump.log.new /oos/update/kexec-last/stdout.new /oos/update/kexec-last/stderr.new \
+		/oos/update/kexec-last/merged.dtb.new /oos/update/kexec-last/staged.log.new /oos/update/kexec-last/load.log.new \
+		/oos/wlan/wpa_supplicant.conf.new /oos/wlan/wpa_supplicant.conf.rejected.new >> /tmp/oos-data.log 2>&1
+fi
 # 0c) stock partition, read only: kexec installation reads the device model from /rigol/data/vendor.bin.
 /bin/oos-mount-rigol >> /tmp/oos-data.log 2>&1
 # Count or roll back a trial before the rest of startup. See docs/update.md and /tmp/oos-update.log.

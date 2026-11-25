@@ -24,11 +24,50 @@ dep_fetch libnl-musl-patch >/dev/null
 docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -e LIBNL="$libnl" -v "$out:/out" -v "$DEPS_SOURCES:/src:ro" "$image" sh -euc '
 	apk list -I libnl3-static 2>/dev/null | grep -q "^libnl3-static-$LIBNL-r" || { echo "libnl3-static of this Alpine is not $LIBNL (rootfs/deps.lock): $(apk list -I libnl3-static 2>/dev/null)" >&2; exit 1; }
 	cd /tmp && tar -xzf /src/wpa_supplicant-$VER.tar.gz && cd wpa_supplicant-$VER/wpa_supplicant
+	# Distinguish parser rejection from I/O and interface failures at startup.
 	# A failed serialization must leave the previous RAM copy intact and make SAVE_CONFIG fail.
-	patch -p0 <<PATCH
+	# Encode context prefixes so the shell source has no trailing whitespace.
+	sed "s/^|/ /" <<PATCH | patch -p0
 --- config_file.c
 +++ config_file.c
-@@ -1656,4 +1656,4 @@
+@@ -302,6 +302,7 @@
+|	FILE *f;
+|	char buf[512], *pos;
+|	int errors = 0, line = 0;
++	int read_error;
+|	struct wpa_ssid *ssid, *tail, *head;
+|	struct wpa_cred *cred, *cred_tail, *cred_head;
+|	struct wpa_config *config;
+@@ -391,14 +392,24 @@
+|		}
+|	}
+|
+-	fclose(f);
++	read_error = ferror(f);
++	if (fclose(f))
++		read_error = 1;
+|
+|	config->ssid = head;
+|	wpa_config_debug_dump_networks(config);
+|	config->cred = cred_head;
+|
++	if (read_error) {
++		wpa_printf(MSG_ERROR, "Could not read configuration file.");
++		if (config != cfgp)
++			wpa_config_free(config);
++		return NULL;
++	}
++
+|#ifndef WPA_IGNORE_CONFIG_ERRORS
+|	if (errors) {
++		wpa_printf(MSG_ERROR, "Configuration file rejected by parser.");
+|		if (config != cfgp)
+|			wpa_config_free(config);
+|		config = NULL;
+@@ -1653,10 +1664,10 @@
+|
+|	tmp_len = os_strlen(name) + 5; /* allow space for .tmp suffix */
+|	tmp_name = os_malloc(tmp_len);
 -	if (tmp_name) {
 -		os_snprintf(tmp_name, tmp_len, "%s.tmp", name);
 -		name = tmp_name;
@@ -37,7 +76,13 @@ docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id 
 +		return -1;
 +	os_snprintf(tmp_name, tmp_len, "%s.tmp", name);
 +	name = tmp_name;
-@@ -1703,3 +1703,4 @@
+|
+|	wpa_printf(MSG_DEBUG, "Writing configuration file '%s'", name);
+|
+@@ -1700,9 +1711,10 @@
+|	}
+|#endif /* CONFIG_NO_CONFIG_BLOBS */
+|
 -	os_fdatasync(f);
 -
 -	fclose(f);
@@ -45,9 +90,18 @@ docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id 
 +		ret = -1;
 +	if (fclose(f))
 +		ret = -1;
-@@ -1714 +1715 @@
+|
+|	if (tmp_name) {
+|		int chmod_ret = 0;
+@@ -1711,7 +1723,7 @@
+|		chmod_ret = chmod(tmp_name,
+|				  S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+|#endif /* ANDROID */
 -		if (chmod_ret != 0 || rename(tmp_name, orig_name) != 0)
 +		if (!ret && (chmod_ret != 0 || rename(tmp_name, orig_name) != 0))
+|			ret = -1;
+|
+|		os_free(tmp_name);
 PATCH
 	cat > .config <<CFG
 CONFIG_DRIVER_NL80211=y

@@ -97,7 +97,7 @@ pub fn image(image: &[u8], mode: Mode) -> Result<Vec<u8>, String> {
 }
 
 /// The loader ID after applying the same SDR104 change as install, without copying the image.
-pub(super) fn sdr104_loader_id(image: &[u8]) -> Option<[u8; 20]> {
+pub(super) fn fast_mode_loader_id(image: &[u8]) -> Option<[u8; 20]> {
     let (kernel, ramdisk, second) = kexec::parts(image).ok()?;
     let rsce = patched_second(second, Mode::Sdr104).ok()??;
     Some(card::loader_id(image, kernel, ramdisk, &rsce))

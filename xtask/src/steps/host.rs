@@ -9,10 +9,16 @@ use std::path::{Path, PathBuf};
 pub(super) mod tests;
 
 pub(crate) fn command(ctx: &Context, root: &Path, program: &str, args: &[&str]) -> Outcome {
-    command_env(ctx, root, program, args, &[])
+    command_with_environment(ctx, root, program, args, &[])
 }
 
-pub(super) fn command_env(ctx: &Context, root: &Path, program: &str, args: &[&str], env: &[(&str, &OsStr)]) -> Outcome {
+pub(super) fn command_with_environment(
+    ctx: &Context,
+    root: &Path,
+    program: &str,
+    args: &[&str],
+    env: &[(&str, &OsStr)],
+) -> Outcome {
     let out = crate::run::capture_env(ctx, root, program, args, env).map_err(|e| vec![e])?;
     let lines = vec![format!("{}{}", out.stdout, out.stderr)];
     if out.ok {
@@ -22,7 +28,7 @@ pub(super) fn command_env(ctx: &Context, root: &Path, program: &str, args: &[&st
     }
 }
 
-pub(crate) fn build_fpgad_bin(ctx: &Context, root: &Path, binary: &str) -> Outcome {
+pub(crate) fn build_fpgad_binary(ctx: &Context, root: &Path, binary: &str) -> Outcome {
     command(ctx, root, "python3", &["-I", "tools/output.py", "build", "-p", "oos-fpgad", "--bin", binary])
 }
 

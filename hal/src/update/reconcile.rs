@@ -97,7 +97,7 @@ fn installer_rewrite(image: &[u8], current: &Entry, id: [u8; 20], tracked_id: [u
     // The stock loader hashes the tree. GEL writes the default image even if install applied SDR104.
     // The stamp from the image's /etc/oos-build identifies the ledger entry. Package trust is checked at install.
     let matches =
-        if id == tracked_id { check_image(image).is_ok() } else { sd::sdr104_loader_id(image) == Some(tracked_id) };
+        if id == tracked_id { check_image(image).is_ok() } else { sd::fast_mode_loader_id(image) == Some(tracked_id) };
     matches && inflate::image_build(image).as_deref() == Some(current.build.as_str())
 }
 

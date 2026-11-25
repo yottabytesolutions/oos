@@ -92,7 +92,10 @@ pub fn ratcheted(ctx: &crate::run::Context, root: &Path, kind: Kind, now: &[(&'s
     let commit = base::protected(ctx, root).map_err(|e| vec![e])?;
     let (work, base) = allowed(ctx, root, kind, &crates, &commit).map_err(|e| vec![e])?;
     if let Some(b) = &base {
-        let widened = base::widened(b, &work);
+        let measured = Ratchet(now.iter().flat_map(|(_, entries)| entries.0.clone()).collect());
+        let initial = crate::style_rollout::extend_initial_baseline(ctx, root, &commit, kind, b, &measured)
+            .map_err(|e| vec![e.to_string()])?;
+        let widened = base::widened(&initial, &work);
         if !widened.is_empty() {
             return Err(widened.into_iter().map(|w| format!("{} ratchet: {}", kind.name(), w)).collect());
         }
@@ -132,6 +135,31 @@ mod tests {
 
     fn r(t: &str) -> Ratchet {
         Ratchet::parse(t).expect("r")
+    }
+
+    #[test]
+    fn rollout_rejects_unmeasured_allowances_for_unchanged_source() {
+        use crate::testrepo::{commit, git, repo};
+        for (kind, key) in
+            [(Kind::Clippy, "ui ui/src/a.rs clippy::use_self"), (Kind::Naming, "name ui/src/a.rs Helper vague")]
+        {
+            let root = repo(
+                &format!("rollout-slack-{}", kind.name()),
+                &[(&[("xtask/Cargo.toml", "x"), ("ui/src/a.rs", "")], "base")],
+            );
+            git(&root, &["checkout", "-q", "-b", "style"]);
+            commit(&root, &[(crate::style_rollout::MARKER, "clippy::use_self\n")], "style");
+            let ctx = crate::run::Context::default();
+            let check = |measured| ratcheted(&ctx, &root, kind, &[("ui", measured)]);
+            let allowance = Ratchet::parse(&format!("2 {key}\n")).unwrap();
+            crate::store::save(&root, "ui", kind, &allowance).unwrap();
+            assert!(check(Ratchet::default()).is_err(), "absent findings cannot authorize allowances");
+            let measured = Ratchet::parse(&format!("1 {key}\n")).unwrap();
+            assert!(check(measured.clone()).is_err(), "allowances cannot exceed measured counts");
+            crate::store::save(&root, "ui", kind, &measured).unwrap();
+            assert!(check(measured).is_ok(), "measured rollout allowances must pass");
+            std::fs::remove_dir_all(root).unwrap();
+        }
     }
 
     #[test]

@@ -17,11 +17,12 @@ pub enum Kind {
     Allow,
     Known,
     TestTime,
+    Naming,
 }
 
 impl Kind {
-    pub const ALL: [Kind; 7] =
-        [Kind::Clippy, Kind::Size, Kind::Statics, Kind::Unsafe, Kind::Allow, Kind::Known, Kind::TestTime];
+    pub const ALL: [Kind; 8] =
+        [Kind::Clippy, Kind::Size, Kind::Statics, Kind::Unsafe, Kind::Allow, Kind::Known, Kind::TestTime, Kind::Naming];
 
     pub fn name(self) -> &'static str {
         match self {
@@ -32,6 +33,7 @@ impl Kind {
             Kind::Allow => "allow",
             Kind::Known => "known",
             Kind::TestTime => "test-time",
+            Kind::Naming => "naming",
         }
     }
 
@@ -44,6 +46,7 @@ impl Kind {
             Kind::Unsafe => "unsafe outside the allowed paths (architecture.txt): <count> unsafe <file>.",
             Kind::Allow => "#[allow] or #[expect] of clippy::disallowed_methods: <count> allow <file> <lint>.",
             Kind::TestTime => "Test timing findings: <count> time <file> <function> <kind>.",
+            Kind::Naming => "Declaration vocabulary findings: <count> name <file> <declaration> <rule>.",
             Kind::Known => "Known failures, #[ignore = \"known: task NNNN\"]: 1 known <file> <test> <task>.",
         }
     }

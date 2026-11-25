@@ -345,6 +345,7 @@ and the coverage margin of 0.5 percentage points are unchanged.
 | `method-exceptions` | disallowed-method exceptions | sources | fast and full |
 | `known-failures` | known failures and open tasks | sources | fast and full |
 | `agent-rules` | exact loaders and Git inventory | root AGENTS.md | fast and full |
+| `naming` | glossary and declaration naming ratchets | sources | fast and full |
 | `test-time` | test sleep/deadline syntax and nonincreasing ratchet | sources | fast and full |
 | `links` | links in README.md, SECURITY.md, `wiki/` and `docs/` name existing paths, wiki pages and headings | Git | fast and full |
 | `text` | File rules over tracked and new files: line ends, final newline, SPDX, indentation, licence copies; ADR numbers and paths resolve | Git | fast and full |
@@ -766,7 +767,8 @@ function; a file reached both as test and as production code is production code.
 | known failures | syntax walk | `#[ignore = "known: task NNNN"]` only as listed in `known.txt`, each naming an open task | a failing test does not hide |
 | agent rules | exact loader templates and Git path inventory | the five checked client entry files load root `AGENTS.md`; additional recognized entries fail | universal rules stay in one place |
 | architecture | `cargo metadata`, syntax walk | `xtask/data/architecture.txt`: allowed crate dependencies; module rules inside a crate | the layers cannot erode by accident |
-| clippy | `cargo clippy --all-targets`, for the host and for `aarch64-unknown-linux-musl` | the `[lints]` table of each crate and `clippy.toml`; the scope build compiles | correctness, idiom, size and complexity, also in Linux-only code |
+| naming | shared syntax walk and glossary | vague declaration words, domain synonyms and unapproved abbreviations | consistent domain vocabulary |
+| clippy | `cargo clippy --all-targets`, for the host and for `aarch64-unknown-linux-musl` | root `[workspace.lints]` inherited by each crate and `clippy.toml`; the scope build compiles | correctness, idiom, size and complexity, also in Linux-only code |
 | tests (debug, release) | `cargo nextest run`, `--cargo-profile test-release` | every test passes in both profiles, full counts | release-only bugs (overflow checks, timing) show |
 | perf guards | `tools/perf-guard.sh` | the fork's work counts and CPU-cost ratios; its exit code decides | the fast paths stay fast |
 | coverage | `cargo llvm-cov` per crate | line coverage per crate ≥ the floor in `xtask/data/coverage.txt` | coverage does not fall |
@@ -779,16 +781,20 @@ doc comments included, so documentation never competes with code for space; blan
 is exempt.
 Clippy's `too_many_lines` (60 code lines, `clippy.toml`) covers test code too.
 
-The lint set (identical in every crate, `[lints]` in its `Cargo.toml`): `clippy::all`, plus `too_many_lines`,
-`cognitive_complexity`, `too_many_arguments`, `type_complexity`, `large_enum_variant`, `undocumented_unsafe_blocks`
-(every `unsafe` block has a `// SAFETY:` comment), `missing_safety_doc` and `unwrap_used` (outside
-tests: a panic belongs in an `expect` with a reason, or the error is handled). For a `Mutex` use
-`oos_hal::sync::lock(&m)`: it takes the data of a poisoned lock, which only a test can produce since the binaries
-abort on panic. rustc: the `unused` group, and
-`missing_debug_implementations` in the library crates `hal` and `dsp`. Every lint is a warning to rustc and clippy, so
-an ordinary build still runs; the gate turns findings into failures through the ratchet. At `deny`, clippy would
-stop at the first crate with an old finding and count nothing after it. `xtask` itself denies all of
-them and has no ratchet.
+The lint set lives in the root `[workspace.lints]`; all member crates inherit it with `[lints] workspace = true`.
+It enables `clippy::all`, `pedantic`, the existing complexity/safety checks and selected idiom lints (`use_self`,
+`option_if_let_else`, `unwrap_used`, `expect_used`, `allow_attributes_without_reason`). Cargo.toml explains the few
+noisy numeric/annotation exceptions. `clippy.toml` permits unwrap and expect in tests. HAL and DSP retain their
+public Debug warnings; xtask retains its stricter pre-existing deny rules. Newly enabled warnings in every crate,
+including xtask, use the per-file Clippy ratchet. See [Rust style](process/rust-style.md), the
+[glossary](architecture/glossary.md) and [initial lint census](tasks/0097-rust-style.md#lint-decisions).
+
+The fast `naming` step shares the size check's parsed source walk. It checks declaration words against the glossary
+and freezes legacy findings by file, name and rule in `xtask/data/<crate>/naming.txt`. It excludes test declarations
+and trait implementation methods whose names are mandated by their trait. New names must comply; ordinary
+`cargo xtask ratchet` tightens the counts. `--init-style` is the one-time readability baseline authorized by
+issue #198 and ADR 0006; it refuses once the marker is present at the protected base. Existing lint kinds and
+unrelated ratchets cannot be raised by that transition. It never grants allowances to new files.
 
 The scope's target runs as a second clippy pass per scope crate, on the host: clippy does not link, so the
 target's standard library is enough. It compiles the same crates with the same (default) features, target and target

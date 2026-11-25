@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Linux cpufreq/devfreq adapter. Discovery never assumes a devfreq index.
-use super::{Config, Controller, Port};
+use super::{floor, Config, Controller, Port};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -25,8 +25,6 @@ impl Port for Sysfs {
 pub(super) fn controller(root: &Path, journal: &Path, config: Config) -> Controller {
     let port = Sysfs(root.into());
     // RK3399's GPU node is named after the device, independent of class entry order.
-    let gpu = port.entries("class/devfreq").ok().and_then(|entries| {
-        entries.into_iter().find(|name| name.ends_with(".gpu")).map(|name| format!("class/devfreq/{name}"))
-    });
+    let gpu = floor::gpu_node(&port).ok().flatten();
     Controller::new(Box::new(port), config, gpu.as_deref(), journal.into())
 }

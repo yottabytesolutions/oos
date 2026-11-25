@@ -136,22 +136,14 @@ impl Controller {
     fn restore_receipt(&mut self) -> io::Result<()> {
         let mut failure = None;
         for floor in &mut self.floors {
-            let Some(value) = floor.saved() else { continue };
-            let retry = floor.restore_failed();
-            match floor.restore(self.port.as_mut()) {
-                Err(error) => {
-                    failure.get_or_insert(error);
-                }
-                Ok(()) if !retry => {
-                    eprintln!("oos-ui: clock_floor recovery device={} restored={value}", floor.name);
-                }
-                Ok(()) => {}
+            if let Err(error) = floor.recover(self.port.as_mut()) {
+                failure.get_or_insert(error);
             }
         }
         if let Some(error) = failure {
             return Err(error);
         }
-        // Preserve the complete startup receipt until all of its devices have verified restoration.
+        // Keep the startup receipt until every saved minimum has been restored or its device is absent.
         self.journal.clear()
     }
 

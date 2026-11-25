@@ -63,12 +63,23 @@ restore_clocks() (
                      [ -d "$node" ] || continue
                      dir=$node; break
                  done
-                 [ -n "$dir" ] || { failed=true; continue; }
                  minimum=$dir/min_freq; available=$dir/available_frequencies ;;
             *) exit 1 ;;
         esac
-        frequencies=$(cat "$available") || { failed=true; continue; }
-        case " $frequencies " in *" $value "*) ;; *) failed=true; continue ;; esac
+        if [ ! -d "$dir" ]; then
+            echo "oos-ui-loop: clock_floor recovery device=$device node absent; nothing to restore"
+            continue
+        fi
+        if ! frequencies=$(cat "$available" 2>/dev/null); then
+            echo "oos-ui-loop: clock_floor recovery device=$device available frequencies unreadable"
+            failed=true
+            continue
+        fi
+        case " $frequencies " in
+            *" $value "*) ;;
+            *) echo "oos-ui-loop: clock_floor recovery device=$device saved minimum no longer offered"
+               failed=true; continue ;;
+        esac
         if [ -e "$minimum" ]; then
             printf '%s\n' "$value" > "$minimum" || :
         fi

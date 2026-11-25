@@ -63,7 +63,10 @@ Reserved paths: `docs/tasks/0086-perf-placement-clocks.md`, `ui/src/placement.rs
    startup recovery at sample deadlines, and publish sampled SCPI clock state.
    Extend the reserved clock controller and its fixture tests, the supervisor
    recovery and its test, and the state-query clock contract. Record host evidence
-   in `logs/c3-clock.out` and keep hardware acceptance pending.
+   in Status and keep hardware acceptance pending.
+8. Resolve absent devices during receipt recovery in the controller and
+   supervisor. Keep recovery pending when an existing device cannot be restored,
+   and test both cases. Document how the clock status reports read-back mismatches.
 
 Unit acceptance, coordinator under an owner-released scope lease:
 
@@ -182,6 +185,17 @@ done
 ```
 
 ## Status
+
+- 2026-11-25: Clock-floor review follow-up. Startup and supervisor recovery
+  resolve absent devices and retain the receipt when a present device cannot
+  restore its saved minimum. The supervisor logs the reason per device.
+  Both absence regressions failed before the fix and now pass. Formatting,
+  all 12 fast-gate steps, 50 clock and 33 supervisor debug tests, and all four
+  selected steps passed (exit 0). Release passed 3,838 tests including the
+  golden comparison. Clippy passed, the plan matrix matched 77 entries, and
+  perf passed 34 tests plus the allocation test's child run. The SCPI clock
+  schema has no sample age field. Independent review and verification on a
+  DHO924S remain pending.
 
 - 2026-11-25: On branch `fix/t0303-clock-floors`, reconciled PR 197 against
   public 0.2.1 (`425470a3`). The controller keeps rollback ownership through

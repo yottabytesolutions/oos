@@ -9,6 +9,7 @@ use std::time::Instant;
 pub(super) const CPU: &str = "devices/system/cpu/cpufreq/policy4";
 
 struct Files {
+    dir: String,
     minimum: String,
     available: String,
     current: String,
@@ -16,10 +17,43 @@ struct Files {
 impl Files {
     fn new(dir: &str, min: &str, available: &str, cur: &str) -> Self {
         Self {
+            dir: dir.into(),
             minimum: format!("{dir}/{min}"),
             available: format!("{dir}/{available}"),
             current: format!("{dir}/{cur}"),
         }
+    }
+
+    fn gpu(dir: &str) -> Self {
+        Self::new(dir, "min_freq", "available_frequencies", "cur_freq")
+    }
+
+    fn restore(&self, port: &mut dyn Port, previous: u64) -> io::Result<bool> {
+        let result = port.read(&self.available).and_then(|available| {
+            if !Floor::supports(&available, previous) {
+                return Err(io::Error::other("saved minimum is no longer available"));
+            }
+            write_minimum(port, &self.minimum, previous, "restore read-back mismatch")
+        });
+        match result {
+            Err(error)
+                if error.kind() == io::ErrorKind::NotFound
+                    && port.entries(&self.dir).is_err_and(|error| error.kind() == io::ErrorKind::NotFound) =>
+            {
+                Ok(false)
+            }
+            result => result.map(|()| true),
+        }
+    }
+}
+
+pub(super) fn gpu_node(port: &dyn Port) -> io::Result<Option<String>> {
+    match port.entries("class/devfreq") {
+        Ok(entries) => {
+            Ok(entries.into_iter().find(|name| name.ends_with(".gpu")).map(|name| format!("class/devfreq/{name}")))
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
     }
 }
 
@@ -71,7 +105,7 @@ impl Floor {
     }
 
     pub(super) fn gpu(port: &dyn Port, enabled: bool, dir: Option<&str>, now: Instant) -> Self {
-        let files = dir.map(|dir| Files::new(dir, "min_freq", "available_frequencies", "cur_freq"));
+        let files = dir.map(Files::gpu);
         // Linux devfreq and its cooling device use the same parent device name.
         let cooling =
             dir.filter(|_| enabled).and_then(|dir| dir.rsplit('/').next()).map(|name| format!("devfreq-{name}"));
@@ -173,7 +207,7 @@ impl Floor {
     }
 
     pub(super) fn release_failed_lowering(&mut self, port: &mut dyn Port) -> bool {
-        if self.restore(port).is_ok() {
+        if self.restore(port, false).is_ok() {
             true
         } else {
             self.state = Reason::RestoreFailed;
@@ -196,7 +230,7 @@ impl Floor {
             return None;
         }
         self.next_write = now + SAMPLE_PERIOD;
-        Some(self.restore(port).is_ok())
+        Some(self.restore(port, false).is_ok())
     }
 
     fn supports(available: &str, value: u64) -> bool {
@@ -234,31 +268,45 @@ impl Floor {
         Ok(())
     }
 
-    pub(super) fn restore(&mut self, io: &mut dyn Port) -> io::Result<()> {
+    pub(super) fn recover(&mut self, port: &mut dyn Port) -> io::Result<()> {
+        self.restore(port, true)
+    }
+
+    fn restore(&mut self, port: &mut dyn Port, startup: bool) -> io::Result<()> {
         let Some(previous) = self.saved() else { return Ok(()) };
         let retry = self.restore_failed();
         self.phase = Phase::RestorePending { previous, verified: self.phase.verified() };
-        let result = self.restore_value(io, previous);
-        match &result {
-            Err(error) if !retry => {
-                eprintln!("oos-ui: clock_floor device={} running=false error={error}", self.name);
+        match self.restore_value(port, previous) {
+            Ok(restored) => {
+                self.phase = Phase::Idle;
+                if !restored {
+                    self.disabled.get_or_insert(Reason::Absent);
+                    eprintln!("oos-ui: clock_floor recovery device={} node absent; nothing to restore", self.name);
+                } else if retry {
+                    eprintln!("oos-ui: clock_floor device={} restored={previous}", self.name);
+                } else if startup {
+                    eprintln!("oos-ui: clock_floor recovery device={} restored={previous}", self.name);
+                }
+                Ok(())
             }
-            Ok(()) if retry => {
-                eprintln!("oos-ui: clock_floor device={} restored={previous}", self.name);
+            Err(error) => {
+                if !retry {
+                    eprintln!("oos-ui: clock_floor device={} running=false error={error}", self.name);
+                }
+                Err(error)
             }
-            _ => {}
         }
-        result
     }
 
-    fn restore_value(&mut self, io: &mut dyn Port, previous: u64) -> io::Result<()> {
-        let files = self.files()?;
-        if !Self::supports(&io.read(&files.available)?, previous) {
-            return Err(io::Error::other("saved minimum is no longer available"));
+    fn restore_value(&self, port: &mut dyn Port, previous: u64) -> io::Result<bool> {
+        if let Some(files) = &self.files {
+            return files.restore(port, previous);
         }
-        write_minimum(io, &files.minimum, previous, "restore read-back mismatch")?;
-        self.phase = Phase::Idle;
-        Ok(())
+        // A failed discovery must retain the saved GPU minimum. Only confirmed absence resolves it.
+        match gpu_node(port)? {
+            Some(dir) => Files::gpu(&dir).restore(port, previous),
+            None => Ok(false),
+        }
     }
 
     pub(super) fn status(&self, port: &dyn Port, target: Option<u64>, recovery_failed: bool) -> Status {

@@ -207,6 +207,7 @@ fn every_exit_restores_clock_receipt_even_when_no_restart_is_requested() {
         assert!(log.contains(if restored { "device=cpu restored=408000" } else { "recovery failed" }));
         assert!(log.contains("device=gpu restored=400000000"));
         if !restored {
+            assert_eq!(log.matches("device=cpu saved minimum no longer offered").count(), 1);
             assert_eq!(std::fs::read_to_string(f.p("tmp/oos-clock-floors")).unwrap(), "cpu 408000\ngpu 400000000");
             f.write(&format!("{dir}/scaling_available_frequencies"), "408000 1416000");
             std::fs::remove_file(f.p("tmp/oos-ui.off")).unwrap();
@@ -214,6 +215,56 @@ fn every_exit_restores_clock_receipt_even_when_no_restart_is_requested() {
             assert!(retry.status.success(), "{retry:?}");
             assert_eq!(std::fs::read_to_string(f.p(&format!("{dir}/scaling_min_freq"))).unwrap().trim(), "408000");
             assert!(!f.p("tmp/oos-clock-floors").exists());
+        }
+    }
+}
+
+#[test]
+fn clock_recovery_distinguishes_absent_nodes_from_unreadable_attributes() {
+    for (device, cpu_present, gpu_frequencies, diagnostic, retained) in [
+        ("gpu", true, None, "node absent; nothing to restore", false),
+        ("cpu", false, Some("400000000 600000000"), "node absent; nothing to restore", false),
+        ("gpu", true, Some(""), "available frequencies unreadable", true),
+        ("gpu", true, Some("600000000"), "saved minimum no longer offered", true),
+    ] {
+        let f = Fake::new("clock-recovery");
+        let cpu = "sys/devices/system/cpu/cpufreq/policy4";
+        let gpu = "sys/class/devfreq/ff9a0000.gpu";
+        if cpu_present {
+            std::fs::create_dir_all(f.p(cpu)).unwrap();
+            f.write(&format!("{cpu}/scaling_available_frequencies"), "408000 1416000");
+            f.write(&format!("{cpu}/scaling_min_freq"), "1416000");
+        }
+        if let Some(frequencies) = gpu_frequencies {
+            std::fs::create_dir_all(f.p(gpu)).unwrap();
+            f.write(&format!("{gpu}/min_freq"), "600000000");
+            if !frequencies.is_empty() {
+                f.write(&format!("{gpu}/available_frequencies"), frequencies);
+            }
+        }
+        let receipt = "tmp/oos-clock-floors";
+        let contents = "gpu 400000000\ncpu 408000\n";
+        f.write(receipt, contents);
+        f.exec("bin/ui", "#!/bin/sh\ntouch \"$OOS_UI_TMP/oos-ui.off\"\nexit 137\n");
+        let out = f.command("oos-ui-loop").env("OOS_CLOCK_SYSFS", f.p("sys")).output().unwrap();
+        assert!(out.status.success(), "{out:?}");
+
+        let log = std::fs::read_to_string(f.p("tmp/oos-ui.log")).unwrap();
+        assert_eq!(log.matches(&format!("device={device} {diagnostic}")).count(), 1, "{log}");
+        assert_eq!(f.p(receipt).exists(), retained);
+        if retained {
+            assert_eq!(std::fs::read_to_string(f.p(receipt)).unwrap(), contents);
+        }
+        if cpu_present {
+            assert_eq!(std::fs::read_to_string(f.p(&format!("{cpu}/scaling_min_freq"))).unwrap().trim(), "408000");
+        } else {
+            assert!(!f.p(cpu).exists());
+        }
+        if gpu_frequencies.is_some() {
+            let minimum = std::fs::read_to_string(f.p(&format!("{gpu}/min_freq"))).unwrap();
+            assert_eq!(minimum.trim(), if retained { "600000000" } else { "400000000" });
+        } else {
+            assert!(!f.p(gpu).exists());
         }
     }
 }

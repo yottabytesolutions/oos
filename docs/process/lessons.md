@@ -107,6 +107,8 @@ pull request that fixes a mistake: what happened, then the rule.
 
 - `/bin/kill -KILL -<pgid>` from procps-ng 4.0.4 parses only the first digit of the group id. A group id starting
   with 1 became `kill(-1)` and killed the CI runner. Put `--` before a negative process id.
+- macOS discarded blocked termination signals with an inherited ignore disposition. Block the signals before
+  restoring their default dispositions and starting the CLI's workers.
 - The soak test compared process-wide live bytes while the test harness was still allocating. Measure the calling
   thread's own allocations for synchronous work. Even a child running one test shares its heap with the harness.
 - A socket test assumed the peer's close was readable on the next poll. On a loaded macOS host it was not. Wait on

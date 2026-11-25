@@ -41,6 +41,9 @@ A crate from crates.io is added only where it removes code or blocking
 listed here. The Windows desktop window and its crates moved to
 [oos-desktop](https://github.com/yottabytesolutions/oos-desktop) (ADR 0027).
 
+`xtask` uses the workspace's `oos-hal` Unix signal adapter in place of a Python
+supervisor for the public SCPI benchmark. The adapter uses the existing `libc` binding.
+
 ### mDNS responder (#194)
 
 The owner selected mdns-sd after evaluating responder crates, then approved implementation on

@@ -1,50 +1,22 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use std::{
-    env, io,
-    os::unix::process::CommandExt,
-    process::Command,
-    sync::mpsc::{self, Receiver, RecvTimeoutError, TryRecvError},
-    thread,
-    time::{Duration, Instant},
-};
+use std::time::{Duration, Instant};
+
+use oos_hal::system::TerminationSignals;
 
 use super::{Clock, Error};
-
-pub(super) const WORKER: &str = "--benchmark-worker";
-
-pub(super) fn supervise(args: &[&str]) -> Error {
-    let result = match env::current_exe() {
-        Ok(executable) => Command::new("python3")
-            .args(["-I", "-c", include_str!("interrupt.py")])
-            .arg(executable)
-            .args(["public-bench", WORKER])
-            .args(args)
-            .exec(),
-        Err(error) => error,
-    };
-    Error::InterruptControl(result)
-}
+use crate::unit_tools::scpi::{Scpi, TimedReply};
 
 #[derive(Debug)]
 pub(super) struct HostClock {
     started: Instant,
-    lifeline: Receiver<()>,
+    signals: TerminationSignals,
 }
 
 impl HostClock {
     pub(super) fn start() -> Result<Self, Error> {
-        let (keep_alive, lifeline) = mpsc::channel();
-        thread::Builder::new()
-            .name("public-bench-interrupt".into())
-            .spawn(move || {
-                // The supervisor keeps the pipe open until it receives a termination signal.
-                use io::Read;
-                let _ = io::stdin().read(&mut [0]);
-                drop(keep_alive);
-            })
-            .map_err(Error::InterruptControl)?;
-        Ok(Self { started: Instant::now(), lifeline })
+        let signals = TerminationSignals::listen_until_exit().map_err(Error::InterruptControl)?;
+        Ok(Self { started: Instant::now(), signals })
     }
 }
 
@@ -54,40 +26,48 @@ impl Clock for HostClock {
     }
 
     fn check(&self) -> Result<(), Error> {
-        match self.lifeline.try_recv() {
-            Err(TryRecvError::Empty) => Ok(()),
-            _ => Err(Error::Interrupted),
-        }
+        self.wait(Duration::ZERO)
     }
 
     fn wait(&self, duration: Duration) -> Result<(), Error> {
-        match self.lifeline.recv_timeout(duration) {
-            Err(RecvTimeoutError::Timeout) => Ok(()),
-            _ => Err(Error::Interrupted),
+        match self.signals.wait(duration).map_err(Error::InterruptControl)? {
+            Some(code) => Err(Error::Interrupted(code)),
+            None => Ok(()),
         }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use std::{
-        io::{BufRead, BufReader},
-        process::{Command, Stdio},
-    };
+/// Leave each started exchange intact. Check before the next one and let
+/// restoration use the original connection with cancellation bypassed.
+#[derive(Debug)]
+pub(super) struct InterruptibleScpi<'a, S, C> {
+    scope: &'a mut S,
+    clock: &'a C,
+}
 
-    #[test]
-    fn supervisor_waits_for_cleanup_after_sigint() {
-        let worker = "import sys; print('ready', flush=True); sys.stdin.read(); print('restored', flush=True)";
-        let mut supervisor = Command::new("python3")
-            .args(["-I", "-c", include_str!("interrupt.py"), "python3", "-I", "-c", worker])
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
-        let mut output = BufReader::new(supervisor.stdout.take().unwrap()).lines();
-        assert_eq!(output.next().unwrap().unwrap(), "ready");
-        let status = Command::new("kill").args(["-s", "INT", &supervisor.id().to_string()]).status().unwrap();
-        assert!(status.success());
-        assert_eq!(output.next().unwrap().unwrap(), "restored");
-        assert_eq!(supervisor.wait().unwrap().code(), Some(130));
+impl<'a, S: Scpi, C: Clock> InterruptibleScpi<'a, S, C> {
+    pub(super) fn new(scope: &'a mut S, clock: &'a C) -> Self {
+        Self { scope, clock }
+    }
+
+    fn check(&self) -> Result<(), String> {
+        self.clock.check().map_err(|error| error.to_string())
+    }
+}
+
+impl<S: Scpi, C: Clock> Scpi for InterruptibleScpi<'_, S, C> {
+    fn send(&mut self, command: &str) -> Result<(), String> {
+        self.check()?;
+        self.scope.send(command)
+    }
+
+    fn query_timed<T>(&mut self, command: &str, now: impl FnMut() -> T) -> Result<TimedReply<T>, String> {
+        self.check()?;
+        self.scope.query_timed(command, now)
+    }
+
+    fn reconnect(&mut self) -> Result<(), String> {
+        self.check()?;
+        self.scope.reconnect()
     }
 }

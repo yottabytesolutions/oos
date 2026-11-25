@@ -150,10 +150,35 @@ fn restores_after_interruption_while_waiting_for_a_view() {
     let mut scope = FakeScope::new(&clock);
     let initial = scope.settings.clone();
     let error = run_once(&mut scope, Level::Explicit(1.65), &mut Vec::new()).unwrap_err();
-    assert!(matches!(error, Error::Interrupted));
+    assert!(matches!(error, Error::Interrupted(130)));
     assert!(scope.sends.iter().any(|command| command == ":CHAN1:DISP OFF"));
     assert_eq!(scope.settings, initial);
     assert!(scope.running);
+}
+
+#[test]
+fn restores_after_interruption_between_trigger_exchanges() {
+    let clock = FakeClock { interrupt_at: Some(Duration::from_secs(1)), ..FakeClock::default() };
+    let mut scope = FakeScope::new(&clock);
+    let initial = scope.settings.clone();
+    scope.running = false;
+    scope.fault = Fault::InterruptAfterTriggerMode;
+    let error = run_once(&mut scope, Level::Explicit(1.65), &mut Vec::new()).unwrap_err();
+    assert!(matches!(error, Error::Interrupted(130)));
+    assert_eq!(error.exit_code(), ExitCode::from(130));
+    assert_eq!(scope.sends, ["*CLS", ":SYST:SET trig_type = Edge", ":SYST:SET trig_type = Pulse"]);
+    assert_eq!(scope.settings, initial);
+    assert!(!scope.running);
+}
+
+#[test]
+fn keeps_the_interrupt_exit_code_when_a_setting_cannot_be_restored() {
+    let clock = FakeClock { interrupt_at: Some(Duration::from_secs(10)), ..FakeClock::default() };
+    let mut scope = FakeScope::new(&clock);
+    scope.fault = Fault::RejectRestore;
+    let error = run_once(&mut scope, Level::Explicit(1.65), &mut Vec::new()).unwrap_err();
+    assert_eq!(error.exit_code(), ExitCode::from(130));
+    assert!(error.to_string().ends_with("could not restore or verify settings: trig_level"));
 }
 
 #[test]

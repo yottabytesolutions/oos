@@ -23,6 +23,7 @@ undocumented_unsafe_blocks = "deny"
 missing_safety_doc = "deny"
 
 [dependencies]
+oos-hal = { path = "../hal" }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 pulldown-cmark = { version = "0.13", default-features = false }
 quote = "1"

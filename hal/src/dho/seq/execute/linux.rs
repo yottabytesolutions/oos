@@ -45,7 +45,7 @@ pub fn execute_into_until(
     stop: impl Fn() -> bool,
 ) -> Result<(), String> {
     let mut afe_bus = afe_bus;
-    for s in steps {
+    for (index, s) in steps.iter().enumerate() {
         match s {
             Step::Afe(afe::Op::Afe { ch, reg, val }) => {
                 use afe::AfeBus;
@@ -57,7 +57,7 @@ pub fn execute_into_until(
                 bar.wr(0x1034, *w);
                 std::thread::sleep(std::time::Duration::from_micros(100));
             }
-            _ => plain_step(s, bar, c2h, dma, &mut log, &stop, &time::Real)?,
+            _ => plain_step((s, &steps[..index]), bar, c2h, dma, &mut log, &stop, &time::Real)?,
         }
     }
     Ok(())

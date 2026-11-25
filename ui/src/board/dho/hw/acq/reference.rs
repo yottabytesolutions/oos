@@ -216,12 +216,14 @@ fn read_capture_profile(
         Err(error) => {
             source.batch.first.proven = None;
             if transition {
-                super::disarm(io.state, &mut io.bar, io.clock, &source.out);
+                if !super::dma_fault::is_timeout(&error) {
+                    super::disarm(io.state, &mut io.bar, io.clock, &source.out);
+                }
                 if error != seq::NEW_SETTINGS {
                     source.batch.raw.reference.reject(pair);
                 }
             }
-            source.batch.failed(&io, &capture, &source.out, error);
+            source.batch.failed(&mut io, &capture, &source.out, error);
             return;
         }
     };

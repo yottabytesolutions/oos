@@ -26,6 +26,9 @@ unwrap_used = "warn"
 undocumented_unsafe_blocks = "warn"
 missing_safety_doc = "warn"
 
+[features]
+private-picture-counts = []
+
 [dependencies]
 ed25519-dalek = { version = "2.2", default-features = false }
 miniz_oxide = { version = "0.8", default-features = false }

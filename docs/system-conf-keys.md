@@ -20,6 +20,38 @@ The updater reads `sd.mode = hs|sdr104` from the device-local file. It defaults 
 for the next image. After a persistently slow start, choose `hs` and follow the restaging procedure in
 [Device boot card mode](boot.md#device-boot-card-mode). The startup warning uses the running device tree and the card's recorded history.
 
+## XDMA startup
+
+`xdma.params` accepts space-separated driver arguments. Use each key at most once. An invalid line
+falls back to polling with both timeouts set to 1 second. The image requests `poll_mode=0` on normal
+boots. Kexec forces `poll_mode=1` and keeps valid timeout overrides.
+
+- `poll_mode` accepts `0` for interrupt completion or `1` for polling. If neither completion
+  argument is present, OOS uses `1`.
+- `interrupt_mode` accepts `0` for auto, `1` for MSI, `2` for legacy INTx or `3` for MSI-X. If
+  omitted, the driver uses its own default.
+- `c2h_timeout` and `h2c_timeout` accept decimal integers `1` through `10` seconds. Each defaults
+  to `1` independently.
+
+The timeouts apply to driver transfer waits. Acquisition can wait longer for a trigger before
+starting DMA. C2H play reads use requests of at most 4 MiB, or about 13.51 ms each at the measured
+3.22 ms/MB. On C2H timeout the driver returns an error, including after a partially completed request.
+The acquisition worker discards a failed live batch. System status reports `acq_dma_timeouts` for
+all acquisition reads that time out and `acq_batch_dma_failures` for failed live batch DMA reads.
+Each field appears after its first event.
+
+The acquisition log contains the playback writes, bytes requested and bytes returned by successful
+read calls, and the FPGA state before reset (0x4034, DONE at 0x4080, and slot bounds at 0x4010 and
+0x4014). The same diagnostic goes to ramoops pmsg, which survives warm reboot. Every timeout counts.
+Detailed logs are limited to one per five seconds. Bytes transferred inside the failing syscall are
+inaccessible to userspace. The XDMA timeout message reports any bytes from completed descriptor
+chains within that call.
+
+For a unit verification session, start a debug build with the `private-picture-counts` feature and
+`OOS_OBSERVE_DMA_STALL_ONCE=1` in the UI process environment. Its first ordinary batch DMA asks for
+eight extra bytes. The injection is compiled out of release builds. The one-second configuration,
+injection and restart still need verification on hardware.
+
 ## Acquisition and rendering switches
 
 | Key | Values | Default | Effect | Unit evidence |

@@ -9,7 +9,7 @@ Everything the kernel of OOS is built from. `build-base.sh` uses the shared buil
 | `dts/` | device tree of the DHO800/DHO900 board |
 | `config` | the kernel configuration: only what OOS uses, with 8 modules beside `xdma`; the Rockchip GMAC glue loads after device MAC resolution |
 | `firmware/` | `regulatory.db` for the WLAN stack, built into the kernel |
-| `modules/xdma/` | Xilinx' XDMA driver, unchanged: [dma_ip_drivers](https://github.com/Xilinx/dma_ip_drivers) at `f09dce768433b2809e7aa6b9d41779265357a2b4`, `XDMA/linux-kernel` |
+| `modules/xdma/` | Xilinx' XDMA driver from [dma_ip_drivers](https://github.com/Xilinx/dma_ip_drivers) at `f09dce768433b2809e7aa6b9d41779265357a2b4`, `XDMA/linux-kernel`, with local streaming C2H timeout handling. |
 | `tools/` | answers the `git log` queries of the Rockchip drivers, so the build needs no git tree |
 
 `build-base.sh` fixes time stamps, build names and paths. The historical compiler was gcc 15.2.0;

@@ -23,7 +23,7 @@ pub(super) fn acquire(cmd: &str, a: &[String]) {
     let (st, plan_p) = match seq::plan(&mut state, &o.s, cal.as_ref(), cal_adc.as_ref()) {
         Ok((mut st, p)) => {
             if o.no_read {
-                st.retain(|x| !matches!(x, Step::Read { .. }));
+                st.retain(|x| !matches!(x, Step::Read { .. } | Step::ReadPadded { .. }));
             }
             (st, p)
         }

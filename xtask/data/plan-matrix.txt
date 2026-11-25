@@ -2976,7 +2976,7 @@
   wr  0x4008 0x00800003
   wr  0x1100 0x00000450
   wr  0x1108 0x00000000
-  wr  0x11f0 0x00000080
+  wr  0x11f0 0x00000040
   wr  0x1010 0xa0000000
   wr  0x400c 0x20000000
   wr  0x4004 0x00000000
@@ -3009,7 +3009,7 @@
   wr  0x4008 0x00800003
   wr  0x4004 0x00000001
   peek [4034, 4080]
-  read 1 frames of 32 bytes (32 with the stream padding) from /dev/xdma0_c2h_0
+  read 1 frames of 32 bytes (256 with the stream padding) from /dev/xdma0_c2h_0
 # 118 hardware writes
 ### --mask 3 --app-mask 3 --src 1 --tdiv 1e-8
 # mask 0x3: ratio 2, 625000000 Sa/s, 64 points/channel, segment 0x40, pre 32 post 32
@@ -4417,7 +4417,7 @@
   wr  0x4008 0x00800005
   wr  0x1100 0x00000450
   wr  0x1108 0x00000000
-  wr  0x11f0 0x00000080
+  wr  0x11f0 0x00000040
   wr  0x1010 0xa0000000
   wr  0x400c 0x20000000
   wr  0x4004 0x00000000
@@ -4450,7 +4450,7 @@
   wr  0x4008 0x00800005
   wr  0x4004 0x00000001
   peek [4034, 4080]
-  read 1 frames of 32 bytes (32 with the stream padding) from /dev/xdma0_c2h_0
+  read 1 frames of 32 bytes (256 with the stream padding) from /dev/xdma0_c2h_0
 # 118 hardware writes
 ### --mask 5 --app-mask 5 --src 1 --tdiv 1e-8
 # mask 0x5: ratio 2, 625000000 Sa/s, 64 points/channel, segment 0x40, pre 32 post 32

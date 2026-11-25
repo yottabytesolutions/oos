@@ -80,6 +80,7 @@ pub(super) enum Event {
     Read(u32, u32),
     ReadError(u32),
     Dma(usize),
+    DmaTimeout(Duration),
     Wait(Duration),
     Park(Duration),
     ParkTimeout(Duration),
@@ -185,7 +186,7 @@ pub(super) struct SimStream {
     run: Run,
     stop: Rc<StopSignals>,
     on_dma: Option<DmaHook>,
-    failed_read: bool,
+    read_error: Option<io::ErrorKind>,
 }
 
 type DmaHook = Box<dyn FnOnce(&mut Trace)>;
@@ -196,16 +197,25 @@ impl SimStream {
     }
 
     pub(super) fn fail_next(&mut self) {
-        self.failed_read = true;
+        self.read_error = Some(io::ErrorKind::Other);
+    }
+
+    pub(super) fn timeout_next(&mut self) {
+        self.read_error = Some(io::ErrorKind::TimedOut);
     }
 }
 
 impl Read for SimStream {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
         let count = self.stream.read(bytes)?;
-        if std::mem::take(&mut self.failed_read) {
+        if let Some(kind) = self.read_error.take() {
             // The transfer consumed the data before reporting its error.
-            return Err(io::Error::other("simulated DMA failure"));
+            if kind == io::ErrorKind::TimedOut {
+                let timeout = Duration::from_secs(1);
+                self.stop.elapsed.set(self.stop.elapsed.get() + timeout);
+                self.trace.borrow_mut().events.push(Event::DmaTimeout(timeout));
+            }
+            return Err(kind.into());
         }
         if let Some(hook) = self.on_dma.take() {
             hook(&mut self.trace.borrow_mut());
@@ -468,7 +478,7 @@ pub(super) fn fixture(
             run,
             stop: signals.clone(),
             on_dma: None,
-            failed_read: false,
+            read_error: None,
         },
         clock: Virtual {
             origin: Instant::now(),
@@ -485,6 +495,7 @@ pub(super) fn fixture(
         port: Sim,
         cal: None,
         cal_adc: None,
+        dma_fault: Default::default(),
         trim_overlay: Default::default(),
         la_cal: Default::default(),
         state,

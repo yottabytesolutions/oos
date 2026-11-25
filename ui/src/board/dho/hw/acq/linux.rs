@@ -94,7 +94,25 @@ impl Io<Linux> {
             oos_hal::dho::la::Cal::default()
         };
         let state = seq::State::handover(o.mask, cal_adc.as_ref());
-        Ok(Self { bar, c2h, port: Linux { afe_bus }, cal, cal_adc, trim_overlay, la_cal, state, clock: Real })
+        let dma_fault = super::dma_fault::DmaFault::default();
+        #[cfg(all(feature = "private-picture-counts", debug_assertions))]
+        let dma_fault = {
+            let mut fault = dma_fault;
+            fault.inject_stall = std::env::var_os("OOS_OBSERVE_DMA_STALL_ONCE").as_deref() == Some("1".as_ref());
+            fault
+        };
+        Ok(Self {
+            bar,
+            c2h,
+            port: Linux { afe_bus },
+            cal,
+            cal_adc,
+            trim_overlay,
+            la_cal,
+            state,
+            clock: Real,
+            dma_fault,
+        })
     }
 }
 

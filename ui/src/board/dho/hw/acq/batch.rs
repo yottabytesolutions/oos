@@ -53,7 +53,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
         );
         let capture = Capture { settings: &b, params, request: &request, uncapped };
         if let Err(error) = seq::validate_readout(&b, params) {
-            self.batch.failed(&io.batch_io(), &capture, &self.out, error.to_string());
+            self.batch.failed(&mut io.batch_io(), &capture, &self.out, error.to_string());
             return;
         }
         self.clear_average(io, request.avg_clear);
@@ -133,7 +133,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
             Err(error) => {
                 self.replay.invalidate(out, seq::frames(b, params));
                 self.replay.fresh = last_read && self.replay.last_batch.is_some();
-                self.batch.failed(&read_io, &capture, out, error);
+                self.batch.failed(&mut read_io, &capture, out, error);
                 return;
             }
         };
@@ -251,7 +251,7 @@ impl BatchState {
 
     pub(super) fn failed(
         &mut self,
-        io: &ReadIo<'_, impl Bus, impl Read, impl LoopClock>,
+        io: &mut ReadIo<'_, impl Bus, impl Read, impl LoopClock>,
         capture: &Capture<'_>,
         out: &HwShared,
         error: String,
@@ -259,10 +259,13 @@ impl BatchState {
         if error == seq::NEW_SETTINGS {
             return;
         }
+        if error.starts_with("c2h read of ") || super::dma_fault::is_timeout(&error) {
+            drawpipe::counters().acquisition.add(crate::board::counters::Event::BatchDmaFailure);
+        }
         let unit = io.state.mask_ctrl().is_some() || io.state.zone_ctrl().is_some();
         let stalled = is_stall(&error);
         if logs_acquire_error(stalled, unit) {
-            status(out, format!("acquire: {}", error));
+            io.report_read_error(out, format!("acquire: {error}"));
         }
         if self.guard.batch(stalled, unit, unit_key(capture.settings, mask_map()), io.clock.now()) {
             status(out, "mask/zone unit: no acquisition twice, software fallback for these settings".into());
@@ -281,7 +284,8 @@ impl BatchState {
         obsolete: impl Fn() -> bool,
     ) -> Result<Option<DmaBuf>, ()> {
         let Capture { settings: b, params: p, request, uncapped, .. } = handoff.capture;
-        let next = (switches.board.prearm
+        let next = (!io.dma_fault.pending()
+            && switches.board.prearm
             && !handoff.plan.serial()
             && self.avg.is_none()
             && !b.single

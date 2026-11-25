@@ -164,6 +164,12 @@ fn finish_stop(w: &mut Vec<Write>, sh: &mut Shadows) {
     set_stop(w, false, sh);
 }
 
+pub(super) const MIN_TX_WORDS: u32 = 128;
+
+pub(super) fn tx_points(words: u32, ratio: u32) -> u32 {
+    words.div_ceil(4) * 4 / ratio
+}
+
 /// Read-out window: channel processing on, LA processing off, window 0x1100/0x1108, TX length 0x11f0,
 /// no frame header (0x1010 bit31), record sequence off (0x400c bit25); 7 writes.
 fn readout_window(w: &mut Vec<Write>, win: &Window, sh: &mut Shadows) {
@@ -176,8 +182,8 @@ fn readout_window(w: &mut Vec<Write>, win: &Window, sh: &mut Shadows) {
     if win.avg {
         w.push((AVG_OFFSET, avg_offset(win.start / win.ratio, win.ratio)));
     }
-    let size = win.n.div_ceil(4) * 4 / win.ratio;
-    w.push((0x11f0, if size == 8 { 128 } else { size }));
+    let size = tx_points(win.n, win.ratio);
+    w.push((0x11f0, if size == 8 { MIN_TX_WORDS / win.ratio } else { size }));
     sh.s1010 |= 1 << 31;
     w.push((0x1010, sh.s1010));
     sh.s400c &= !(1 << 25);

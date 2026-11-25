@@ -25,6 +25,7 @@ pub use execute::linux::{execute, execute_into_until, execute_until};
 pub use execute::{
     acquire_batch, acquire_batch_idle, acquire_batch_until, acquire_batch_with_clock, execute_bus, execute_bus_until,
 };
+pub(super) use readout::compressed_window_fits;
 pub use readout::{
     compress_k, compress_word, compressed_len, frame_bytes, frame_stride, read_len, unpad, unpad_in, validate_readout,
     window, Playback, ReadoutError, COMPRESS_K_MAX, STAMP_BYTES, STAMP_WORDS,
@@ -59,6 +60,12 @@ pub enum Step {
     Read {
         frames: usize,
         frame: usize,
+    },
+    /// Read an extended wire stride and retain only the requested bytes of each frame.
+    ReadPadded {
+        frames: usize,
+        frame: usize,
+        stride: usize,
     },
     Sleep {
         us: u32,

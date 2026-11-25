@@ -117,7 +117,7 @@ held status and trim deferral with virtual time.
 | Path | Current bound and result |
 |---|---|
 | Disarm on STOP or batch cancellation | One 10 ms STOPPED poll in 500 µs steps, then the stop pulse. The source polls STOPPED for up to 500 µs after the pulse and samples DONE before clearing play info. An unknown disarm outcome while held sets the source status once for that disarm. The host test masks bit 13 and sees one stop pulse, the status diagnostic and the usual software acknowledgement with no final frame. [Disarm plan](../../hal/src/dho/seq/arm.rs) · [HAL poll](../../hal/src/dho/seq/wait.rs) · [Cancellation path](../../ui/src/board/dho/hw/acq/read.rs) |
-| STOP final record | Once a serial first-trigger poll observes hold, it allows up to 2 s for the trigger, checked on the HAL cancellation cadence. The normal first-trigger timeout can expire earlier. The simulated long-record case cancels at 2 s with no DMA. The ordinary UI final-record drain ends when the source request is acknowledged **and** its record queue is empty, or when the UI's 3 s deadline passes. Subsequent C2H reads have no acquisition-loop deadline. The checked-in XDMA driver defaults to a 10 s timeout per read request. [First wait](../../ui/src/board/dho/hw/stop.rs#L51-L68) · [Trigger timeout](../../hal/src/dho/seq/wait.rs#L14-L28) · [Drain acknowledgement](../../ui/src/wave/hw_queue.rs#L129-L141) · [UI deadline](../../ui/src/ui.rs#L3036-L3039) · [DMA reads](../../hal/src/dho/bus.rs#L79-L108) · [Driver parameter](../../kernel/modules/xdma/xdma/cdev_sgdma.c#L40-L46) |
+| STOP final record | Once a serial first-trigger poll observes hold, it allows up to 2 s for the trigger, checked on the HAL cancellation cadence. The normal first-trigger timeout can expire earlier. The simulated long-record case cancels at 2 s with no DMA. The ordinary UI final-record drain ends when the source request is acknowledged **and** its record queue is empty, or when the UI's 3 s deadline passes. Subsequent C2H reads have no acquisition-loop deadline. OOS loads XDMA with a 1 s timeout per transfer wait by default. [First wait](../../ui/src/board/dho/hw/stop.rs#L51-L68) · [Trigger timeout](../../hal/src/dho/seq/wait.rs#L14-L28) · [Drain acknowledgement](../../ui/src/wave/hw_queue.rs#L129-L141) · [UI deadline](../../ui/src/ui.rs#L3036-L3039) · [DMA reads](../../hal/src/dho/bus.rs#L79-L108) · [Driver parameter](../../kernel/modules/xdma/xdma/cdev_sgdma.c#L40-L46) |
 | Tap capacity and handoff | Capacity waits have no elapsed deadline. Hold wakes the tap wait and retires its plan, leaving already queued taps for the consumer. A funded cycle wait is paced to its next start slot. DMA and deposit admission parks wait up to 100 ms per recheck, with no overall drain timeout. UI consumption has a per-step record budget and no synchronous STOP tap-drain barrier. The real tap condition-variable path lies outside the virtual clock. [Tap capacity](../../ui/src/picture/deposit/tap/funding.rs#L105-L137) · [Hold notification](../../ui/src/picture/deposit/tap/funding.rs#L219-L228) · [Funded cycle](../../ui/src/picture/deposit/tap/funding.rs#L313-L341) · [Admission park](../../ui/src/board/dho/hw/dma_source.rs#L300-L310) · [UI intake](../../ui/src/ui/step_draw.rs#L79-L87) |
 | Stopped-view reply | The source marks the software hold request acknowledged before reading the requested view. An unchanged view polls every 20 ms. The reply itself depends on C2H completion, subject to the per-request driver timeout above. [Stopped view](../../ui/src/board/dho/hw/acq/control.rs#L177-L211) |
 | Failed configuration during hold | Each failed attempt reports status and waits 500 ms before retrying. The view and configuration-dependent side units wait for a successful configuration. A newer `final_req` can leave `final_ack` stale during retries. The UI clears its final-record drain at the normal 3 s deadline even if the ack is still stale. `*OPC?` observes operation tokens, and completed SINGLE records finish their token when consumed. [Retry trace](../../ui/src/board/dho/hw/acq/tests/calibration_hold.rs) · [Operation tokens](../../ui/src/ui/scpi_operations.rs) |
@@ -137,17 +137,22 @@ when the query replies. The armed SINGLE trigger wait remains open-ended and can
 
 ## C2H DMA timeout
 
-The XDMA module parameter `c2h_timeout` is the only time bound on C2H DMA reads, including RUN
-batches, hold entry and stopped rereads. It defaults to 10 s. With the normal polling setup, a stalled
-read indicates a read-plan bug. It blocks the acquisition thread until the timeout. The watchdog does
-not fire for this stall.
+Both OOS loader paths set `c2h_timeout=1` by default, including after kexec. Roll and Scan request
+only complete FIFO chunks. Capture playback uses stored data and splits larger reads into requests
+of at most 4 MiB.
 
-The one-second bound is open. Check that every legitimate Roll or Scan read finishes within one
-second, then allow `c2h_timeout=1` in both `xdma.params` validators. Both kexec paths force polling
-and must also pass through the timeout for it to apply after kexec.
-[Driver](../../kernel/modules/xdma/xdma/cdev_sgdma.c#L44) ·
-[Rust validator](../../fpgad/src/pcie.rs#L11) ·
-[Shell validator](../../rootfs/board/dho/bin/oos-fpga-up#L23)
+The synchronous XDMA timeout path aborts the queued transfer and stops the engine when its status
+is accessible. The local driver returns `ETIMEDOUT` even if earlier chains in the syscall completed.
+Userspace discards the failed read and takes the FPGA snapshot before the stop sequence. The sequence
+clears play info and pulses the SPU and TX resets. The worker discards retained replay state and waits
+for a post-reset STOPPED read before the next arm. A stalled engine, late completion or unread FIFO
+data could still affect the next read if the hardware does not honor the reset. Check the driver and
+FPGA behavior on a DHO924S before relying on automatic recovery.
+
+[XDMA return path](../../kernel/modules/xdma/xdma/libxdma.c) ·
+[FPGA stop sequence](../../hal/src/dho/scu.rs) ·
+[Worker recovery](../../ui/src/board/dho/hw/acq/dma_fault.rs) ·
+[XDMA startup and observer](../system-conf-keys.md#xdma-startup)
 
 ## Review of the withdrawn attempt
 

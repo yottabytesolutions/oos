@@ -8,6 +8,9 @@ use crate::dho::{acq, hz, la, scu};
 #[cfg(test)]
 mod tests;
 
+mod geometry;
+pub(in crate::dho) use geometry::window_fits as compressed_window_fits;
+
 /// The requested analog playback path.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Playback {
@@ -56,10 +59,15 @@ pub(super) fn steps_at(
         }
         shadows.s1010 &= !(1 << 31);
     }
+    let points = compression.map_or(n, |(_, len)| len);
+    let frame = bytes(s.header, p.ratio, points);
+    let extended = compression.is_none() && scu::tx_points(n * p.ratio, p.ratio) == 8;
+    let stride = if extended { frame_stride(bytes(s.header, 1, STAMP_WORDS)) } else { frame_stride(frame) };
+    let frames = nf as usize;
+    geometry::check(&ro, (p.memsel, s.la.is_some()), frames * stride)?;
     st.extend(ro.into_iter().map(Step::Wr));
     st.push(Step::Peek(&[0x4034, 0x4080]));
-    let points = compression.map_or(n, |(_, len)| len);
-    st.push(Step::Read { frames: nf as usize, frame: bytes(s.header, p.ratio, points) });
+    st.push(if extended { Step::ReadPadded { frames, frame, stride } } else { Step::Read { frames, frame } });
     Ok(st)
 }
 
@@ -116,7 +124,7 @@ pub(super) fn stamp_steps(s: &Settings, p: &hz::Params, shadows: &mut scu::Shado
 
 /// Words (all channels) of the stamp play: 128, the smallest window of the stock raw export (record-play.md 7.1: a
 /// TX length of 8 points becomes 128 / ratio).
-pub const STAMP_WORDS: u32 = 128;
+pub const STAMP_WORDS: u32 = scu::MIN_TX_WORDS;
 /// Bytes of the stamp play's read: the 16-byte frame header and `STAMP_WORDS` words.
 pub const STAMP_BYTES: usize = 16 + 2 * STAMP_WORDS as usize;
 
@@ -178,13 +186,14 @@ fn window_compression(requested: u32, n: u32) -> (u32, u32) {
 /// Settings that cannot be issued as a compressed read.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReadoutError {
-    /// Logic analyser words double the programmed window length and cannot share FPGA compression.
     /// The effective start or size of an explicit window is not eight-point aligned.
     UnalignedWindow { start: u32, points: u32 },
     /// The effective window exceeds the stored record.
     WindowOutsideRecord { start: u32, points: u32, memsel: u32 },
     /// The window cannot produce the minimum transfer length at this factor.
     InsufficientPoints { points: u32, factor: u32, len: u32 },
+    /// The playback register sequence would transfer a different number of bytes.
+    TransferLength { requested: usize, played: Option<u64> },
 }
 
 impl std::fmt::Display for ReadoutError {
@@ -196,6 +205,12 @@ impl std::fmt::Display for ReadoutError {
             Self::WindowOutsideRecord { start, points, memsel } => {
                 write!(f, "compressed read window of {points} points at {start} exceeds record length {memsel}")
             }
+            Self::TransferLength { requested, played } => match played {
+                Some(played) => {
+                    write!(f, "DMA read asks for {requested} bytes but the playback registers produce {played}")
+                }
+                None => write!(f, "DMA read asks for {requested} bytes but the playback registers cannot finish"),
+            },
             Self::InsufficientPoints { points, factor, len } => {
                 write!(f, "compressed read window of {points} points cannot supply {len} points at factor {factor}")
             }
@@ -217,7 +232,11 @@ fn is_compressed(s: &Settings) -> bool {
 
 fn checked_compression(s: &Settings, p: &hz::Params, n: u32, start: u32) -> Result<Option<(u32, u32)>, ReadoutError> {
     if !is_compressed(s) {
-        return Ok(None);
+        return if n == 0 {
+            Err(ReadoutError::TransferLength { requested: bytes(s.header, p.ratio, n), played: None })
+        } else {
+            Ok(None)
+        };
     }
     let (k, len) = window_compression(s.compress, n);
     if len < 8 || len > n / k {
@@ -241,7 +260,10 @@ pub fn unpad(buf: &mut Vec<u8>, frame: usize) {
 /// `unpad` on a slice: returns the bytes left at the front. Frames without padding (all live set-ups of oos-ui) cost
 /// nothing.
 pub fn unpad_in(buf: &mut [u8], frame: usize) -> usize {
-    let stride = frame_stride(frame);
+    unpad_stride(buf, frame, frame_stride(frame))
+}
+
+pub(super) fn unpad_stride(buf: &mut [u8], frame: usize, stride: usize) -> usize {
     if frame == 0 || stride == frame {
         return buf.len();
     }

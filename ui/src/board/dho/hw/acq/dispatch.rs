@@ -225,7 +225,7 @@ impl BatchState {
         out: &HwShared,
         average: Option<avg::After>,
     ) {
-        if average.is_some_and(|a| a.clear) {
+        if !io.dma_fault.pending() && average.is_some_and(|a| a.clear) {
             let steps = io.state.avg_clear_steps();
             if let Err(e) = io.execute(&steps, self.dma.destination()) {
                 status(out, format!("average clear: {}", e));
@@ -244,7 +244,7 @@ impl BatchState {
         let fb = seq::frame_bytes(b, p);
         let average = self.avg.as_mut().map(|(tracker, _, logged)| {
             let after = tracker.batch(count);
-            if *logged < 32 {
+            if *logged < 32 && !io.dma_fault.pending() {
                 *logged += 1;
                 let bytes = self.dma.destination().data();
                 let at = (count.max(1) as usize - 1) * fb;

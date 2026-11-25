@@ -225,6 +225,7 @@ impl BatchState {
         (out, probe): (&HwShared, crate::board::dho::switches::HeaderProbe),
         tap: Option<&std::sync::Arc<TapReservation>>,
     ) -> Readout {
+        io.dma_fault.read_succeeded();
         let (b, p) = (capture.settings, capture.params);
         let count = completed.count;
         let live = raw_newest(b, p);
@@ -237,6 +238,8 @@ impl BatchState {
         let mut failed = la_error.is_some();
         if let Some(error) = la_error {
             io.report_read_error(out, &format!("LA read ({} of 3)", self.la_fails), error);
+        } else if la.is_some() {
+            io.dma_fault.read_succeeded();
         }
         let replay = !io.dma_fault.pending() && raw::replay_due(count, live, &mut self.raw.live, io.clock);
         let mut wrote_after_dma = la.is_some() || replay;
@@ -294,6 +297,7 @@ impl BatchState {
             io.report_read_error(out, &format!("raw read of the {what}"), e);
             return Err(());
         }
+        io.dma_fault.read_succeeded();
         let decoded_at = started.map(|_| io.clock.now());
         let cores = capture.request.run.cores.then_some(&mut self.raw.cores);
         let frame = raw::decode_raw(self.raw.dma.data(), (b, p), probe, cores, tap);

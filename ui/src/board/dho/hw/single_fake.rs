@@ -184,8 +184,9 @@ impl SegmentWorker {
             &mut self.bus,
             &mut self.c2h,
             &mut DmaBuf::new(),
-            shared,
-            &mut self.n,
+            (shared, &mut self.n),
+            &seq::time::Real,
+            &mut || {},
         )
         .step(&mut self.run, &want, &p, id)
         .unwrap();

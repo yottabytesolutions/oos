@@ -24,7 +24,7 @@ impl super::super::Dho {
         let crate::wave::Source::Hw { shared, .. } = source else {
             return " acq.capture=unavailable acq.capture.stored_points=0".into();
         };
-        let (applied, mode, points, status, play) = {
+        let (applied, mode, points, status, play, backoff) = {
             let g = crate::perfguard::deep::ui_lock(shared);
             let id = g.acquisition.identity();
             let frame = &g.frame;
@@ -35,7 +35,7 @@ impl super::super::Dho {
             let mode = g.want.as_ref().filter(|_| current).map(|want| want.mode);
             let play =
                 g.read_geometry.play.filter(|(played, _)| (played.gen(), played.epoch()) == (id.gen(), id.epoch()));
-            (applied, mode, frame.acq.1, status, play)
+            (applied, mode, frame.acq.1, status, play, g.status.dma_backoff())
         };
         let mut text = applied.unwrap_or_else(|| {
             mode.map_or_else(
@@ -46,6 +46,10 @@ impl super::super::Dho {
         use std::fmt::Write;
         if let Some(status) = status {
             write!(text, " acq.status={:?}", status.message()).expect("writing to a String cannot fail");
+        }
+        if let Some(since) = backoff {
+            write!(text, " acq.dma.backoff_age_ms={}", since.elapsed().as_millis())
+                .expect("writing to a String cannot fail");
         }
         if let Some((_, play)) = play {
             write!(text, " acq.play.lo={} acq.play.n={} acq.play.k={}", play.lo, play.n, play.k)

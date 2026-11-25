@@ -115,26 +115,67 @@ fn never_stopped_retries_on_cadence_and_reports_once_at_the_deadline() {
         assert_eq!(f.diagnosis(), None);
     }
     assert_eq!(f.clock.now(), start + LIMIT);
-    assert!(f.poll());
+    assert!(!f.poll());
     assert_eq!(f.diagnosis(), Some(CaptureStatus::DmaStopDeadline));
     assert!(lock(&f.out).status.take_latest().contains("0x4034=0x00000000"));
-    assert!(f.poll());
+    assert_eq!(lock(&f.out).status.dma_backoff(), Some(start + LIMIT));
+    assert!(!f.poll());
     assert!(lock(&f.out).status.latest().is_empty());
 }
 
 #[test]
-fn all_ones_is_a_link_fault_and_releases_without_waiting() {
+fn all_ones_is_a_link_fault_and_enters_backoff_without_waiting() {
     let _scope = Scope::new();
     let mut f = Fixture::new();
     f.report("timed out");
     f.fsm(u32::MAX);
     let before = f.clock.now();
-    assert!(f.poll());
+    assert!(!f.poll());
     assert_eq!(f.clock.now(), before);
     assert_eq!(f.diagnosis(), Some(CaptureStatus::DmaStopLink));
     assert!(lock(&f.out).status.take_latest().contains("0x4034 returned all ones"));
-    assert!(f.poll());
+    assert_eq!(lock(&f.out).status.dma_backoff(), Some(before));
+    assert!(!f.poll());
     assert!(lock(&f.out).status.latest().is_empty());
+}
+
+#[test]
+fn repeated_link_faults_back_off_to_the_cap_and_a_read_resets_the_delay() {
+    let _scope = Scope::new();
+    let mut f = Fixture::new();
+    f.fsm(u32::MAX);
+    f.report("timed out");
+    lock(&f.out).status.take_latest();
+
+    for (seconds, logged) in [(1, true), (2, false), (4, false), (8, true), (16, true), (30, true), (30, true)] {
+        let since = f.clock.now();
+        assert!(!f.poll());
+        assert!(f.fault.pending());
+        assert_eq!(lock(&f.out).status.dma_backoff(), Some(since));
+        assert_eq!(!lock(&f.out).status.take_latest().is_empty(), logged);
+
+        let retry = since + Duration::from_secs(seconds);
+        let disarms = f.disarms();
+        while f.clock.now() < retry {
+            assert!(!f.poll());
+            assert_eq!(f.disarms(), disarms);
+        }
+        assert_eq!(f.clock.now(), retry);
+        assert!(!f.poll());
+        assert_eq!(f.disarms(), disarms + 1);
+        assert_eq!(lock(&f.out).status.dma_backoff(), None);
+    }
+    f.fsm(scu::status::STOPPED);
+    assert!(f.poll());
+    f.fault.read_succeeded();
+    f.fsm(u32::MAX);
+    f.report("another timeout");
+    let since = f.clock.now();
+    assert!(!f.poll());
+    f.clock.wait(Duration::from_secs(1));
+    assert!(!f.poll());
+    assert_eq!(f.clock.now(), since + Duration::from_secs(1));
+    assert_eq!(lock(&f.out).status.dma_backoff(), None);
 }
 
 #[test]

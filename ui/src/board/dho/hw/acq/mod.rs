@@ -215,24 +215,12 @@ impl<T: pacing::PacingPolicy> AcqLoop<T> {
 
     fn run(&mut self, io: &mut Io<impl Port>) {
         while let Some(counter) = Service::before_pass(&self.out) {
-            let request = self.service(io, counter);
-            if io.dma_fault.pending() {
-                self.replay.invalidate(&self.out, u32::MAX);
-                self.batch.first = FirstRecord::default();
-                {
-                    let mut g = crate::perfguard::deep::acq_lock(&self.out);
-                    if g.hold {
-                        // The timed-out play invalidated the ring. There is no final DMA to publish.
-                        g.final_ack = g.final_req;
-                    }
-                }
-                if !io.dma_fault.recover(&mut io.state, &mut io.bar, &io.clock, &self.out) {
-                    continue;
-                }
-                self.configured.current = None;
-            }
             let mut last_read = std::mem::take(&mut self.replay.fresh);
-            let Some(request) = request else { continue };
+            let Some(request) = self.service(io, counter) else { continue };
+            if io.dma_fault.pending() {
+                self.recover_dma(io);
+                continue;
+            }
             let Some((settings, params)) = self.reconfigure(io, &request, &mut last_read) else { continue };
             if self.configured.mode != Slow::Off {
                 if !self.stream.poll(
@@ -255,6 +243,21 @@ impl<T: pacing::PacingPolicy> AcqLoop<T> {
         }
     }
 
+    fn recover_dma(&mut self, io: &mut Io<impl Port>) {
+        self.replay.invalidate(&self.out, u32::MAX);
+        self.batch.first = FirstRecord::default();
+        {
+            let mut g = crate::perfguard::deep::acq_lock(&self.out);
+            // The timed-out play invalidated the ring. There is no final DMA to publish.
+            if g.hold {
+                g.final_ack = g.final_req;
+            }
+        }
+        if io.dma_fault.recover(&mut io.state, &mut io.bar, &io.clock, &self.out) {
+            self.configured.current = None;
+        }
+    }
+
     fn segments(&mut self, io: &mut Io<impl Port>, settings: &Settings, params: &hz::Params, identity: Identity) {
         io.disarm(&mut self.batch, &mut self.replay, &self.out);
         if !self.batch.dma.ready(identity, &io.clock, || {
@@ -265,17 +268,17 @@ impl<T: pacing::PacingPolicy> AcqLoop<T> {
         }) {
             return;
         }
+        let mut read_succeeded = || io.dma_fault.read_succeeded();
         let mut segment = SegmentIo::new(
             &mut io.state,
             &mut io.bar,
             &mut io.c2h,
             self.batch.dma.destination(),
-            &self.out,
-            &mut self.seq,
+            (&self.out, &mut self.seq),
+            &io.clock,
+            &mut read_succeeded,
         );
-        if let Err(e) = segment.step(&mut self.segrun, settings, params, identity) {
-            // The legacy segment executor reports its C2H timeouts as text.
-            let error = if e.contains(seq::time::DMA_TIMEOUT) { ExecuteError::DmaTimeout(e) } else { e.into() };
+        if let Err(error) = segment.step(&mut self.segrun, settings, params, identity) {
             io.report_read_error(&self.out, "segments", error);
             io.abort_segments(&mut self.segrun, &self.out);
             if !io.dma_fault.pending() {

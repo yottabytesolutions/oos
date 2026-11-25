@@ -5,6 +5,9 @@
 use crate::ui::Ui;
 
 pub fn metadata(ui: &Ui, path: &str) -> Result<(), String> {
+    if shows_release_version(ui) {
+        println!("release-version {} {}", env!("CARGO_PKG_VERSION"), path);
+    }
     let plots = if ui.m.zoom {
         let (a, b) = Ui::split_zoom(ui.grid);
         vec![("main", a), ("zoom", b)]
@@ -42,4 +45,16 @@ pub fn metadata(ui: &Ui, path: &str) -> Result<(), String> {
         frame
     );
     std::fs::write(format!("{}.meta", path), regions + &settings).map_err(|e| format!("capture metadata: {}", e))
+}
+
+fn shows_release_version(ui: &Ui) -> bool {
+    let release = format!("oos-ui {}", env!("CARGO_PKG_VERSION"));
+    let Some(dialog) = &ui.dialog else { return false };
+    if let Some(columns) = &ui.sysinfo {
+        columns.iter().flatten().any(
+            |row| matches!(row, crate::ui::sysinfo::Row::Kv(label, value, _) if label == "OOS" && value == &release),
+        )
+    } else {
+        dialog.iter().any(|line| line == &release)
+    }
 }

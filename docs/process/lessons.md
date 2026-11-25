@@ -48,6 +48,8 @@ pull request that fixes a mistake: what happened, then the rule.
   Count retired instructions where available and account for all worker threads (ADR 0031).
 - A public benchmark used a zero-volt Normal-sweep threshold and reported zero rates as success.
   Prove that the acquired counter advances before timing and restore the starting setup when leaving.
+- A release fixture replaced a version substring in a third-party lockfile entry. Match the package before changing
+  a lockfile fixture. When adding a gate step, check both the inventory and the dispatch fixtures.
 - Preen stopped at an ext2 orphan and startup lost access to otherwise recoverable settings. Classify the checker
   exit bits, repair an offline copy and require a clean read-only check before writing the card.
 - A clean ext2 flag let preen skip a partially written repair. Escalate on the forced read-only verdict and

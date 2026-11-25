@@ -23,6 +23,7 @@ fn default_gate_never_selects_docker_or_image_prerequisites() {
             "links",
             "text",
             "protected-storage",
+            "release-version",
             "doctor-base",
             "clippy",
             "plan-matrix",
@@ -94,7 +95,8 @@ fn selections_preserve_the_fast_prefix_and_conditional_checks() {
             "test-time",
             "links",
             "text",
-            "protected-storage"
+            "protected-storage",
+            "release-version"
         ]
     );
     let full = ids(false, true, false);

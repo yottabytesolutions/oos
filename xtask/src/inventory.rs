@@ -96,6 +96,15 @@ pub(crate) const CHECKS: &[Check] = &[
         [],
         steps::scripts::protected_storage
     ),
+    entry!(
+        "release-version",
+        "release version",
+        "cargo xtask bump --check",
+        "Python, golden manifest",
+        Fast,
+        [],
+        crate::bump::check
+    ),
     entry!("doctor-base", "doctor-base", "doctor", "tools/bootstrap.sh; no Docker", Host, [], crate::doctor::check),
     entry!(
         "doctor",

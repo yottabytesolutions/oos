@@ -30,7 +30,7 @@ impl Clock for FakeClock {
 
     fn check(&self) -> Result<(), Error> {
         if self.interrupt_at.is_some_and(|at| self.now() >= at) {
-            Err(Error::Interrupted)
+            Err(Error::Interrupted(130))
         } else {
             Ok(())
         }
@@ -49,6 +49,7 @@ enum Fault {
     NoNormalAcquisition,
     ZeroView(Metric),
     InvalidProbe,
+    InterruptAfterTriggerMode,
     MissingMeasurement,
     SentinelMeasurement,
     RejectRestore,
@@ -218,6 +219,9 @@ impl<'a> FakeScope<'a> {
 impl Scpi for FakeScope<'_> {
     fn send(&mut self, command: &str) -> Result<(), String> {
         self.sends.push(command.into());
+        if self.fault == Fault::InterruptAfterTriggerMode && command == ":SYST:SET trig_type = Edge" {
+            self.clock.advance(Duration::from_secs(1));
+        }
         match command {
             "*CLS" => self.error = None,
             ":RUN" => self.running = true,

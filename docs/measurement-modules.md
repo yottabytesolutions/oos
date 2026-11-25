@@ -87,9 +87,8 @@ cargo xtask public-bench --host example.invalid --label reference --signal-chann
 cargo xtask public-bench compare /path/to/results/public-reference.json /path/to/results/public-candidate.json
 ```
 
-The command uses SCPI on TCP port 5555 and the host's `python3` to handle
-interrupts. By default, `--trigger-level auto` measures the selected channel's
-`VMIN` and `VMAX` in Auto sweep at 1 ms/div and uses their midpoint. The report
+The command uses SCPI on TCP port 5555. By default, `--trigger-level auto` measures
+the selected channel's `VMIN` and `VMAX` in Auto sweep at 1 ms/div and uses their midpoint. The report
 records the method, voltage and measured extrema. Supply `--trigger-level <volts>`
 if the build cannot measure distinct extrema or to use a fixed level.
 
@@ -102,8 +101,8 @@ acquired or shown rate is marked `no triggers` in the JSON and table and makes
 the run exit nonzero.
 
 The command reads the starting settings and Run/Stop state before changing them.
-It restores and verifies them after the run, on error or when interrupted, and
-names any settings that it could not verify. Use a live source and leave
+It restores and verifies them after the run, on error or after SIGINT, SIGTERM
+or SIGHUP, and names any settings that it could not verify. Use a live source and leave
 Single sweep before starting. Running the benchmark replaces live
 captures and resets accumulated measurement statistics.
 

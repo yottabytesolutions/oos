@@ -14,13 +14,14 @@ use crate::unit_tools::{
     scpi::{Scpi, TcpScpi, PORT, STATE},
     Flags,
 };
-use interrupt::HostClock;
+use interrupt::{HostClock, InterruptibleScpi};
 use report::{Metric, Report, Sample, Spread, ViewReport};
 use restore::Snapshot;
 use settings::VIEWS;
 use state::{read_state, State};
 use std::{
     fmt, fs, io,
+    io::Write as _,
     path::{Path, PathBuf},
     process::ExitCode,
     time::{Duration, SystemTime},
@@ -46,7 +47,7 @@ enum Error {
     TriggerLevel,
     ZeroRate,
     Restore { failed: Vec<&'static str>, run: Option<Box<Self>> },
-    Interrupted,
+    Interrupted(u8),
     InterruptControl(io::Error),
 }
 
@@ -69,8 +70,18 @@ impl fmt::Display for Error {
                 }
                 write!(f, "could not restore or verify settings: {}", failed.join(", "))
             }
-            Self::Interrupted => f.write_str("benchmark interrupted"),
-            Self::InterruptControl(error) => write!(f, "start benchmark interrupt supervisor: {error}"),
+            Self::Interrupted(_) => f.write_str("benchmark interrupted"),
+            Self::InterruptControl(error) => write!(f, "monitor benchmark termination signals: {error}"),
+        }
+    }
+}
+
+impl Error {
+    fn exit_code(&self) -> ExitCode {
+        match self {
+            Self::Interrupted(code) => ExitCode::from(*code),
+            Self::Restore { run: Some(error), .. } => error.exit_code(),
+            _ => ExitCode::FAILURE,
         }
     }
 }
@@ -139,7 +150,8 @@ impl<'a> BenchmarkOptions<'a> {
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|_| Error::Measurement("host time precedes the Unix epoch"))?;
         clock.check()?;
-        let mut scope = TcpScpi::connect(self.host.into(), PORT).map_err(Error::Scpi)?;
+        let connection = TcpScpi::connect(self.host.into(), PORT).map_err(Error::Scpi);
+        let mut scope = clock.check().and(connection)?;
         let mut out = io::stdout().lock();
         let (report, failed) = collect(&mut scope, &clock, self, started, &mut out)?;
         let result = pending
@@ -147,7 +159,7 @@ impl<'a> BenchmarkOptions<'a> {
             .map_err(Error::Output)
             .and_then(|()| report.write_summary(&mut out))
             .and_then(|()| report.check_rates());
-        with_restoration(result, failed)
+        with_restoration(clock.check().and(result), failed)
     }
 }
 
@@ -158,25 +170,20 @@ pub(super) fn run(args: &[&str]) -> ExitCode {
             return ExitCode::SUCCESS;
         }
         ["compare", a, b] => report::compare_files(Path::new(a), Path::new(b)),
-        _ => {
-            let worker = args.first() == Some(&interrupt::WORKER);
-            let flags = if worker { &args[1..] } else { args };
-            match BenchmarkOptions::parse(flags) {
-                Ok(options) if worker => options.measure(),
-                Ok(_) => Err(interrupt::supervise(flags)),
-                Err(error) => {
-                    eprintln!("{error}\n{USAGE}");
-                    return ExitCode::from(2);
-                }
+        _ => match BenchmarkOptions::parse(args) {
+            Ok(options) => options.measure(),
+            Err(error) => {
+                eprintln!("{error}\n{USAGE}");
+                return ExitCode::from(2);
             }
-        }
+        },
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(Error::ZeroRate) => ExitCode::FAILURE,
         Err(error) => {
-            eprintln!("public-bench: {error}");
-            ExitCode::FAILURE
+            let _ = writeln!(io::stderr(), "public-bench: {error}");
+            error.exit_code()
         }
     }
 }
@@ -196,7 +203,17 @@ fn collect(
     started: Duration,
     out: &mut impl io::Write,
 ) -> Result<(Report, Vec<&'static str>), Error> {
-    clock.check()?;
+    let setup = read_setup(&mut InterruptibleScpi::new(scope, clock));
+    let (version, state, snapshot) = clock.check().and(setup)?;
+    let result = collect_views(&mut InterruptibleScpi::new(scope, clock), clock, options, &snapshot, out);
+    let failed = snapshot.restore(scope);
+    match result {
+        Ok((trigger, views)) => Ok((Report::new(options, started, &version, state.card_mode, views, trigger), failed)),
+        Err(error) => with_restoration(clock.check().and(Err(error)), failed),
+    }
+}
+
+fn read_setup(scope: &mut impl Scpi) -> Result<(String, State, Snapshot), Error> {
     let identity = scope.query("*IDN?").map_err(Error::Scpi)?;
     let version = identity
         .split(',')
@@ -208,13 +225,7 @@ fn collect(
     let initial_state = scope.query(STATE).map_err(Error::Scpi)?;
     let state = State::parse(&initial_state)?;
     let snapshot = Snapshot::read(scope, &initial_state)?;
-    clock.check()?;
-    let result = collect_views(scope, clock, options, &snapshot, out);
-    let failed = snapshot.restore(scope);
-    match result {
-        Ok((trigger, views)) => Ok((Report::new(options, started, version, state.card_mode, views, trigger), failed)),
-        Err(error) => with_restoration(Err(error), failed),
-    }
+    Ok((version.to_owned(), state, snapshot))
 }
 
 fn collect_views(

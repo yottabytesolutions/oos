@@ -5,6 +5,10 @@ mod cores;
 pub use cores::{capacities, cpus, Cores};
 mod ifaddrs;
 pub use ifaddrs::ipv4_all;
+#[cfg(unix)]
+mod signals;
+#[cfg(unix)]
+pub use signals::TerminationSignals;
 
 use std::io;
 use std::path::Path;

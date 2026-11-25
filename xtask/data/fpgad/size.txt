@@ -1,4 +1,4 @@
 # Items over the size limits: <size> <kind> <file or crate> <name>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
-463 file fpgad/src/bin/oos-update.rs
+461 file fpgad/src/bin/oos-update.rs
 227 fn fpgad/src/cmd/selfcal.rs run

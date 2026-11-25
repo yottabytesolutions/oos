@@ -37,7 +37,7 @@ pub use card::Card;
 use card::{check_image, Region};
 pub use kexec::receive::kexec_clear;
 pub use reconcile::{leave, reconcile_recovery};
-pub use state::{confirm, confirm_running, confirm_with_sd_mode, write_restart_mark};
+pub use state::{confirm, confirm_running, confirm_with_sd_mode, restart_mark, write_restart_mark};
 use std::path::Path;
 
 /// Default place of the state file (OOS data partition).
@@ -82,10 +82,7 @@ pub struct State {
     pub trial: Option<u32>,
     /// Arm OOS again after every confirmed start.
     pub persist: bool,
-    /// Suppress SDR104 after a trial observed the card negotiate a slower mode.
-    sd_failed: bool,
-    /// A same-build DTB trial must actually start before it can be confirmed.
-    sd_trial: Option<sd::Mode>,
+    sd: sd::Tracking,
     /// The build whose kexec start is under way.
     pub kexec: Option<String>,
     kexec_payload: Option<usize>,
@@ -202,9 +199,9 @@ pub fn rollback(
     if in_recovery == prev.sha256 {
         r.say(format!("recovery already holds build {}", short(&prev.build)));
         if execute && (st.trial.is_some() || st.current.as_ref().map(|c| c.sha256) != Some(prev.sha256)) {
+            st.abandon_card_trial();
             st.track_recovery(prev, id);
             st.trial = None;
-            st.sd_trial = None;
             st.save(state_path).map_err(io("writing the update state"))?;
         }
         return Ok(r);
@@ -216,7 +213,7 @@ pub fn rollback(
         return Ok(r);
     }
     // the state keeps naming the image and its trial until the write is done: a cut write stays a rollback to repeat
-    st.sd_trial = None;
+    st.abandon_card_trial();
     st.event = format!("rolling back from {} to {}", from, short(&prev.build));
     st.save(state_path).map_err(io("writing the update state (nothing written to the card)"))?;
     card.disarm_oos()?;
@@ -302,33 +299,24 @@ pub fn boot_started_with_card(
 ) -> Result<Boot, String> {
     let _l = lock(state_path)?;
     let mut st = State::load(state_path).map_err(io("reading the update state"))?;
-    let Some(n) = st.trial else { return Ok(Boot::NoTrial) };
-    let cur = st.current.as_ref().map(|c| c.build.clone()).unwrap_or_default();
-    if let Some(run) = running {
-        if run.trim() != cur.trim() {
-            if st.interrupted_recovery_write() {
-                return Ok(Boot::NoTrial);
-            }
-            let msg = format!(
-                "running build {} is not the one on trial ({}): trial dropped, recovery treated as hand-installed",
-                short(run),
-                short(&cur)
-            );
-            st.sd_trial = None;
-            st.trial = None;
-            st.current = None;
-            st.recovery = Default::default();
-            st.event = msg.clone();
-            st.save(state_path).map_err(io("writing the update state"))?;
-            return Ok(Boot::Dropped(msg));
-        }
+    let restart = state::read_restart_mark(state_path).map_err(io("reading the kexec restart guard"))?;
+    // Resolve a missed trial before timing from a different running image can reset its miss.
+    let boot = st.count_trial_start(running);
+    let mut changed = false;
+    if let Some(run) = running.map(str::trim).filter(|run| !run.is_empty() && !status.is_kexec()) {
+        let warm = restart.as_deref().is_some_and(|mark| mark.trim() == run);
+        let trial = st.trial.is_some()
+            && !st.recovery.writing
+            && st.current.as_ref().is_some_and(|current| run == current.build.trim());
+        changed = st.sd.observe(status, warm, trial);
     }
-    if running.is_some_and(|build| !build.trim().is_empty()) && !status.is_kexec() && !st.recovery.writing {
-        st.observe_sd_trial(status);
+    if changed || boot != Boot::NoTrial {
+        st.save(state_path).map_err(io("writing the update state"))?;
     }
-    st.trial = Some(n + 1);
-    st.save(state_path).map_err(io("writing the update state"))?;
-    Ok(if n + 1 >= 2 && st.previous.is_some() { Boot::Rollback } else { Boot::Trial(n + 1) })
+    if restart.is_some() {
+        state::remove_restart_mark(state_path).map_err(io("removing the kexec restart guard"))?;
+    }
+    Ok(boot)
 }
 
 /// Boot mode (persist = arm OOS after every confirmed start).

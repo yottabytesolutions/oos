@@ -3,7 +3,7 @@
 use super::{
     card::Region,
     hash::{hex, unhex},
-    io, lock, sd, short, Card, Entry, RecoveryTracking, State, SLOT_WRITING,
+    io, lock, sd, short, Boot, Card, Entry, RecoveryTracking, State, SLOT_WRITING,
 };
 use std::path::Path;
 
@@ -53,9 +53,11 @@ impl State {
                 "previous.sha256" => prev.1 = unhex(v).and_then(|b| b.try_into().ok()),
                 "previous.len" => prev.2 = v.parse().unwrap_or(0),
                 "trial" => s.trial = v.parse().ok(),
-                "sd.failed" => s.sd_failed = v == "yes",
+                "sd.failed" => s.sd.failed = v == "yes",
+                "sd.missed" => s.sd.missed = v.parse::<u8>().unwrap_or(0).min(2),
+                "sd.observed" => s.sd.observed = v == "yes",
                 "sd.trial" => {
-                    s.sd_trial = match v {
+                    s.sd.trial = match v {
                         "hs" => Some(sd::Mode::Hs),
                         "sdr104" => Some(sd::Mode::Sdr104),
                         _ => None,
@@ -114,10 +116,16 @@ impl State {
         if let Some(n) = self.trial {
             t.push_str(&format!("trial {}\n", n));
         }
-        if self.sd_failed {
+        if self.sd.failed {
             t.push_str("sd.failed yes\n");
         }
-        if let Some(mode) = self.sd_trial {
+        if self.sd.missed != 0 {
+            t.push_str(&format!("sd.missed {}\n", self.sd.missed));
+        }
+        if self.sd.observed {
+            t.push_str("sd.observed yes\n");
+        }
+        if let Some(mode) = self.sd.trial {
             t.push_str(&format!("sd.trial {}\n", mode.as_str()));
         }
         t.push_str(if self.persist { "mode persist\n" } else { "mode oneshot\n" });
@@ -197,22 +205,44 @@ impl State {
         }
         Ok(())
     }
-    pub(super) fn observe_sd_trial(&mut self, status: crate::bootcard::Status) -> bool {
-        use crate::bootcard::Mode;
-        if !self.sd_failed
-            && self.sd_trial == Some(sd::Mode::Sdr104)
-            && status.ceiling() == Mode::Sdr104
-            && !matches!(status.mode(), Mode::Sdr104 | Mode::Unknown)
-        {
-            self.sd_failed = true;
-            return true;
+    pub(super) fn count_trial_start(&mut self, running: Option<&str>) -> Boot {
+        let Some(n) = self.trial else { return Boot::NoTrial };
+        let current = self.current.as_ref().map_or("", |entry| entry.build.trim());
+        if let Some(run) = running.filter(|run| run.trim() != current) {
+            if self.interrupted_recovery_write() {
+                return Boot::NoTrial;
+            }
+            let message = format!(
+                "running build {} is not the one on trial ({}): trial dropped, recovery treated as hand-installed",
+                short(run),
+                short(current)
+            );
+            self.abandon_card_trial();
+            self.trial = None;
+            self.current = None;
+            self.recovery = RecoveryTracking::default();
+            self.event.clone_from(&message);
+            return Boot::Dropped(message);
         }
-        false
+        let starts = n.saturating_add(1);
+        self.trial = Some(starts);
+        if starts >= 2 && self.previous.is_some() {
+            Boot::Rollback
+        } else {
+            Boot::Trial(starts)
+        }
+    }
+
+    pub(super) fn abandon_card_trial(&mut self) {
+        if self.trial.is_some() {
+            // A torn recovery write never reached the point where the image could be started.
+            self.sd.finish(!self.recovery.writing);
+        }
     }
 
     /// Why a requested SDR104 image will be staged in HS.
     pub fn sd_fallback(&self) -> Option<&'static str> {
-        self.sd_failed.then_some("SDR104 fallback is active. Select HS before retrying SDR104.")
+        self.sd.failed.then_some("SDR104 fallback is active. Select SDR104 in System > Boot card mode to retry.")
     }
 }
 
@@ -256,7 +286,7 @@ fn confirm_start(
     if st.trial.is_none() {
         return Ok(false);
     }
-    if st.sd_trial.is_some() && st.trial == Some(0) {
+    if st.sd.trial.is_some() && st.trial == Some(0) {
         return Err("SD mode trial has not booted yet: not confirmed".into());
     }
     if let Some(run) = running {
@@ -277,12 +307,32 @@ fn confirm_start(
     st.trial = None;
     st.recovery.writing = false;
     st.event = format!("confirmed {}", st.current.as_ref().map_or("?", |c| short(&c.build)));
-    if let Some(mode) = observed.filter(|_| st.sd_trial == Some(sd::Mode::Sdr104)) {
+    if let Some(mode) = observed.filter(|_| st.sd.trial == Some(sd::Mode::Sdr104)) {
         st.event.push_str(" (SDR104 trial, observed ");
         st.event.push_str(mode.as_str());
         st.event.push(')');
     }
-    st.sd_trial = None;
+    st.sd.finish(false);
     st.save(state_path).map_err(io("writing the update state"))?;
     Ok(true)
+}
+
+/// The ordinary start consumes this build marker after recording its card timing and trial state.
+pub fn restart_mark(state_path: &Path) -> std::path::PathBuf {
+    state_path.with_file_name("kexec-restart")
+}
+
+pub(super) fn read_restart_mark(state_path: &Path) -> std::io::Result<Option<String>> {
+    match std::fs::read_to_string(restart_mark(state_path)) {
+        Ok(build) => Ok(Some(build)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+pub(super) fn remove_restart_mark(state_path: &Path) -> std::io::Result<()> {
+    match std::fs::remove_file(restart_mark(state_path)) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
 }

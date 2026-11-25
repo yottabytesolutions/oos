@@ -316,25 +316,22 @@ impl SysConf {
 
     /// Keep the updater's preference when saving settings loaded before a card restage.
     pub(crate) fn save_settings(&mut self, path: &Path) -> std::io::Result<()> {
-        let _lock = if path == Path::new(PATH) {
-            Some(oos_hal::update::sd::lock_config(path).map_err(std::io::Error::other)?)
+        if path == Path::new(PATH) {
+            self.save_device_settings(path)
         } else {
-            None
-        };
-        if _lock.is_some() {
-            self.preserve_card_mode(path)?;
+            self.save(path)
         }
-        self.save(path)
     }
 
-    fn preserve_card_mode(&mut self, path: &Path) -> std::io::Result<()> {
+    fn save_device_settings(&mut self, path: &Path) -> std::io::Result<()> {
+        let _lock = oos_hal::update::sd::lock_config(path).map_err(std::io::Error::other)?;
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
             Err(error) => return Err(error),
         };
         self.replace_card_mode(&text);
-        Ok(())
+        self.save(path)
     }
 
     pub(crate) fn card_mode(&self) -> Option<oos_hal::update::sd::Mode> {
@@ -457,17 +454,23 @@ mod tests {
 
     #[test]
     fn saving_after_restage_preserves_the_current_card_mode() {
-        let path = std::env::temp_dir().join(format!("oos-card-preference-{}", std::process::id()));
+        let directory = std::env::temp_dir().join(format!("oos-card-preference-{}", std::process::id()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("system.conf");
         let (mut settings, _) = SysConf::parse("ntp = off\nsd.mode = hs\nplugin = value");
         std::fs::write(&path, "sd.mode = sdr104\n").unwrap();
         settings.ntp = true;
-        settings.preserve_card_mode(&path).unwrap();
-        settings.save(&path).unwrap();
+        let restage = oos_hal::update::sd::lock_config(&path).unwrap();
+        let error = settings.save_device_settings(&path).unwrap_err().to_string();
+        assert!(error.starts_with("locking the system.conf lock:"), "{error}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "sd.mode = sdr104\n");
+        drop(restage);
+        settings.save_device_settings(&path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert_eq!(oos_hal::update::sd::Mode::parse(&text).unwrap(), oos_hal::update::sd::Mode::Sdr104);
         assert!(text.contains("ntp = on"));
         assert!(text.contains("plugin = value"));
-        std::fs::remove_file(path).unwrap();
+        std::fs::remove_dir_all(directory).unwrap();
     }
 
     #[test]

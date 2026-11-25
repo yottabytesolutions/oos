@@ -5,6 +5,9 @@
 use super::{card, fdt, hash, io, kexec, Card, Entry, Report, State};
 use std::path::Path;
 
+mod tracking;
+pub(super) use tracking::Tracking;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Mode {
     #[default]
@@ -55,7 +58,7 @@ pub fn observe_handoff(state_path: &Path, running: &str, status: crate::bootcard
     if status.is_kexec()
         && !running.trim().is_empty()
         && state.kexec.as_deref().map(str::trim) == Some(running.trim())
-        && state.observe_sd_trial(status)
+        && state.sd.observe(status, true, true)
     {
         state.save(state_path).map_err(io("recording the SDR104 handoff observation"))?;
     }
@@ -81,10 +84,10 @@ pub(super) fn requested(state_path: &Path) -> Result<Mode, String> {
 
 /// Serialize read-modify-replace of system.conf by the updater and the panel.
 pub fn lock_config(path: &Path) -> Result<super::Lock, String> {
-    super::locking::lock_with(path, true)
+    super::locking::lock_file(path, true, "system.conf")
 }
 
-fn save_preference(state_path: &Path, mode: Mode) -> Result<(), String> {
+fn save_preference(state_path: &Path, mode: Mode, retry: Option<&State>) -> Result<(), String> {
     let path = config_path(state_path)?;
     let _lock = lock_config(&path)?;
     let text = read_config(&path).map_err(io("reading device system.conf"))?;
@@ -100,13 +103,17 @@ fn save_preference(state_path: &Path, mode: Mode) -> Result<(), String> {
     updated.push_str(&format!("sd.mode = {}\n", mode.as_str()));
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
+    if let Some(state) = retry {
+        // Once the preference is durable, the next install must honor the explicit retry even after a cut.
+        state.save(state_path).map_err(io("saving the SDR104 retry"))?;
+    }
     crate::system::durable_replace(&path, &path.with_extension("sd.new"), updated.as_bytes(), &options)
         .map_err(io("saving boot card preference"))
 }
 
 pub(super) fn configured(state_path: &Path, state: &State) -> Result<Mode, String> {
     let mode = requested(state_path)?;
-    Ok(if state.sd_failed && mode == Mode::Sdr104 { Mode::Hs } else { mode })
+    Ok(if state.sd.failed { Mode::Hs } else { mode })
 }
 
 fn find_mut<'a>(node: &'a mut fdt::Node, name: &str) -> Option<&'a mut fdt::Node> {
@@ -222,10 +229,8 @@ pub fn restage_preference(
         Some(mode) => mode,
         None => requested(state_path)?,
     };
-    if requested == Mode::Hs {
-        state.sd_failed = false;
-    }
-    let mode = if state.sd_failed { Mode::Hs } else { requested };
+    let retry = preference == Some(Mode::Sdr104) && state.sd.retry();
+    let mode = if state.sd.failed { Mode::Hs } else { requested };
     let next = image(&old, mode)?;
     let mut report = Report::default();
     report.say(format!("Boot card mode {} takes effect on the next OOS boot", mode.label()));
@@ -239,28 +244,28 @@ pub fn restage_preference(
         report.say("dry run: nothing written (--execute)");
         return Ok(report);
     }
-    let backup = if changed {
-        let previous = image(&old, Mode::Hs)?;
-        let entry = Entry { build: current.build, sha256: hash::sha256(&previous), len: previous.len() as u64 };
-        Some((previous, entry))
-    } else {
-        None
-    };
+    let backup = changed.then(|| rollback_image(&old, current.build)).transpose()?;
     if let Some(preference) = preference {
-        save_preference(state_path, preference)?;
+        save_preference(state_path, preference, retry.then_some(&state))?;
     }
     let result = if let Some(backup) = backup {
         write_mode_trial(card, state_path, &mut state, backup, &next, mode, &mut report)
     } else {
         report.unchanged = true;
         report.say("Recovery already has this boot card mode");
-        state.save(state_path).map_err(io("writing update state"))
+        Ok(())
     };
     result.map_err(|error| match preference {
         Some(mode) => format!("Requested mode {} was saved. Restaging failed: {error}", mode.label()),
         None => error,
     })?;
     Ok(report)
+}
+
+fn rollback_image(old: &[u8], build: String) -> Result<(Vec<u8>, Entry), String> {
+    let previous = image(old, Mode::Hs)?;
+    let entry = Entry { build, sha256: hash::sha256(&previous), len: previous.len() as u64 };
+    Ok((previous, entry))
 }
 
 fn lock_for_restage(state_path: &Path) -> Result<super::Lock, String> {
@@ -281,7 +286,7 @@ fn write_mode_trial(
     let (previous, entry) = backup;
     let build = entry.build.clone();
     super::state::write_slot(card, state_path, &previous, entry, state)?;
-    state.sd_trial = Some(mode);
+    state.sd.begin(Some(mode));
     super::write_trial(card, state_path, next, &build, state, report)
 }
 

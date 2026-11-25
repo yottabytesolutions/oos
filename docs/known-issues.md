@@ -18,7 +18,8 @@ Observed on a DHO924S on 2026-11-23 and 2026-11-24.
 | A USB stick uses exFAT | The stock system does not show the stick in Storage. It mounts FAT filesystems only. | Use a FAT32 stick. | Observed on stock. |
 | The stock start menu's Upgrade icon is used for a GEL install | The icon opens the online updater, which says “No firmware available”. | Open **Start menu > Storage > Upgrade** and select the GEL under **File Path**. | Separate stock update paths. |
 | A USB stick is already mounted when the modified stock scope application starts | The application can keep stopping. | Unplug the stick. Insert it after the stock application is up. | Observed on a modified stock scope application. |
-| A warm restart follows a GEL or bridge install | The card can negotiate High Speed (HS) during an SDR104 trial. The panel can show “SD card is in slow mode”. | Try a cold start. If SDR104 fallback is active, select HS, then retry SDR104 in **System > Boot card mode**. | Both modes were observed during switching. |
+| A warm restart follows a GEL or bridge install | The card can negotiate High Speed (HS) during an SDR104 trial. The panel can show “SD card is in slow mode”. | Try a cold start. To clear an active fallback, select SDR104 in **System > Boot card mode**. | Both modes were observed during switching. The updater ignores the slowdown for fallback after its own marked restart. |
+| Power is lost or the card wedges during an SDR104 update start | The next install still offers SDR104 after one missed start. Two consecutive missed SDR104 starts select HS. | If the card wedges, remove power. Check the last update event and use **System > Boot card mode** to retry SDR104 explicitly. | The fallback rule is tested with a card fake and awaits a unit run. |
 
 Trigger refinement was checked with the probe compensation output, a bursty logic signal and a 100 kHz,
 3.3 V square wave. Sine and slow-edge signals remain untested.

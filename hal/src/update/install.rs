@@ -74,10 +74,7 @@ pub(super) fn apply_plan(
         state::write_slot(card, state_path, &bytes, entry, state)?;
         report.say("rollback slot written and read back");
     }
-    state.sd_trial = (mode == sd::Mode::Sdr104).then_some(mode);
-    if sd::requested(state_path)? == sd::Mode::Hs {
-        state.sd_failed = false;
-    }
+    state.sd.begin((mode == sd::Mode::Sdr104).then_some(mode));
     write_trial(card, state_path, &plan.image, build, state, report)
 }
 

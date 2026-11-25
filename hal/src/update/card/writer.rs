@@ -69,6 +69,10 @@ impl Storage {
             return Err("card opened read only".into());
         }
         let io = |e: std::io::Error| format!("writing {area}: {e}");
+        #[cfg(test)]
+        if matches!(fault, Some(super::WriteFault::CutBeforeWrite)) {
+            return Err("power cut before write".into());
+        }
         self.file.seek(SeekFrom::Start(offset)).map_err(io)?;
         if cut {
             self.file.write_all(&data[..data.len() / 2]).map_err(io)?;

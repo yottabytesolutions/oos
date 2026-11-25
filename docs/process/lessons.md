@@ -146,7 +146,8 @@ pull request that fixes a mistake: what happened, then the rule.
   state save that makes the write retryable, and keep that condition independent of the last notice.
 - A cut after rollback read-back left the previous image in recovery with the old current entry. Match the
   verified previous image before treating a recovery replacement as untracked.
-- An SDR104 handoff mark only records intent. Latch negotiation failure from the matching boot's observed
-  timing and device tree so a cut before that start leaves the next install's mode available.
+- A card wedged during the SDR104 voltage switch could not record evidence on itself, and a warm slowdown
+  could falsely trigger fallback. Count unobserved misses from the previous build, require two in a row,
+  and use the marked restart to distinguish warm timing from cold evidence.
 - Putting Boot card mode above daily saves put a boot-image write next to routine actions. Keep boot controls
   together in System and confirm the restage before writing.

@@ -1,10 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 use super::messages;
-use crate::{die, need_data, notice, put, restart_for_trial, restart_mark, state_path, tell, Args, STDOUT_CLOSED};
+use crate::{die, need_data, notice, put, restart_for_trial, state_path, tell, Args, STDOUT_CLOSED};
 use oos_hal::bootcard;
 use oos_hal::update::{self, card, hash::hex, kexec, pkg, State};
-use std::io::ErrorKind;
 use std::path::Path;
 
 /// The device tree section of the image the loader started, for a later kexec start (`kexec::BOOTED_DT`): in an
@@ -131,7 +130,13 @@ pub(crate) fn boot(a: &Args) {
     let word = kexec::receive(&cmdline);
     let kx = word.filter(|source| matches!(source, kexec::Receive::Staged(_)) || exists(Path::new(kexec::PACKAGE)));
     keep_booted_tree(a, word.is_some());
-    if !p.parent().is_some_and(exists) {
+    let observed = bootcard::read_state(Path::new(bootcard::STATE_PATH));
+    // A cold SDR104 observation can create the first update state on a mounted data partition.
+    let first_start = word.is_none()
+        && p == Path::new(update::STATE_PATH)
+        && observed.ceiling() == bootcard::Mode::Sdr104
+        && super::card_check::data_mounted();
+    if !first_start && !p.parent().is_some_and(exists) {
         if kx.is_some() {
             notice(&messages::not_installed("/oos is not there"));
         }
@@ -139,7 +144,6 @@ pub(crate) fn boot(a: &Args) {
     }
     let running = read_text("/etc/oos-build");
     let running = running.as_deref().map(str::trim).filter(|build| !build.is_empty());
-    let observed = bootcard::read_state(Path::new(bootcard::STATE_PATH));
     if word.is_some() {
         if let Some(build) = running {
             if let Err(error) = update::sd::observe_handoff(&p, build, observed) {
@@ -225,14 +229,6 @@ fn rollback_trial(a: &Args, path: &Path) {
 }
 
 fn record_ordinary_start(a: &Args, path: &Path) {
-    // An ordinary start ends the kexec restart guard.
-    let mark = restart_mark(path);
-    match oos_hal::system::check_data_write(&mark).and_then(|()| std::fs::remove_file(&mark)) {
-        Err(error) if error.kind() != ErrorKind::NotFound => {
-            tell(&format!("removing the kexec restart guard: {error}"));
-        }
-        _ => {}
-    }
     // Observe recovery before clearing a pending stage or processing an open trial.
     match a.open_card(false).and_then(|mut card| update::reconcile_recovery(&mut card, path)) {
         Ok(Some(reason)) => tell(&format!("update tracking: {reason}")),

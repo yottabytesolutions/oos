@@ -164,6 +164,7 @@ pub fn check_image(b: &[u8]) -> Result<ImageInfo, String> {
 
 #[cfg(test)]
 pub(super) enum WriteFault {
+    CutBeforeWrite,
     PowerCut,
     CutAfterReadBack,
     ReadBackMismatch,
@@ -178,7 +179,7 @@ pub struct Card {
     #[cfg(test)]
     pub(super) write_fault: Option<(Region, WriteFault)>,
     #[cfg(test)]
-    write_fault_at: Option<(u64, WriteFault)>,
+    pub(super) write_fault_at: Option<(u64, WriteFault)>,
     #[cfg(test)]
     pub(super) read_bytes: usize,
 }

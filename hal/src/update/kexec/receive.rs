@@ -89,7 +89,7 @@ fn clear(state_path: &Path, event: &str, record_without_mark: bool) -> Result<()
     let was_starting = state.kexec.take().is_some();
     let had_candidate = state.staged.take().is_some();
     if was_starting {
-        state.sd_trial = None;
+        state.sd.finish(false);
     }
     if !was_starting && !had_candidate && !record_without_mark {
         return Ok(());

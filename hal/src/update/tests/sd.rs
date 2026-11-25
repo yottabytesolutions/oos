@@ -220,13 +220,14 @@ fn restaging_is_a_next_boot_trial_with_verified_hs_rollback() {
     let r = rollback(&mut f.card(), &f.state(), "unconfirmed SD mode", true, None).unwrap();
     assert!(r.lines.iter().any(|l| l.contains("SDR104 fallback")));
     assert_eq!(f.region(Region::Recovery), hs);
-    assert!(f.st().sd_failed);
+    assert!(f.st().sd.failed);
     assert!(sd::restage(&mut f.card(), &f.state(), true).unwrap().unchanged);
     set_mode(&f, "hs");
     sd::restage(&mut f.card(), &f.state(), true).unwrap();
-    assert!(!f.st().sd_failed);
+    assert!(f.st().sd.failed);
     set_mode(&f, "sdr104");
-    assert!(sd::restage(&mut f.card(), &f.state(), true).unwrap().written);
+    assert!(sd::restage_preference(&mut f.card(), &f.state(), Some(Mode::Sdr104), true).unwrap().written);
+    assert!(!f.st().sd.failed);
 }
 
 #[test]
@@ -246,35 +247,40 @@ fn a_confirmed_sd_trial_survives_and_switching_back_to_hs_works() {
 }
 
 #[test]
-fn install_and_kexec_use_the_same_selected_tree_after_signature_checks() {
+fn a_second_consecutive_missed_sdr104_handoff_selects_hs_for_install() {
     let f = active("sd-install");
     let hs = f.region(Region::Recovery);
     set_mode(&f, "sdr104");
-    let package = pkg::build_with(&SEED, "20261109-090000", "test", &hs, &[kexec::LINE]).unwrap();
+    let candidate = bootimg_second(2, rsce(&base_tree()));
+    let package = pkg::build_with(&SEED, "20261109-090000", "test", &candidate, &[kexec::LINE]).unwrap();
     let second = kexec::parts(&hs).unwrap().2.to_vec();
-    let (_, staged) = kexec_stage(
-        &mut f.card(),
-        &f.state(),
-        &package,
-        &[pk()],
-        &RUN,
-        BootTrees { booted: Some(&second), running_build: Some(KX_BUILD), live: Some(&base_tree()) },
-    )
-    .unwrap();
-    let staged = staged.unwrap();
-    assert_eq!(staged.tree.unwrap(), sd::patch_tree(&base_tree(), Mode::Sdr104).unwrap());
-    assert_eq!(f.region(Region::Recovery), hs, "kexec keeps the installed HS fallback untouched");
-    let missed = kexec_missed(&f.state(), false).unwrap().unwrap();
-    assert!(missed.contains("not installed"));
-    assert_eq!(f.st().sd_trial, None);
-    assert_eq!(sd::configured(&f.state(), &f.st()).unwrap(), Mode::Sdr104);
+    for (count, mode) in [(1, Mode::Sdr104), (2, Mode::Hs)] {
+        let (_, staged) = kexec_stage(
+            &mut f.card(),
+            &f.state(),
+            &package,
+            &[pk()],
+            &RUN,
+            BootTrees { booted: Some(&second), running_build: Some(KX_BUILD), live: Some(&base_tree()) },
+        )
+        .unwrap();
+        assert_eq!(staged.unwrap().tree.unwrap(), sd::patch_tree(&base_tree(), Mode::Sdr104).unwrap());
+        assert_eq!(f.region(Region::Recovery), hs, "kexec keeps the installed HS fallback untouched");
+        let missed = kexec_missed(&f.state(), false).unwrap().unwrap();
+        assert!(missed.contains("not installed"));
+        assert!(missed.contains("The card mode may be the cause. See System > Boot card mode."));
+        assert_eq!(kexec_missed(&f.state(), false).unwrap(), None);
+        assert_eq!(f.st().sd.trial, None);
+        assert_eq!(f.st().sd.missed, count);
+        assert_eq!(sd::configured(&f.state(), &f.st()).unwrap(), mode);
+    }
     let mut damaged = package.clone();
     *damaged.last_mut().unwrap() ^= 1;
     let before = card_bytes(&f);
     assert!(install(&mut f.card(), &f.state(), &damaged, &[pk()], &RUN).is_err());
     assert_eq!(card_bytes(&f), before);
     install(&mut f.card(), &f.state(), &package, &[pk()], &RUN).unwrap();
-    assert_eq!(f.region(Region::Recovery), sd::image(&hs, Mode::Sdr104).unwrap());
+    assert_eq!(f.region(Region::Recovery), candidate);
     assert_eq!(f.region(Region::Slot), hs);
 }
 

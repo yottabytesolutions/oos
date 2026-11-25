@@ -463,11 +463,6 @@ fn stop_watcher() {
     }
 }
 
-/// The mark of a restart after a kexec install: the build it was for. Removed by the next ordinary start.
-fn restart_mark(p: &Path) -> PathBuf {
-    p.with_file_name("kexec-restart")
-}
-
 /// Whether the kexec start that just installed `build` restarts the scope for its trial start: only with the image
 /// written (`OOSK` armed, so the restart cannot drop to stock), the build on trial, and no restart for it before (a
 /// start that comes back here again does not loop).
@@ -492,11 +487,13 @@ fn restart_for_trial(a: &Args, p: &Path) {
     let magic = a.open_card(false).unwrap_or_else(|e| die(&e)).boot_magic().ok();
     let st = State::load(p).unwrap_or_default();
     let on_trial = st.trial.is_some() && st.current.as_ref().is_some_and(|c| c.build.trim() == build.trim());
-    if let Err(e) = may_restart(magic, on_trial, std::fs::read_to_string(restart_mark(p)).ok().as_deref(), &build) {
+    if let Err(e) =
+        may_restart(magic, on_trial, std::fs::read_to_string(update::restart_mark(p)).ok().as_deref(), &build)
+    {
         notice(&messages::no_restart(&build, &e, magic == Some(*b"OOSK") && on_trial));
         return;
     }
-    let mark = restart_mark(p);
+    let mark = update::restart_mark(p);
     if let Err(e) = update::write_restart_mark(&mark, &build) {
         notice(&messages::no_restart(&build, &format!("mark not written: {}", e), true));
         return;
@@ -579,7 +576,7 @@ mod tests {
 
     #[test]
     fn the_restart_mark_sits_beside_the_state() {
-        assert_eq!(restart_mark(Path::new("/oos/update/state")), Path::new("/oos/update/kexec-restart"));
+        assert_eq!(update::restart_mark(Path::new("/oos/update/state")), Path::new("/oos/update/kexec-restart"));
     }
 
     /// Counts write calls; fails every one with `fail`, or none.

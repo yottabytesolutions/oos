@@ -161,7 +161,7 @@ pub(in crate::update) fn stage_image(
 }
 
 fn record_start(state_path: &Path, state: &mut State, start: &Staged, mode: sd::Mode) -> Result<(), String> {
-    state.sd_trial = (mode == sd::Mode::Sdr104).then_some(mode);
+    state.sd.begin((mode == sd::Mode::Sdr104).then_some(mode));
     state.kexec = Some(start.build.clone());
     let payload = start.payload_size();
     state.kexec_payload = Some(payload);
@@ -178,9 +178,14 @@ pub fn kexec_missed(state_path: &Path, kexec_start: bool) -> Result<Option<Strin
     let mut state = State::load(state_path).map_err(io("reading the update state"))?;
     let candidate = state.staged.take();
     let message = if let Some(build) = state.kexec.take() {
-        state.sd_trial = None;
+        let sdr104 = state.sd.trial == Some(sd::Mode::Sdr104);
+        state.sd.finish(true);
         let payload = state.take_kexec_payload();
-        format!("Update {} did not finish when started by kexec (its kernel or start-up hung, or the power went off): not installed{payload}", short(&build))
+        let mut message = format!("Update {} did not finish when started by kexec (its kernel or start-up hung, or the power went off): not installed{payload}", short(&build));
+        if sdr104 {
+            message.push_str(". The card mode may be the cause. See System > Boot card mode.");
+        }
+        message
     } else if let Some(candidate) = candidate {
         format!("Staged update {} was never started: the next install will overwrite its slot", short(&candidate.build))
     } else {

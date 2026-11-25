@@ -22,11 +22,11 @@ pub(super) fn read_bounded(path: &Path, limit: u64) -> Option<String> {
 
 /// Publish a complete record for the UI, including when detection yields an unknown status.
 pub fn write_state(path: &Path, status: Status) -> io::Result<()> {
-    crate::system::check_data_write(path)?;
     atomic_write(path, &encode(status), false)
 }
 
 pub(super) fn atomic_write(path: &Path, text: &str, durable: bool) -> io::Result<()> {
+    crate::system::check_data_write(path)?;
     let temporary =
         if durable { path.with_extension("new") } else { path.with_extension(format!("{}.new", std::process::id())) };
     let mut options = File::options();

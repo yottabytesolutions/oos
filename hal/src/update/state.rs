@@ -19,11 +19,11 @@ pub(super) fn write_slot(
     state.staged = None;
     state.slot_incomplete = true;
     state.event = SLOT_WRITING.into();
-    state.save(state_path).map_err(io("writing the update state"))?;
+    state.save_locked(state_path).map_err(io("writing the update state"))?;
     card.write_image(Region::Slot, image)?;
     state.previous = Some(entry);
     state.slot_incomplete = false;
-    state.save(state_path).map_err(io("writing the update state"))
+    state.save_locked(state_path).map_err(io("writing the update state"))
 }
 
 impl State {
@@ -181,8 +181,15 @@ impl State {
         }
     }
 
-    /// Atomic: sync the temporary file before rename and the directory after it.
+    /// Replace a state snapshot, acquiring the update lock for the write.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        let _lock = super::locking::acquire(path, false)?;
+        self.save_locked(path)
+    }
+
+    /// Caller holds the update lock. Sync the temporary file before rename and the directory after it.
+    pub(super) fn save_locked(&self, path: &Path) -> std::io::Result<()> {
+        crate::system::check_data_write(path)?;
         let dir = path.parent().filter(|d| !d.as_os_str().is_empty()).unwrap_or(Path::new("."));
         std::fs::create_dir_all(dir)?;
         let tmp = path.with_extension("new");
@@ -304,6 +311,6 @@ fn confirm_start(
         st.event.push(')');
     }
     st.sd.finish(false);
-    st.save(state_path).map_err(io("writing the update state"))?;
+    st.save_locked(state_path).map_err(io("writing the update state"))?;
     Ok(true)
 }

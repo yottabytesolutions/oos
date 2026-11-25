@@ -25,8 +25,10 @@ fi
 # 0b) OOS's own data partition at /oos (own calibration, setups, power-on picture; log in /tmp/oos-data.log)
 /bin/oos-mount-data "$boot_safe" > /tmp/oos-data.log 2>&1
 # Only the staging files owned by durable replacement, before starting any of its writers.
-if [ -d /oos/setups ]; then
-	rm -f /oos/update/state.new /oos/vendor.keys.new /oos/update/kexec-restart.new \
+if [ -e /tmp/oos-data.closing ]; then
+	echo "oos: /oos is closed for shutdown; skipping staging cleanup" >> /tmp/oos-data.log
+elif [ -d /oos/setups ]; then
+	rm -f /oos/system.sd.new /oos/update/state.new /oos/vendor.keys.new /oos/update/kexec-restart.new \
 		/oos/update/kexec-last/jump.log.new /oos/update/kexec-last/stdout.new /oos/update/kexec-last/stderr.new \
 		/oos/update/kexec-last/merged.dtb.new /oos/update/kexec-last/staged.log.new /oos/update/kexec-last/load.log.new \
 		/oos/wlan/wpa_supplicant.conf.new /oos/wlan/wpa_supplicant.conf.rejected.new >> /tmp/oos-data.log 2>&1

@@ -150,11 +150,11 @@ pub(in crate::update) fn stage_image(
     state.staged = Some(entry);
     state.slot_incomplete = true;
     state.event = format!("staging build {build}");
-    state.save(state_path).map_err(io("writing the update state before staging"))?;
+    state.save_locked(state_path).map_err(io("writing the update state before staging"))?;
     if let Err(error) = card.write_image(Region::Slot, image) {
         state.staged = None;
         state.event = format!("staging build {build} failed ({error}), no rollback image");
-        state.save(state_path).map_err(|e| format!("{}. Could not record the failure ({e})", state.event))?;
+        state.save_locked(state_path).map_err(|e| format!("{}. Could not record the failure ({e})", state.event))?;
         return Err(state.event.clone());
     }
     Ok(())
@@ -166,7 +166,7 @@ fn record_start(state_path: &Path, state: &mut State, start: &Staged, mode: sd::
     let payload = start.payload_size();
     state.kexec_payload = Some(payload);
     state.event = format!("starting build {} by kexec for its trial ({payload} bytes payload)", short(&start.build));
-    state.save(state_path).map_err(io("recording the kexec start"))
+    state.save_locked(state_path).map_err(io("recording the kexec start"))
 }
 
 /// Report a missed kexec start or unused staged candidate once at the next ordinary start.
@@ -193,6 +193,6 @@ pub fn kexec_missed(state_path: &Path, kexec_start: bool) -> Result<Option<Strin
     };
     // Report the missed start independently of slot ownership, which survives until a verified rollback is written.
     state.event = message.clone();
-    state.save(state_path).map_err(io("writing the update state"))?;
+    state.save_locked(state_path).map_err(io("writing the update state"))?;
     Ok(Some(message))
 }

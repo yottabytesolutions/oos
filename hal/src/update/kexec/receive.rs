@@ -96,7 +96,7 @@ fn clear(state_path: &Path, event: &str, record_without_mark: bool) -> Result<()
     }
     let payload = state.take_kexec_payload();
     state.event = format!("{event}{payload}");
-    state.save(state_path).map_err(io("writing the update state"))
+    state.save_locked(state_path).map_err(io("writing the update state"))
 }
 
 /// A staged handoff failed before the install could proceed, or while applying its install plan.
@@ -123,7 +123,7 @@ pub fn install_staged(
     let changed = state.previous.take().is_some() || !state.slot_incomplete;
     state.slot_incomplete = true;
     if opt.execute && changed {
-        state.save(state_path).map_err(|e| refuse(io("recording staged slot ownership")(e)))?;
+        state.save_locked(state_path).map_err(|e| refuse(io("recording staged slot ownership")(e)))?;
     }
     install::check_trial(&state).map_err(refuse)?;
     let (header, image, mut report) = models::checked_package(&package, keys, opt).map_err(refuse)?;

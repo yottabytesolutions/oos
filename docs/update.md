@@ -542,8 +542,9 @@ Reconciliation and `leave` are host-tested and to verify on the unit.
 - rcS `oos-update boot`: a trial image that starts a second time without confirmation is rolled back at that start, with
   a notice on the panel first; a running image that is not the one on trial (recovery written by hand) drops the trial
   instead.
-- All state changes take a lock (`/oos/update/state.lock`), so rcS, the watcher, the GUI job and a shell call never
-  interleave.
+- All state changes take `/oos/update/state.lock`, serializing rcS, the watcher, the GUI job and shell calls.
+  Boot card restage and panel settings saves take the state lock before `/oos/system.lock` for `system.conf`.
+  A panel save reports a busy lock immediately, so it can be retried after the update or restage finishes.
 - Power off, restart and a rollback tap are refused while an update job runs. The panel's own power key cannot be refused.
 - The watcher writes `/tmp/oos-update.judged` after applying its verdict and completing any persist arm. A confirmed
   SDR104 trial records the negotiated mode from the startup check in the update event. Confirmation still follows

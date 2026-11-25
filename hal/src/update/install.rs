@@ -69,7 +69,7 @@ pub(super) fn apply_plan(
     report: &mut Report,
 ) -> Result<(), String> {
     // Verify state is writable before touching the card.
-    state.save(state_path).map_err(io("writing the update state (nothing written to the card)"))?;
+    state.save_locked(state_path).map_err(io("writing the update state (nothing written to the card)"))?;
     if let Some((bytes, entry)) = plan.rollback {
         state::write_slot(card, state_path, &bytes, entry, state)?;
         report.say("rollback slot written and read back");
@@ -241,7 +241,7 @@ pub(super) fn write_trial(
     st.staged = None;
     st.recovery.writing = true;
     st.event = format!("{}{payload}", state::writing_event(build));
-    st.save(state_path).map_err(io("writing the update state"))?;
+    st.save_locked(state_path).map_err(io("writing the update state"))?;
     card.write_image(Region::Recovery, img)?;
     r.written = true;
     st.recovery.writing = false;
@@ -250,7 +250,7 @@ pub(super) fn write_trial(
         short(build),
         old.as_ref().map_or("an untracked image".into(), |o| short(&o.build).to_string())
     );
-    st.save(state_path).map_err(io("writing the update state"))?;
+    st.save_locked(state_path).map_err(io("writing the update state"))?;
     r.say("recovery written and read back");
     match card.arm_oos() {
         Ok(_) => r.say(text::installed(build)),

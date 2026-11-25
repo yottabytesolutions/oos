@@ -31,7 +31,9 @@ pub fn read_restart_mark(state_path: &Path) -> io::Result<Option<String>> {
 }
 
 pub(super) fn remove_restart_mark(state_path: &Path) -> io::Result<()> {
-    match std::fs::remove_file(restart_mark(state_path)) {
+    let path = restart_mark(state_path);
+    crate::system::check_data_write(&path)?;
+    match std::fs::remove_file(path) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         result => result,
     }
@@ -40,6 +42,19 @@ pub(super) fn remove_restart_mark(state_path: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn closed_data_refuses_restart_mark_writes_and_removals() {
+        use crate::system::admission_test::{assert_refused, with_closed_data};
+        with_closed_data(module_path!(), "closed_data_refuses_restart_mark_writes_and_removals", |data, _| {
+            let state = data.join("state");
+            let mark = restart_mark(&state);
+            std::fs::write(&mark, "previous").unwrap();
+            assert_refused(write_restart_mark(&state, "next").unwrap_err());
+            assert_refused(remove_restart_mark(&state).unwrap_err());
+            assert_eq!(std::fs::read_to_string(mark).unwrap(), "previous");
+        });
+    }
 
     #[test]
     fn the_restart_mark_sits_beside_the_state() {

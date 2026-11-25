@@ -324,7 +324,10 @@ impl SysConf {
     }
 
     fn save_device_settings(&mut self, path: &Path) -> std::io::Result<()> {
-        let _lock = oos_hal::update::sd::lock_config(path).map_err(std::io::Error::other)?;
+        // Restage takes the update lock before the config lock. A panel save never waits for either.
+        let state = path.with_file_name("update").join("state");
+        let _state = oos_hal::update::try_lock(&state)?;
+        let _config = oos_hal::update::sd::lock_config(path)?;
         let text = match std::fs::read_to_string(path) {
             Ok(text) => text,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -441,6 +444,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn closed_data_refuses_settings() {
+        use oos_hal::system::admission_test::{assert_refused, with_closed_data};
+        with_closed_data(module_path!(), "closed_data_refuses_settings", |data, ram| {
+            let path = data.join("system.conf");
+            let mut settings = SysConf::default();
+            assert_refused(settings.save_device_settings(&path).unwrap_err());
+            assert_refused(settings.save(&path).unwrap_err());
+            assert_eq!(std::fs::read_dir(data).unwrap().count(), 0);
+            assert_refused(settings.save_settings(&ram.join("system.conf")).unwrap_err());
+        });
+    }
+
+    #[test]
     fn defaults_send_nothing_out() {
         let c = SysConf::default();
         assert!(!c.ntp);
@@ -460,11 +476,22 @@ mod tests {
         let (mut settings, _) = SysConf::parse("ntp = off\nsd.mode = hs\nplugin = value");
         std::fs::write(&path, "sd.mode = sdr104\n").unwrap();
         settings.ntp = true;
-        let restage = oos_hal::update::sd::lock_config(&path).unwrap();
-        let error = settings.save_device_settings(&path).unwrap_err().to_string();
-        assert!(error.starts_with("locking the system.conf lock:"), "{error}");
+        let state = directory.join("update/state");
+        let update = oos_hal::update::lock(&state).unwrap();
+        let error = settings.save_device_settings(&path).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+        assert!(error.to_string().contains("update state is busy"), "{error}");
+        assert!(!path.with_extension("lock").exists());
+        assert!(!state.exists());
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "sd.mode = sdr104\n");
-        drop(restage);
+        drop(update);
+
+        let config = oos_hal::update::sd::lock_config(&path).unwrap();
+        let error = settings.save_device_settings(&path).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::WouldBlock);
+        assert!(error.to_string().contains("system.conf is busy"), "{error}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "sd.mode = sdr104\n");
+        drop(config);
         settings.save_device_settings(&path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
         assert_eq!(oos_hal::update::sd::Mode::parse(&text).unwrap(), oos_hal::update::sd::Mode::Sdr104);

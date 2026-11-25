@@ -20,7 +20,7 @@ pub fn reconcile_recovery(card: &mut Card, state_path: &Path) -> Result<Option<S
             }
             if state.recovery.loader_id != Some(id) || rolling_back {
                 state.recovery.loader_id = Some(id);
-                state.save(state_path).map_err(io("writing the update state"))?;
+                state.save_locked(state_path).map_err(io("writing the update state"))?;
             }
             Ok(None)
         }
@@ -29,14 +29,14 @@ pub fn reconcile_recovery(card: &mut Card, state_path: &Path) -> Result<Option<S
             state.track_recovery(previous, id);
             state.trial = None;
             state.event.clone_from(&reason);
-            state.save(state_path).map_err(io("writing the update state"))?;
+            state.save_locked(state_path).map_err(io("writing the update state"))?;
             Ok(Some(reason))
         }
         Recovery::InstallerRewrite(entry, id) => {
             let reason = format!("recovery image for build {} was rewritten by an installer", short(&entry.build));
             state.track_recovery(entry, id);
             state.event.clone_from(&reason);
-            state.save(state_path).map_err(io("writing the update state"))?;
+            state.save_locked(state_path).map_err(io("writing the update state"))?;
             Ok(Some(reason))
         }
         // A partial rollback keeps its verified slot and can be repeated.
@@ -114,5 +114,5 @@ fn mark_untracked(state_path: &Path, state: &mut State, reason: &str) -> Result<
     state.current = None;
     state.previous = None;
     state.recovery = RecoveryTracking { untracked: Some(reason.into()), ..RecoveryTracking::default() };
-    state.save(state_path).map_err(io("writing the update state"))
+    state.save_locked(state_path).map_err(io("writing the update state"))
 }

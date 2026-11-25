@@ -117,6 +117,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn closed_data_refuses_setup_and_export_writes() {
+        use oos_hal::system::admission_test::{assert_refused, with_closed_data};
+        with_closed_data(module_path!(), "closed_data_refuses_setup_and_export_writes", |data, ram| {
+            let path = data.join("setup");
+            let staged = data.join("setup.new");
+            assert_refused(Disk.prepare(&path).unwrap_err());
+            assert_refused(replace(&mut Disk, &path, "setup").unwrap_err());
+            assert_refused(write(&path, b"export").unwrap_err());
+            assert_refused(Disk.rename(&staged, &path).unwrap_err());
+            assert_refused(remove(&mut Disk, &path).unwrap_err());
+            assert_eq!(std::fs::read_dir(data).unwrap().count(), 0);
+            write(&ram.join("export"), b"allowed").unwrap();
+        });
+    }
+
+    #[test]
     fn a_staging_error_keeps_the_existing_binary_file() {
         let dir = std::env::temp_dir().join(format!("oos-durable-bytes-{}", std::process::id()));
         std::fs::create_dir(&dir).unwrap();

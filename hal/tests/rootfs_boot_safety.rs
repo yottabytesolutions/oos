@@ -28,6 +28,7 @@ fn startup_discards_only_owned_durable_staging_files() {
     }
     let staged = [
         "oos/update/state.new",
+        "oos/system.sd.new",
         "oos/vendor.keys.new",
         "oos/update/kexec-restart.new",
         "oos/update/kexec-last/jump.log.new",
@@ -55,7 +56,13 @@ fn startup_discards_only_owned_durable_staging_files() {
         .unwrap()
         .0
         .replace("/oos/", "./oos/")
-        .replace("/tmp/oos-data.log", "./data.log");
+        .replace("/tmp/oos-data.log", "./data.log")
+        .replace("/tmp/oos-data.closing", "./closing");
+    boot.write("closing", "");
+    assert!(Command::new("sh").args(["-ec", &cleanup]).current_dir(&boot.0).status().unwrap().success());
+    assert!(staged.into_iter().all(|name| boot.p(name).is_file()));
+    assert!(fs::read_to_string(boot.p("data.log")).unwrap().contains("/oos is closed for shutdown"));
+    fs::remove_file(boot.p("closing")).unwrap();
     assert!(Command::new("sh").args(["-ec", &cleanup]).current_dir(&boot.0).status().unwrap().success());
     assert!(staged.into_iter().all(|name| !boot.p(name).exists()));
     assert!(retained.into_iter().all(|name| boot.p(name).is_file()));

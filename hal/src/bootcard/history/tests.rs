@@ -138,3 +138,16 @@ fn kexec_neither_increments_nor_resets_the_slow_streak() {
     let saved = history.encode();
     assert!(saved.contains("start=kexec\tlegacy\ttest-build\nstart=kexec\tsdr104\ttest-build\n"));
 }
+
+#[test]
+fn closed_data_refuses_card_history() {
+    use crate::system::admission_test::{assert_refused, with_closed_data};
+    with_closed_data(module_path!(), "closed_data_refuses_card_history", |data, ram| {
+        let path = data.join("sd-card.state");
+        let (status, result) = record_with(Some(&path), Some(CARD_A), detect(Mode::Hs, Mode::Hs), None, false);
+        assert_refused(result.unwrap_err());
+        assert_eq!(status.mode, Mode::Hs);
+        assert!(!path.exists());
+        record::write_state(&ram.join("sd-card.state"), status).unwrap();
+    });
+}

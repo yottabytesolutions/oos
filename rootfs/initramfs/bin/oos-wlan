@@ -68,7 +68,6 @@ prepare_config() {
 }
 
 start() {
-	[ ! -e /tmp/oos-data.closing ] || { echo "oos-wlan: /oos is closed for shutdown" >&2; return 1; }
 	[ -n "$ready" ] || prepare_config || return 1
 	ip link set wlan0 up || return 1
 	status=0

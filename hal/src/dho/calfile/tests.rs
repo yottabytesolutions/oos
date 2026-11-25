@@ -216,3 +216,14 @@ fn errors_and_save_refuses_rigol() {
     assert_eq!(from, ds);
     std::fs::remove_dir_all(&d).unwrap();
 }
+
+#[test]
+fn closed_data_refuses_calibration_copy() {
+    use crate::system::admission_test::{assert_refused, with_closed_data};
+    with_closed_data(module_path!(), "closed_data_refuses_calibration_copy", |data, _| {
+        let error = save(data.to_str().unwrap(), "cal_adc.hex", b"copy", (2026, 1, 1, 0, 0, 0)).unwrap_err();
+        let SaveError::Failed(error) = error else { panic!("{error}") };
+        assert_refused(error);
+        assert_eq!(std::fs::read_dir(data).unwrap().count(), 0);
+    });
+}

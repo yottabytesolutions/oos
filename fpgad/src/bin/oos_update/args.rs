@@ -12,8 +12,11 @@ pub(crate) struct Args {
 
 impl Args {
     pub(crate) fn parse() -> Args {
+        Self::parse_from(std::env::args().skip(1))
+    }
+
+    pub(super) fn parse_from(mut it: impl Iterator<Item = String>) -> Args {
         let mut a = Args { rest: Vec::new(), flags: Vec::new(), vals: Vec::new() };
-        let mut it = std::env::args().skip(1);
         while let Some(s) = it.next() {
             match s.as_str() {
                 "--execute" | "--downgrade" | "--force" | "--quick" | "--any-model" | "--reinstall" | "--no-kexec"

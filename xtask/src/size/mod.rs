@@ -131,6 +131,9 @@ mod tests {
         let root = crate::repo::root();
         let meta = crate::workspace::load(&Default::default(), &root).unwrap();
         let m = measure("xtask", &crate::sources::of_dir(&meta, "xtask").unwrap());
-        assert!(m.sizes.0.is_empty() && m.statics.0.is_empty() && m.unsafes.0.is_empty(), "{:?}", m);
+        let rules = crate::arch::load(&root).unwrap();
+        let unsafe_outside_allowed_paths = crate::steps::unsafe_now(&m, &rules.unsafe_paths);
+        assert!(m.sizes.0.is_empty() && m.statics.0.is_empty(), "{m:?}");
+        assert!(unsafe_outside_allowed_paths.0.is_empty(), "{unsafe_outside_allowed_paths:?}");
     }
 }

@@ -109,6 +109,8 @@ pull request that fixes a mistake: what happened, then the rule.
   with 1 became `kill(-1)` and killed the CI runner. Put `--` before a negative process id.
 - macOS discarded blocked termination signals with an inherited ignore disposition. Block the signals before
   restoring their default dispositions and starting the CLI's workers.
+- Routing benchmark signals through the firmware HAL made every gate build compile the HAL. Keep the host signal
+  adapter in `xtask` and use the gate's unsafe path check in its self-test.
 - The soak test compared process-wide live bytes while the test harness was still allocating. Measure the calling
   thread's own allocations for synchronous work. Even a child running one test shares its heap with the harness.
 - A socket test assumed the peer's close was readable on the next poll. On a loaded macOS host it was not. Wait on

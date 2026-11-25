@@ -4,6 +4,43 @@
 # Bring up the acquisition FPGA under OOS (Phase 3.1, confirmed 2026-11-02):
 # boot the FPGA image from slot 0x400000 via the SPI1 boot monitor, then load the PCIe host driver (retrying, the
 # RK3399 host cannot retrain without a reload) and the XDMA driver, and check the FPGA version register.
+
+# Keep the whitelist in step with oos-fpgad. This function runs in a command substitution.
+xdma_params() {
+	poll= interrupt= c2h= h2c= seen=
+	set -f
+	for w in $1; do
+		key=${w%%=*}
+		case "$w" in
+		poll_mode=[01]) poll=$w;;
+		interrupt_mode=[0-3]) interrupt=$w;;
+		c2h_timeout=[1-9] | c2h_timeout=10) c2h=$w;;
+		h2c_timeout=[1-9] | h2c_timeout=10) h2c=$w;;
+		*) echo "oos-fpga-up: xdma.params: $w not allowed, using defaults" >&2
+		   poll= interrupt= c2h= h2c=
+		   break;;
+		esac
+		case " $seen " in
+		*" $key "*) echo "oos-fpga-up: xdma.params: $key twice, using defaults" >&2
+		            poll= interrupt= c2h= h2c=
+		            break;;
+		esac
+		seen="$seen $key"
+	done
+	if [ -z "$poll$interrupt" ]; then
+		poll=poll_mode=1
+	fi
+	# Kexec cannot receive MSI. Keep valid DMA timeouts when forcing polling (docs/update.md).
+	case " $2 " in
+	*" oos.kexec="*)
+		if [ "$poll" != poll_mode=1 ] || [ -n "$interrupt" ]; then
+			echo "oos-fpga-up: started by kexec: MSI does not reach this kernel, forcing poll_mode=1" >&2
+		fi
+		poll=poll_mode=1 interrupt=;;
+	esac
+	echo "${poll:+$poll }${interrupt:+$interrupt }${c2h:-c2h_timeout=1} ${h2c:-h2c_timeout=1}"
+}
+
 M=/lib/modules/$(uname -r)
 slot=${1:-0x400000}
 lsmod | grep -q '^xdma ' && { echo "xdma already loaded"; oos-hw rd 0x4000; exit 0; }
@@ -18,25 +55,7 @@ for try in 1 2 3 4 5 6; do
 done
 [ -e /sys/bus/pci/devices/0000:01:00.0 ] || { echo "oos-fpga-up: FPGA did not appear on PCIe"; exit 1; }
 echo "PCIe: $(cat /sys/bus/pci/devices/0000:01:00.0/vendor):$(cat /sys/bus/pci/devices/0000:01:00.0/device) $(cat /sys/bus/pci/devices/0000:01:00.0/current_link_speed) x$(cat /sys/bus/pci/devices/0000:01:00.0/current_link_width)"
-# xdma.ko parameters: `xdma.params` in the system settings (oos-conf), the same check as oos-fpgad; poll_mode=1 when unset
-p=$(/bin/oos-conf xdma.params 2>/dev/null)
-seen=
-set -f
-for w in $p; do
-	case "$w" in
-	poll_mode=[01] | interrupt_mode=[0-3]) ;;
-	*) echo "oos-fpga-up: xdma.params: $w not allowed, using poll_mode=1"; p=; break;;
-	esac
-	case " $seen " in *" ${w%%=*} "*) echo "oos-fpga-up: xdma.params: ${w%%=*} twice, using poll_mode=1"; p=; break;; esac
-	seen="$seen ${w%%=*}"
-done
-set +f
-[ -n "$p" ] || p=poll_mode=1
-# a start by kexec polls whatever the setting says: the GICv3 keeps the previous kernel's ITS tables and the MSI
-# completions never arrive (docs/update.md), the same rule as oos-fpgad
-case " $(cat /proc/cmdline) " in
-*" oos.kexec="*) [ "$p" = poll_mode=1 ] || echo "oos-fpga-up: started by kexec: MSI does not reach this kernel, xdma.params \"$p\" overridden; loading xdma with poll_mode=1"; p=poll_mode=1;;
-esac
+p=$(xdma_params "$(/bin/oos-conf xdma.params 2>/dev/null)" "$(cat /proc/cmdline)")
 echo "insmod xdma.ko $p"
 insmod $M/updates/xdma.ko $p || exit 1
 sleep 1

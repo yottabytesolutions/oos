@@ -35,6 +35,7 @@ use std::{
 mod batch;
 mod control;
 mod dispatch;
+mod dma_fault;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
@@ -79,6 +80,7 @@ struct Io<P: Port> {
     trim_overlay: oos_hal::dho::coretrim::Overlay,
     la_cal: la::Cal,
     state: seq::State,
+    dma_fault: dma_fault::DmaFault,
 }
 
 #[derive(Default)]
@@ -210,6 +212,15 @@ impl<T: pacing::PacingPolicy> AcqLoop<T> {
 
     fn run(&mut self, io: &mut Io<impl Port>) {
         while let Some(counter) = Service::before_pass(&self.out) {
+            if io.dma_fault.pending() {
+                self.replay.invalidate(&self.out, u32::MAX);
+                self.batch.first = FirstRecord::default();
+                if !io.dma_fault.ready(&mut io.bar) {
+                    io.clock.wait(Duration::from_millis(200));
+                    continue;
+                }
+                self.configured.current = None;
+            }
             let mut last_read = std::mem::take(&mut self.replay.fresh);
             let Some(request) = self.service(io, counter) else { continue };
             let Some((settings, params)) = self.reconfigure(io, &request, &mut last_read) else { continue };
@@ -253,7 +264,7 @@ impl<T: pacing::PacingPolicy> AcqLoop<T> {
             &mut self.seq,
         );
         if let Err(e) = segment.step(&mut self.segrun, settings, params, identity) {
-            status(&self.out, format!("segments: {}", e));
+            io.report_read_error(&self.out, format!("segments: {e}"));
             io.abort_segments(&mut self.segrun, &self.out);
             std::thread::sleep(Duration::from_millis(200));
         }
@@ -261,6 +272,10 @@ impl<T: pacing::PacingPolicy> AcqLoop<T> {
 }
 
 impl<P: Port> Io<P> {
+    pub(super) fn report_read_error(&mut self, out: &HwShared, message: String) {
+        self.dma_fault.report(&mut self.state, &mut self.bar, &self.clock, out, message);
+    }
+
     fn execute(&mut self, steps: &[seq::Step]) -> Result<Vec<u8>, String> {
         execute(steps, &mut self.bar, &mut self.c2h, &self.clock)
     }

@@ -35,6 +35,7 @@ pub(super) struct Stream {
     halted: bool,
     done_seen: Option<Instant>,
     published: Instant,
+    writes: Vec<oos_hal::dho::Write>,
 }
 
 impl Stream {
@@ -50,6 +51,7 @@ impl Stream {
             halted: false,
             done_seen: None,
             published: now,
+            writes: Vec::new(),
         }
     }
 }
@@ -63,18 +65,24 @@ struct Sweep<'a> {
 }
 
 impl Sweep<'_> {
-    fn start(&self, io: &mut Io<impl Port>, rp: &roll::Params) {
-        match self.scan {
+    fn start(&self, io: &mut Io<impl Port>, rp: &roll::Params) -> Vec<oos_hal::dho::Write> {
+        let mut writes = match self.scan {
             Some((delay_fs, _)) => {
                 let pos = roll::scan_trig_pos(delay_fs, self.tdiv_fs, self.params.dot_fs);
-                io.bar.apply(&roll::config_scan(&mut io.state.sh, rp, self.params.memsel, pos));
+                roll::config_scan(&mut io.state.sh, rp, self.params.memsel, pos)
             }
-            None => io.bar.apply(&roll::config(&mut io.state.sh, rp, self.params.memsel)),
-        }
+            None => roll::config(&mut io.state.sh, rp, self.params.memsel),
+        };
+        io.bar.apply(&writes);
         if let Some(timing) = &self.la {
-            io.bar.apply(&roll::la_config(rp, timing));
+            let logic = roll::la_config(rp, timing);
+            io.bar.apply(&logic);
+            writes.extend(logic);
         }
-        io.bar.apply(&lifecycle::roll_start(&mut io.state.sh, self.settings.mask));
+        let start = lifecycle::roll_start(&mut io.state.sh, self.settings.mask);
+        io.bar.apply(&start);
+        writes.extend(start);
+        writes
     }
 }
 
@@ -145,7 +153,7 @@ impl Stream {
                 std::thread::sleep(Duration::from_millis(20));
                 return true;
             }
-            sweep.start(io, &rp);
+            self.writes = sweep.start(io, &rp);
             (self.cursor, self.halted) = (0, false);
         }
         let dt = rp.spacing_fs as f64 / 1e15;
@@ -169,7 +177,7 @@ impl Stream {
         }
         if done && !self.halted {
             std::thread::sleep(Duration::from_millis(500));
-            sweep.start(io, &rp);
+            self.writes = sweep.start(io, &rp);
             self.cursor = 0;
         }
         true
@@ -181,7 +189,7 @@ impl Stream {
         }
         let s = sweep.settings;
         let rp = roll::params(s.mask, sweep.tdiv_fs, s.depth, sweep.params);
-        sweep.start(io, &rp);
+        self.writes = sweep.start(io, &rp);
         self.ring.iter_mut().for_each(VecDeque::clear);
         self.sweep.iter_mut().for_each(Vec::clear);
         self.ring_la.clear();
@@ -203,27 +211,39 @@ impl Stream {
     }
 
     fn read_chunks(&mut self, io: &mut Io<impl Port>, out: &HwShared, sweep: &Sweep<'_>, g: &Geometry) -> bool {
-        io.bar.apply(&roll::fill_pulse(&io.state.sh));
-        let chunks = roll::chunks(io.bar.rd(0x11e8));
+        let pulse = roll::fill_pulse(&io.state.sh);
+        io.bar.apply(&pulse);
+        let fifo = io.bar.rd(0x11e8);
+        let chunks = roll::chunks(fifo);
         let has_la = sweep.la.is_some();
         let chunks = if has_la { roll::la_chunks(chunks) } else { chunks };
         if chunks == 0 {
             std::thread::sleep(Duration::from_millis(9));
             return true;
         }
-        let data = match bus::read_dma(&mut io.c2h, chunks * roll::CHUNK_BYTES, |_, _| {}) {
+        let asked = chunks * roll::CHUNK_BYTES;
+        let mut received = 0;
+        let mut dma = bus::DmaBuf::new();
+        let data = match dma.read_with_progress(&mut io.c2h, asked, |_, _| {}, &mut received) {
             Ok(data) => data,
-            Err(e) => {
+            Err(error) => {
                 let name = if sweep.scan.is_some() { "scan" } else { "roll" };
-                status(out, format!("{} read of {} chunks: {}", name, chunks, e));
+                let message = if error.kind() == std::io::ErrorKind::TimedOut {
+                    let writes = self.writes.iter().copied().chain(pulse);
+                    let detail = seq::time::dma_timeout(&mut io.bar, (asked, received), writes);
+                    format!("{name} FIFO 0x11e8={fifo:#010x}: {detail}")
+                } else {
+                    format!("{name} read of {chunks} chunks: {error}")
+                };
+                io.report_read_error(out, message);
                 return false;
             }
         };
         let s = sweep.settings;
         let (words, logic) =
-            if has_la { roll::split_la(&data, s.mask) } else { (roll::split(&data, s.mask), Vec::new()) };
+            if has_la { roll::split_la(data, s.mask) } else { (roll::split(data, s.mask), Vec::new()) };
         if sweep.scan.is_some() {
-            self.write_scan(g, s, (&data, has_la), (&words, &logic));
+            self.write_scan(g, s, (data, has_la), (&words, &logic));
         } else {
             self.ring_la.extend(logic);
             while self.ring_la.len() > g.keep_la {

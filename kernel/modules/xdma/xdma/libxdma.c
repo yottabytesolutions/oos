@@ -3638,8 +3638,8 @@ ssize_t xdma_xfer_submit(void *dev_hndl, int channel, bool write, u64 ep_addr,
 			break;
 		default:
 			/* transfer can still be in-flight */
-			pr_info("xfer 0x%p,%u, s 0x%x timed out, ep 0x%llx.\n",
-				xfer, xfer->len, xfer->state, req->ep_addr);
+			pr_info_ratelimited("xfer 0x%p,%u, s 0x%x timed out, ep 0x%llx, completed chain bytes %zd.\n",
+				xfer, xfer->len, xfer->state, req->ep_addr, done);
 			rv = engine_status_read(engine, 0, 1);
 			if (rv < 0) {
 				pr_err("Failed to read engine status\n");
@@ -3691,6 +3691,10 @@ unmap_sgl:
 
 	if (req)
 		xdma_request_free(req);
+
+	/* A timed-out streaming read has lost its position, even after an earlier chain completed. */
+	if (!write && engine->streaming && rv == -ETIMEDOUT)
+		return rv;
 
 	/* as long as some data is processed, return the count */
 	return done ? done : rv;

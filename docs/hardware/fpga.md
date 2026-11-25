@@ -142,8 +142,9 @@ So a kexec session loads xdma with `poll_mode=1` whatever the configuration says
 ### Device files and driver behaviour
 
 - `/dev/xdma0_bypass`: mmap 0x8000 bytes = BAR1. OOS code (`hal/src/dho/bus.rs`).
-- `/dev/xdma0_c2h_0`: blocking `read()`; the driver times out after 10 s (`kernel/modules/xdma`). A transfer left
-  running when the reading process dies times out 10 s later in the kernel. Verified on the unit.
+- `/dev/xdma0_c2h_0`: blocking `read()`. The kernel timeout also applies to a transfer left running when the reading
+  process dies, as observed on the unit with the original 10 s default. OOS now requests 1 s at startup.
+  [XDMA startup](../system-conf-keys.md#xdma-startup)
 - An open BAR1 mapping keeps `rmmod xdma` from working. Unmap before unloading. Verified on the unit.
 - Never send BOOT while xdma or the PCIe host driver is loaded: reconfiguring the FPGA behind a bound endpoint can
   lock the CPU (`../protocols/fpga-boot.md`). The caller must unmap BAR1 and unload both. OOS checks this only in

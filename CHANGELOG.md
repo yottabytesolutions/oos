@@ -5,6 +5,7 @@
 - Protect the kexec restart marker, kexec diagnostic files and saved WLAN settings against torn writes during
   power loss. Missing or rejected WLAN configuration starts with an empty network list.
 - Restart, power-off and staged updates cleanly unmount the data area when storage is healthy.
+- Bound stalled acquisition DMA reads to 1 s by default, record timeout evidence and reset playback before re-arming. Correct the DMA length for the smallest raw windows.
 
 ## 0.2.1: Fixes from the first release
 

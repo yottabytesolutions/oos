@@ -308,8 +308,10 @@ full plan with the pass-through writes delivers frames (verified on the unit).
 **Assumed** for the register sequence or effect on hardware. Code and host fixtures establish the
 intended software writes.
 
-1. `readout_window`: for roundup4(n)/ratio == 8 it writes 0x11f0 = 128. The exact form is 128/ratio with a read of 256
-   bytes. This only matters for tiny windows.
+1. For the stock minimum (roundup4(n)/ratio == 8), OOS writes 128/ratio to 0x11f0. It reads 256 sample bytes
+   per frame plus any header, then keeps the logical frame bytes. The previous plan requested just the logical
+   bytes, for example 32 bytes with two channels at 1 ns/div after programming 512 bytes. The correction is
+   covered by the host matrix and awaits verification on hardware.
 2. `stop_sequence` writes 0x4080 from `sh.s4080`, which `plan` fixes before execution. The exact form uses the value last
    *read* from 0x4080. For done = 0x40000010 both agree, but after a play 0x4080 reads 0.
 3. A live frame runs the stop sequence twice, with 1 us sleeps inside. `readout_play4` runs it once, back to back. This

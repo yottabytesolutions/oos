@@ -85,6 +85,9 @@ impl<T: PacingPolicy> AcqLoop<T> {
             }
             // The completed SINGLE has already delivered its record.
             self.enter_hold(io, request, *last_read && !single_completed);
+            if io.dma_fault.pending() {
+                return None;
+            }
         }
         self.stream_boundary(io, request);
         // STOP defers edits to an applied configuration and keeps the batch captured with it.
@@ -237,7 +240,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
                     Some(read.tag(frame))
                 }
                 Err(e) => {
-                    status(&self.out, format!("raw read of the deep window at STOP: {}", e));
+                    io.report_read_error(&self.out, format!("raw read of the deep window at STOP: {e}"));
                     None
                 }
             }
@@ -299,7 +302,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
                         self.replay.replayed = None;
                     }
                 }
-                Err(e) => status(&self.out, format!("STOP read: {}", e)),
+                Err(e) => io.report_read_error(&self.out, format!("STOP read: {e}")),
             }
         } else {
             io.clock.wait(VIEW_POLL);

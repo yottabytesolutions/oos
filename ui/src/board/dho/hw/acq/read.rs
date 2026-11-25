@@ -29,9 +29,14 @@ pub(super) struct ReadIo<'a, B, R, C> {
     pub(super) c2h: &'a mut R,
     pub(super) clock: &'a C,
     pub(super) state: &'a mut seq::State,
+    pub(super) dma_fault: &'a mut super::dma_fault::DmaFault,
 }
 
 impl<B: Bus, R: Read, C: Clock> ReadIo<'_, B, R, C> {
+    pub(super) fn report_read_error(&mut self, out: &HwShared, message: String) {
+        self.dma_fault.report(self.state, &mut self.bar, self.clock, out, message);
+    }
+
     pub(super) fn execute(&mut self, steps: &[seq::Step], dma: &mut DmaBuf) -> Result<(), String> {
         seq::time::execute_bus_with_clock(steps, &mut self.bar, self.c2h, dma, &mut |_| {}, &|| false, self.clock)
     }
@@ -43,6 +48,7 @@ impl<P: Port> Io<P> {
             bar: self.port.batch_bus(&mut self.bar),
             c2h: &mut self.c2h,
             state: &mut self.state,
+            dma_fault: &mut self.dma_fault,
             clock: &self.clock,
         }
     }
@@ -140,6 +146,10 @@ impl BatchState {
         };
         let fill_ms = pacing.fill_ms(&mut self.fill, started);
         let allowed = |count| capture_read_allowed(plan, out, &mut self.record_wait, request, count, clock);
+        #[cfg(all(feature = "private-picture-counts", debug_assertions))]
+        if std::mem::take(&mut io.dma_fault.inject_stall) {
+            self.dma.destination().stall_next_play();
+        }
         // The HAL owns the fill, ring readout and C2H sequence as one cancellation-aware operation.
         let count = lifecycle::batch(b.single, ahead, || {
             seq::time::acquire_batch_observed(
@@ -216,13 +226,16 @@ impl BatchState {
         let count = completed.count;
         let live = raw_newest(b, p);
         crate::compress::note_batch_k(if live { b.compress } else { 1 });
-        let mut failed = false;
+        let mut la_error = None;
         let la = batch::read_la(io.state, (b, p), (&mut io.bar, io.c2h, io.clock), &mut self.la_fails, |message| {
-            failed = true;
-            status(out, message);
+            la_error = Some(message);
         })
         .map(|words| la_record(words, b, p));
-        let replay = raw::replay_due(count, live, &mut self.raw.live, io.clock);
+        let mut failed = la_error.is_some();
+        if let Some(message) = la_error {
+            io.report_read_error(out, message);
+        }
+        let replay = !io.dma_fault.pending() && raw::replay_due(count, live, &mut self.raw.live, io.clock);
         let mut wrote_after_dma = la.is_some() || replay;
         let raw_frame = replay.then(|| whole_raw_replay(b)).and_then(|settings| {
             self.read_raw(io, capture, (&settings, count), (out, probe), (tap, false))
@@ -233,7 +246,7 @@ impl BatchState {
         let deep_settings = deep_raw_settings(b, p);
         let deep_ok = deep_settings.is_some();
         let raw_frame = raw_frame.or_else(|| {
-            let want = capture.request.run.deep.filter(|_| count > 0)?;
+            let want = capture.request.run.deep.filter(|_| count > 0 && !io.dma_fault.pending())?;
             let settings = deep_settings
                 .filter(|ds| crate::deepmeas::due(want, self.raw.deep, io.clock.now(), seq::frame_bytes(ds, p)))?;
             wrote_after_dma = true;
@@ -243,10 +256,11 @@ impl BatchState {
                 .ok()
                 .flatten()
         });
-        let fired = batch::read_trigger(&mut io.bar);
-        let mask = mask_read(io, b, p);
-        let zone = zone_read(io, b, (count, completed.batch_ms));
-        wrote_after_dma |= mask.is_some() || zone.is_some();
+        let pending = io.dma_fault.pending();
+        let fired = (!pending).then(|| batch::read_trigger(&mut io.bar)).flatten();
+        let mask = (!pending).then(|| mask_read(io, b, p)).flatten();
+        let zone = (!pending).then(|| zone_read(io, b, (count, completed.batch_ms))).flatten();
+        wrote_after_dma |= pending || mask.is_some() || zone.is_some();
         let (n, lo) = seq::window(b, p);
         let k = if b.playback.is_play4() { seq::compress_k(b, p) } else { 1 };
         let play = PlayedWindow { lo, n, k };
@@ -274,7 +288,7 @@ impl BatchState {
         );
         if let Err(e) = read {
             let what = if deep { "deep window" } else { "newest frame" };
-            status(out, format!("raw read of the {}: {}", what, e));
+            io.report_read_error(out, format!("raw read of the {what}: {e}"));
             return Err(());
         }
         let decoded_at = started.map(|_| io.clock.now());

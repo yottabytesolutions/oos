@@ -22,10 +22,31 @@ pub(super) fn print(st: &[Step]) {
                 frame,
                 seq::read_len(*frames, *frame)
             ),
+            Step::ReadPadded { frames, frame, stride } => println!(
+                "  read {} frames of {} bytes ({} with the stream padding) from /dev/xdma0_c2h_0",
+                frames,
+                frame,
+                frames * stride
+            ),
             Step::Sleep { us } => println!("  sleep {} us", us),
             Step::Peek(r) => println!("  peek {:x?}", r),
             Step::Note(n) => println!("# {}", n),
         }
     }
     println!("# {} hardware writes", st.iter().filter(|s| matches!(s, Step::Wr(_) | Step::Afe(_))).count());
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn every_matrix_case_passes_the_playback_length_check() {
+        for case in include_str!("../../../tools/plan-matrix-cases.txt").lines() {
+            let args = case.split_ascii_whitespace().map(str::to_owned).collect::<Vec<_>>();
+            let opt = super::super::acquisition::parse(&args).unwrap();
+            let p = oos_hal::dho::seq::record_geometry(&opt.s).unwrap();
+            // Geometry is independent of the AFE calibration. The matrix gate checks the full plan with calibration.
+            let mut state = oos_hal::dho::seq::State::handover(opt.app_mask, None);
+            state.acquire(&opt.s, &p).unwrap_or_else(|error| panic!("{case}: {error}"));
+        }
+    }
 }

@@ -12,7 +12,14 @@ impl Engine {
         let factor = compression & seq::COMPRESS_K_MAX;
         let compressed = compression & (1 << 31) != 0;
         let average = self.reg(0x1004) & 8 != 0;
-        if compressed && !self.compressed_window_fits(start, points, factor) {
+        if compressed
+            && !seq::compressed_window_fits(
+                (self.reg(0x1100), start),
+                (self.reg(0x10e4), self.ratio, false),
+                points,
+                compression,
+            )
+        {
             return;
         }
         let header = self.reg(0x1010) & (1 << 31) == 0;
@@ -38,20 +45,6 @@ impl Engine {
             self.stream.resize(end, 0);
         }
         self.last_played = Some(last);
-    }
-
-    fn compressed_window_fits(&self, start: u32, points: u32, factor: u32) -> bool {
-        let window = self.reg(0x1100).saturating_sub(0x48 | (self.ratio << 9));
-        let record = self.reg(0x10e4);
-        // The HAL permits an unaligned input length when playing the whole record.
-        let full_record = start == 0 && window == record;
-        start.is_multiple_of(8)
-            && (full_record || window.is_multiple_of(8))
-            && points >= 8
-            && points.is_multiple_of(8)
-            && window <= record.saturating_sub(start)
-            && factor != 0
-            && points <= window / factor
     }
 
     fn play_header(&mut self, frame: u32) {
@@ -93,6 +86,7 @@ mod tests {
         for (start, window, points, factor) in [
             (2, 24, 8, 2),  // unaligned start
             (0, 26, 8, 2),  // unaligned input size
+            (0, 24, 0, 2),  // zero TX length
             (0, 24, 10, 2), // even but unaligned output size
             (48, 24, 8, 2), // input window overruns the record even when the requested output fits
             (0, 24, 16, 2), // output needs more input than the window supplies

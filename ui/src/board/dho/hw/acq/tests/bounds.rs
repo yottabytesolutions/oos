@@ -12,6 +12,41 @@ const SINGLE_LIMIT: Duration = Duration::from_secs(3);
 const RETRY: Duration = Duration::from_millis(200);
 
 #[test]
+fn dma_timeout_discards_the_batch_and_the_next_batch_succeeds() {
+    let _scope = Scope::new();
+    let want = settings();
+    let out = requested(&want, Identity::default(), false);
+    let (mut io, trace) = sim::fixture(&want, out.clone(), (Run::Live(1), 4, false), None);
+    let (mut source, started) = source(&out, &io);
+    io.c2h.timeout_next();
+
+    source.run(&mut io);
+
+    let outcome = snapshot(&out, &io, &trace, started);
+    let timeout = outcome.events.iter().position(|event| *event == Event::DmaTimeout(Duration::from_secs(1))).unwrap();
+    let after = &outcome.events[timeout + 1..];
+    assert!(matches!(
+        after[..4],
+        [Event::Read(STATUS, _), Event::Read(DONE, _), Event::Read(0x4010, _), Event::Read(0x4014, _)]
+    ));
+    let retry = after.iter().position(|event| *event == Event::Wait(RETRY)).unwrap();
+    assert!(after[..retry].iter().any(|event| matches!(event, Event::Write(0x1000, v) if v & 0x10 != 0)));
+    let rearm = after.iter().position(is_arm).unwrap();
+    assert!(after[retry..rearm].iter().any(|event| matches!(event, Event::Read(STATUS, v) if v & STOPPED != 0)));
+    assert_eq!(outcome.events.iter().filter(|event| is_arm(event)).count(), 2);
+    assert_eq!(outcome.events.iter().filter(|event| matches!(event, Event::Dma(_))).count(), 1);
+    assert_eq!(outcome.screens, vec![(0..4).map(|slot| Frame::live(u64::from(slot) + 1, slot, 4)).collect::<Vec<_>>()]);
+    assert_eq!(outcome.decoded, 4);
+    assert_eq!(outcome.dropped, 0);
+    let status = drawpipe::counters().acquisition.text();
+    assert!(status.contains(" acq_dma_timeouts=1"));
+    assert_eq!(
+        status.split_whitespace().find(|field| field.starts_with("acq_batch_dma_failures=")),
+        Some("acq_batch_dma_failures=1")
+    );
+}
+
+#[test]
 fn stop_acknowledges_after_one_disarm_poll_even_without_hardware_acknowledgement() {
     let outcome = twice(stop_without_ack);
     let trace = &outcome.events;

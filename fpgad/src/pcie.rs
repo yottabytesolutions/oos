@@ -1,55 +1,61 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (C) 2026 Julian Decker
 
-/// Parameters of xdma.ko without `xdma.params`: DMA completion by polling the write-back word, what OOS was verified
-/// with. The stock system loads it with interrupts.
-const XDMA_DEFAULT: &str = "poll_mode=1";
-
-/// The xdma.ko parameters of `xdma.params` in the system settings (`oos-conf`; None or empty = `XDMA_DEFAULT`). Only
-/// `poll_mode=0|1` and `interrupt_mode=0..3` (0 auto, 1 MSI, 2 legacy INTx, 3 MSI-X), each at most once: the line goes
-/// to `insmod` through a shell.
-fn xdma_params(v: Option<&str>) -> Result<String, String> {
-    let v = v.map(str::trim).unwrap_or("");
-    if v.is_empty() {
-        return Ok(XDMA_DEFAULT.into());
-    }
-    let mut seen = Vec::new();
-    for w in v.split_whitespace() {
-        let ok = matches!(
-            w,
-            "poll_mode=0"
-                | "poll_mode=1"
-                | "interrupt_mode=0"
-                | "interrupt_mode=1"
-                | "interrupt_mode=2"
-                | "interrupt_mode=3"
-        );
-        let key = w.split('=').next().unwrap_or(w);
-        if !ok || seen.contains(&key) {
-            return Err(format!("xdma.params: {:?} is not allowed (poll_mode=0|1, interrupt_mode=0..3, each once)", w));
-        }
-        seen.push(key);
-    }
-    Ok(v.split_whitespace().collect::<Vec<_>>().join(" "))
+#[derive(Default)]
+struct XdmaParams<'a> {
+    poll: Option<&'a str>,
+    interrupt: Option<&'a str>,
+    c2h: Option<&'a str>,
+    h2c: Option<&'a str>,
 }
 
-/// The xdma.ko parameters for this start: `xdma_params` of the system setting, except in a start by kexec (`kexec`:
-/// `oos.kexec=` on the command line), which always polls. The GICv3 keeps its ITS tables across kexec (docs/update.md),
-/// the MSI completions of the C2H engine never arrive there and every read timed out with `poll_mode=0`. Returns the
-/// line and, when the setting was overridden or refused, why.
-fn xdma_params_for(conf: Option<&str>, kexec: bool) -> (String, Option<String>) {
-    let set = xdma_params(conf);
-    if kexec {
-        let why = match set {
-            Ok(v) if v == XDMA_DEFAULT => None,
-            Ok(v) => Some(format!("started by kexec: MSI does not reach this kernel, xdma.params {:?} overridden", v)),
-            Err(e) => Some(e),
-        };
-        return (XDMA_DEFAULT.into(), why);
+impl<'a> XdmaParams<'a> {
+    // Keep the whitelist in step with oos-fpga-up. Only these literal arguments reach insmod.
+    fn parse(conf: &'a str) -> Result<Self, String> {
+        let mut params = Self::default();
+        for token in conf.split_whitespace() {
+            let slot = match token.split_once('=') {
+                Some(("poll_mode", "0" | "1")) => &mut params.poll,
+                Some(("interrupt_mode", "0" | "1" | "2" | "3")) => &mut params.interrupt,
+                Some(("c2h_timeout", value)) if timeout_value(value) => &mut params.c2h,
+                Some(("h2c_timeout", value)) if timeout_value(value) => &mut params.h2c,
+                _ => return Err(format!("xdma.params: {token:?} is not allowed")),
+            };
+            if slot.replace(token).is_some() {
+                return Err(format!("xdma.params: {token:?} repeats a parameter"));
+            }
+        }
+        Ok(params)
     }
-    match set {
-        Ok(v) => (v, None),
-        Err(e) => (XDMA_DEFAULT.into(), Some(e)),
+
+    fn arguments(&self, kexec: bool) -> String {
+        let (poll, interrupt) = if kexec || (self.poll.is_none() && self.interrupt.is_none()) {
+            (Some("poll_mode=1"), None)
+        } else {
+            (self.poll, self.interrupt)
+        };
+        [poll, interrupt, Some(self.c2h.unwrap_or("c2h_timeout=1")), Some(self.h2c.unwrap_or("h2c_timeout=1"))]
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" ")
+    }
+}
+
+fn timeout_value(value: &str) -> bool {
+    matches!(value.as_bytes(), [b'1'..=b'9'] | b"10")
+}
+
+/// Kexec forces polling because the GICv3 retains the old kernel's ITS tables (docs/update.md).
+/// Valid timeout overrides apply in both boot paths.
+fn xdma_params_for(conf: Option<&str>, kexec: bool) -> (String, Option<String>) {
+    match XdmaParams::parse(conf.unwrap_or_default()) {
+        Ok(params) => {
+            let why = (kexec && (params.poll == Some("poll_mode=0") || params.interrupt.is_some()))
+                .then(|| "started by kexec: MSI does not reach this kernel, forcing poll_mode=1".into());
+            (params.arguments(kexec), why)
+        }
+        Err(e) => (XdmaParams::default().arguments(kexec), Some(e)),
     }
 }
 
@@ -134,36 +140,67 @@ pub(crate) fn down() -> std::io::Result<()> {
 mod tests {
     use super::*;
 
+    const DEFAULT: &str = "poll_mode=1 c2h_timeout=1 h2c_timeout=1";
+
+    fn check(conf: &str, kexec: bool, expected: &str, warning: bool) {
+        let (args, why) = xdma_params_for(Some(conf), kexec);
+        assert_eq!(args, expected, "{conf:?}");
+        assert_eq!(why.is_some(), warning, "{conf:?}");
+
+        let script = include_str!("../../rootfs/board/dho/bin/oos-fpga-up");
+        let (helper, _) = script.split_once("\nM=").unwrap();
+        let command = format!("{helper}\nxdma_params \"$1\" \"$2\"");
+        let cmdline = if kexec { "quiet oos.kexec=1 rw" } else { "quiet rw" };
+        let output =
+            std::process::Command::new("sh").args(["-c", &command, "xdma_params", conf, cmdline]).output().unwrap();
+        assert!(output.status.success(), "{conf:?}");
+        assert_eq!(std::str::from_utf8(&output.stdout).unwrap().trim_end(), expected, "{conf:?}");
+        assert_eq!(!output.stderr.is_empty(), warning, "{conf:?}");
+    }
+
     #[test]
     fn xdma_parameters_from_the_system_settings() {
-        assert_eq!(xdma_params(None).unwrap(), "poll_mode=1");
-        assert_eq!(xdma_params(Some(" \n")).unwrap(), "poll_mode=1");
-        assert_eq!(xdma_params(Some("poll_mode=0\n")).unwrap(), "poll_mode=0");
-        assert_eq!(xdma_params(Some("poll_mode=0   interrupt_mode=2")).unwrap(), "poll_mode=0 interrupt_mode=2");
+        assert_eq!(xdma_params_for(None, false), (DEFAULT.to_owned(), None));
+        check(" \n", false, DEFAULT, false);
+        check("poll_mode=0\n", false, "poll_mode=0 c2h_timeout=1 h2c_timeout=1", false);
+        check("h2c_timeout=10 c2h_timeout=2", false, "poll_mode=1 c2h_timeout=2 h2c_timeout=10", false);
+        check("interrupt_mode=2", false, "interrupt_mode=2 c2h_timeout=1 h2c_timeout=1", false);
+        check(
+            "poll_mode=0\tinterrupt_mode=3 c2h_timeout=10",
+            false,
+            "poll_mode=0 interrupt_mode=3 c2h_timeout=10 h2c_timeout=1",
+            false,
+        );
         for bad in [
             "poll_mode=2",
             "poll_mode=0; reboot",
             "poll_mode=0 poll_mode=1",
             "interrupt_mode=4",
-            "c2h_timeout=1",
             "poll_mode=0 $(id)",
+            "c2h_timeout=0",
+            "c2h_timeout=-1",
+            "c2h_timeout=11",
+            "c2h_timeout=10.0",
+            "c2h_timeout=01",
+            "c2h_timeout=1 c2h_timeout=2",
+            "h2c_timeout=3 h2c_timeout=4",
+            "h2c_timeout=1*",
+            "h2c_timeout=1\nc2h_timeout=100",
         ] {
-            assert!(xdma_params(Some(bad)).is_err(), "{}", bad);
+            check(bad, false, DEFAULT, true);
         }
     }
 
     #[test]
-    fn a_kexec_start_polls_whatever_the_setting() {
-        assert_eq!(xdma_params_for(Some("poll_mode=0"), false), ("poll_mode=0".to_string(), None));
-        let (v, why) = xdma_params_for(Some("poll_mode=0"), true);
-        assert_eq!(v, "poll_mode=1");
-        assert!(why.is_some_and(|w| w.contains("kexec") && w.contains("poll_mode=0")));
-        assert_eq!(xdma_params_for(Some("poll_mode=0 interrupt_mode=1"), true).0, "poll_mode=1");
-        // the default needs no note; a refused setting says why in both starts
-        assert_eq!(xdma_params_for(None, true), ("poll_mode=1".to_string(), None));
-        assert!(
-            xdma_params_for(Some("poll_mode=7"), true).1.is_some()
-                && xdma_params_for(Some("poll_mode=7"), false).1.is_some()
+    fn kexec_forces_polling_and_keeps_timeout_overrides() {
+        check("", true, DEFAULT, false);
+        check("poll_mode=7 c2h_timeout=9", true, DEFAULT, true);
+        check("c2h_timeout=9", true, "poll_mode=1 c2h_timeout=9 h2c_timeout=1", false);
+        check(
+            "poll_mode=0 interrupt_mode=1 c2h_timeout=10 h2c_timeout=3",
+            true,
+            "poll_mode=1 c2h_timeout=10 h2c_timeout=3",
+            true,
         );
     }
 }

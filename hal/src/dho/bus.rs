@@ -61,6 +61,8 @@ pub struct DmaBuf {
     cap: usize,
     /// valid bytes from `off`
     len: usize,
+    #[cfg(all(feature = "private-picture-counts", debug_assertions))]
+    stall_next: bool,
 }
 
 impl DmaBuf {
@@ -86,14 +88,26 @@ impl DmaBuf {
         &mut self,
         c2h: &mut impl std::io::Read,
         bytes: usize,
+        short: impl FnMut(usize, usize),
+    ) -> std::io::Result<&mut [u8]> {
+        self.read_with_progress(c2h, bytes, short, &mut 0)
+    }
+
+    /// As `read`, also reporting the bytes returned by successful syscalls before an error.
+    pub fn read_with_progress(
+        &mut self,
+        c2h: &mut impl std::io::Read,
+        bytes: usize,
         mut short: impl FnMut(usize, usize),
+        received: &mut usize,
     ) -> std::io::Result<&mut [u8]> {
         self.reserve(bytes);
         self.len = 0;
+        *received = 0;
         let off = self.off;
-        let mut got = 0;
-        while got < bytes {
-            // at most `MAX_READ` per read(): the rest of the stream follows in the next one, as after a short read
+        while *received < bytes {
+            let got = *received;
+            // at most `MAX_READ` per read(): the rest of the stream follows in the next one, as across a short read
             let want = (bytes - got).min(MAX_READ);
             match c2h.read(&mut self.raw[off + got..off + got + want])? {
                 0 => {
@@ -106,12 +120,23 @@ impl DmaBuf {
                     if k < want {
                         short(got, k);
                     }
-                    got += k;
+                    *received += k;
                 }
             }
         }
         self.len = bytes;
         Ok(&mut self.raw[off..off + bytes])
+    }
+
+    /// Ask for eight bytes beyond the next sequenced playback, once, in a debug observer build.
+    #[cfg(all(feature = "private-picture-counts", debug_assertions))]
+    pub fn stall_next_play(&mut self) {
+        self.stall_next = true;
+    }
+
+    #[cfg(all(feature = "private-picture-counts", debug_assertions))]
+    pub(super) fn observer_read_bytes(&mut self, planned: usize) -> usize {
+        planned + 8 * usize::from(std::mem::take(&mut self.stall_next))
     }
 
     /// The bytes of the last read (after `truncate`).

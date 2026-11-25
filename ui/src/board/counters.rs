@@ -9,7 +9,7 @@ pub(super) use disarm::Outcome;
 /// Process-lifetime worker operation attempts, including failures. Never reset by acquisition changes.
 #[derive(Debug, Default)]
 pub struct AcquisitionCounters {
-    events: [AtomicU64; 9],
+    events: [AtomicU64; 11],
     diagnostics: crate::perfguard::deep::Diagnostics,
     disarm: disarm::Counters,
     play_window_rejected: AtomicU64,
@@ -26,6 +26,8 @@ pub(super) enum Event {
     Configure,
     SingleArm,
     CaptureTransitionTimeout,
+    BatchDmaFailure,
+    DmaTimeout,
 }
 
 impl AcquisitionCounters {
@@ -68,6 +70,14 @@ impl AcquisitionCounters {
         let timeouts = n(Event::CaptureTransitionTimeout);
         if timeouts != 0 {
             write!(text, " acq_capture_transition_timeout={timeouts}").expect("writing to a String cannot fail");
+        }
+        let failures = n(Event::BatchDmaFailure);
+        if failures != 0 {
+            write!(text, " acq_batch_dma_failures={failures}").expect("writing to a String cannot fail");
+        }
+        let dma_timeouts = n(Event::DmaTimeout);
+        if dma_timeouts != 0 {
+            write!(text, " acq_dma_timeouts={dma_timeouts}").expect("writing to a String cannot fail");
         }
         text
     }

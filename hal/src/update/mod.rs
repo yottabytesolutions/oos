@@ -37,7 +37,8 @@ pub use card::Card;
 use card::{check_image, Region};
 pub use kexec::receive::kexec_clear;
 pub use reconcile::{leave, reconcile_recovery};
-pub use state::{confirm, confirm_running, confirm_with_sd_mode, restart_mark, write_restart_mark};
+pub use restart_mark::{read_restart_mark, write_restart_mark};
+pub use state::{confirm, confirm_running, confirm_with_sd_mode};
 use std::path::Path;
 
 /// Default place of the state file (OOS data partition).
@@ -95,6 +96,7 @@ pub struct State {
 }
 
 mod reconcile;
+mod restart_mark;
 mod state;
 
 /// Short form of a build id for messages.
@@ -299,7 +301,7 @@ pub fn boot_started_with_card(
 ) -> Result<Boot, String> {
     let _l = lock(state_path)?;
     let mut st = State::load(state_path).map_err(io("reading the update state"))?;
-    let restart = state::read_restart_mark(state_path).map_err(io("reading the kexec restart guard"))?;
+    let restart = read_restart_mark(state_path).map_err(io("reading the kexec restart guard"))?;
     // Resolve a missed trial before timing from a different running image can reset its miss.
     let boot = st.count_trial_start(running);
     let mut changed = false;
@@ -314,7 +316,7 @@ pub fn boot_started_with_card(
         st.save(state_path).map_err(io("writing the update state"))?;
     }
     if restart.is_some() {
-        state::remove_restart_mark(state_path).map_err(io("removing the kexec restart guard"))?;
+        restart_mark::remove_restart_mark(state_path).map_err(io("removing the kexec restart guard"))?;
     }
     Ok(boot)
 }

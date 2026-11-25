@@ -121,7 +121,7 @@ fn a_marked_warm_slow_start_leaves_the_cold_start_to_answer() {
     stage(&f, &mut f.card(), &package);
     kexec_missed(&f.state(), false).unwrap();
     sd::restage(&mut f.card(), &f.state(), true).unwrap();
-    let mark = restart_mark(&f.state());
+    let mark = restart_mark::restart_mark(&f.state());
     std::fs::write(&mark, format!("{KX_BUILD}\n")).unwrap();
     let slow = observation(&f, "hs", "sdr104", false);
     assert_eq!(boot_started_with_card(&f.state(), Some(KX_BUILD), slow).unwrap(), Boot::Trial(1));

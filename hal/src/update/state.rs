@@ -7,15 +7,6 @@ use super::{
 };
 use std::path::Path;
 
-/// Publish the trial restart guard before requesting a reboot.
-pub fn write_restart_mark(path: &Path, build: &str) -> std::io::Result<()> {
-    crate::system::check_data_write(path)?;
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    let bytes = format!("{}\n", build.trim());
-    crate::system::durable_replace(path, &path.with_extension("new"), bytes.as_bytes(), &options)
-}
-
 pub(super) fn write_slot(
     card: &mut Card,
     state_path: &Path,
@@ -315,24 +306,4 @@ fn confirm_start(
     st.sd.finish(false);
     st.save(state_path).map_err(io("writing the update state"))?;
     Ok(true)
-}
-
-/// The ordinary start consumes this build marker after recording its card timing and trial state.
-pub fn restart_mark(state_path: &Path) -> std::path::PathBuf {
-    state_path.with_file_name("kexec-restart")
-}
-
-pub(super) fn read_restart_mark(state_path: &Path) -> std::io::Result<Option<String>> {
-    match std::fs::read_to_string(restart_mark(state_path)) {
-        Ok(build) => Ok(Some(build)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error),
-    }
-}
-
-pub(super) fn remove_restart_mark(state_path: &Path) -> std::io::Result<()> {
-    match std::fs::remove_file(restart_mark(state_path)) {
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        result => result,
-    }
 }

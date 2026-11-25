@@ -9,7 +9,9 @@ ST=/tmp/oos-boot.status
 DATA=/oos
 SAVED=$DATA/wlan/wpa_supplicant.conf
 CONF=/run/oos-wlan/wpa_supplicant.conf
+REJECTED=$CONF.rejected
 PID=/run/wpa_supplicant.pid
+LOG=/tmp/wpa_supplicant.log
 DHCP=/run/udhcpc.wlan0.pid
 K=/lib/modules/$(uname -r)/kernel
 
@@ -40,10 +42,14 @@ load() {
 
 # The daemon and its temporary files inherit a private umask. Only oos-ui, after SAVE_CONFIG
 # succeeds, publishes this RAM copy to the data area. Logs in /tmp may lose their tail.
-start_supplicant() {
+start_supplicant() (
 	umask 077
-	wpa_supplicant -B -i wlan0 -c "$CONF" -P "$PID" -f /tmp/wpa_supplicant.log
-}
+	# 2.11 opens -f in append mode. Only a diagnostic from this attempt can authorize fallback.
+	: > "$LOG" || exit 1
+	wpa_supplicant -B -i wlan0 -c "$CONF" -O /run/wpa_supplicant -P "$PID" -f "$LOG" && exit 0
+	grep -Fqx 'Configuration file rejected by parser.' "$LOG" && exit 2
+	exit 1
+)
 
 empty_config() {
 	(umask 077; printf 'ctrl_interface=/run/wpa_supplicant\nupdate_config=1\n' > "$CONF")
@@ -51,21 +57,27 @@ empty_config() {
 
 prepare_config() {
 	(umask 077; mkdir -p "$(dirname "$CONF")") || return 1
-	if [ -d "$DATA/setups" ] && grep -qx 'ctrl_interface=/run/wpa_supplicant' "$SAVED" 2>/dev/null &&
-		grep -qx 'update_config=1' "$SAVED" && (umask 077; cp "$SAVED" "$CONF"); then
-		return 0
+	rm -f "$REJECTED" || return 1
+	from_saved=
+	if [ -d "$DATA/setups" ] && { [ -e "$SAVED" ] || [ -L "$SAVED" ]; }; then
+		from_saved=1
+		(umask 077; cp "$SAVED" "$CONF")
+	else
+		empty_config
 	fi
-	empty_config
 }
 
 start() {
 	[ -n "$ready" ] || prepare_config || return 1
 	ip link set wlan0 up || return 1
-	if ! (start_supplicant); then
-		# The supplicant parses the complete copied file before it daemonizes.
-		[ -z "$ready" ] || return 1
-		echo "oos-wlan: saved configuration rejected or WLAN unavailable; trying empty configuration"
-		empty_config && (start_supplicant) || return 1
+	status=0
+	start_supplicant || status=$?
+	if [ "$status" -ne 0 ]; then
+		[ "$status" -eq 2 ] && [ -z "$ready" ] && [ -n "$from_saved" ] || return 1
+		# Tell the UI to preserve the original before it publishes any replacement.
+		(umask 077; : > "$REJECTED") || return 1
+		echo "oos-wlan: saved configuration rejected; using an empty list, next save keeps $SAVED.rejected"
+		empty_config && start_supplicant || return 1
 	fi
 	# On later restarts leave the RAM file alone, including after an acknowledged save.
 	ready=1

@@ -14,6 +14,7 @@ pub(crate) struct Cut {
     synced: Option<Vec<u8>>,
     renamed: bool,
     committed: bool,
+    temporary: bool,
 }
 
 impl Cut {
@@ -29,11 +30,18 @@ impl Cut {
 impl Files for Cut {
     type Staged = ();
 
-    fn write(&mut self, path: &Path, bytes: &[u8], _: &OpenOptions) -> io::Result<()> {
+    fn create(&mut self, path: &Path, _: &OpenOptions) -> io::Result<()> {
         assert_ne!(path, self.path);
         assert_eq!(path.parent(), self.path.parent());
-        self.staged = Some(bytes.to_vec());
-        self.advance()
+        assert!(!self.temporary);
+        self.temporary = true;
+        Ok(())
+    }
+
+    fn write(&mut self, (): &mut (), bytes: &[u8]) -> io::Result<()> {
+        let result = self.advance();
+        self.staged = Some(if result.is_ok() { bytes.to_vec() } else { bytes[..1].to_vec() });
+        result
     }
 
     fn sync_file(&mut self, (): ()) -> io::Result<()> {
@@ -44,6 +52,7 @@ impl Files for Cut {
     fn rename(&mut self, _: &Path, to: &Path) -> io::Result<()> {
         assert_eq!(to, self.path);
         self.renamed = true;
+        self.temporary = false;
         self.advance()
     }
 
@@ -52,14 +61,29 @@ impl Files for Cut {
         self.committed = true;
         self.advance()
     }
+
+    fn remove(&mut self, path: &Path) -> io::Result<()> {
+        assert_eq!(path, self.path.with_added_extension("new"));
+        self.temporary = false;
+        Ok(())
+    }
 }
 
 pub(crate) fn assert_cuts(path: &Path, new: &[u8], mut write: impl FnMut(&mut Cut) -> io::Result<()>) {
     for initial in [None, Some(OLD)] {
         for after in 1..=5 {
-            let mut cut =
-                Cut { path: path.into(), step: 0, after, staged: None, synced: None, renamed: false, committed: false };
+            let mut cut = Cut {
+                path: path.into(),
+                step: 0,
+                after,
+                staged: None,
+                synced: None,
+                renamed: false,
+                committed: false,
+                temporary: true,
+            };
             assert_eq!(write(&mut cut).is_err(), after <= 4);
+            assert!(!cut.temporary);
             assert_eq!(cut.step, after.min(4));
             for rename_survives in [false, true] {
                 let recovered =
@@ -69,4 +93,28 @@ pub(crate) fn assert_cuts(path: &Path, new: &[u8], mut write: impl FnMut(&mut Cu
             }
         }
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn private_replacement_discards_a_loose_stale_file_and_cleans_up_after_failed_rename() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = std::env::temp_dir().join(format!("oos-durable-{}", std::process::id()));
+    fs::create_dir(&dir).unwrap();
+    let path = dir.join("saved");
+    let staged = path.with_added_extension("new");
+    fs::write(&staged, b"stale").unwrap();
+    fs::set_permissions(&staged, fs::Permissions::from_mode(0o666)).unwrap();
+    replace_private(&mut Disk, &path, b"complete").unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"complete");
+    assert_eq!(fs::metadata(&path).unwrap().permissions().mode() & 0o777, 0o600);
+    assert!(!staged.exists());
+
+    fs::remove_file(&path).unwrap();
+    fs::create_dir(&path).unwrap();
+    assert!(replace_private(&mut Disk, &path, b"another copy").is_err());
+    assert!(path.is_dir());
+    assert!(!staged.exists());
+    fs::remove_dir_all(dir).unwrap();
 }

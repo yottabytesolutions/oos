@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! The kexec restart guard: the build a kexec install restarted for, consumed by the next ordinary start.
 
-use crate::system::durable::{replace_private, Disk, Files};
+use crate::system::durable::{durable_remove, replace_private, Disk, Files};
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -30,13 +30,12 @@ pub fn read_restart_mark(state_path: &Path) -> io::Result<Option<String>> {
     }
 }
 
+/// Consume the guard. The removal is synced: a guard that reappears after a power cut would make the next cold
+/// start look like a restart this system initiated.
 pub(super) fn remove_restart_mark(state_path: &Path) -> io::Result<()> {
     let path = restart_mark(state_path);
     crate::system::check_data_write(&path)?;
-    match std::fs::remove_file(path) {
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        result => result,
-    }
+    durable_remove(&mut Disk, &path)
 }
 
 #[cfg(test)]

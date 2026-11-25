@@ -77,6 +77,16 @@ fn remove_staged(files: &mut impl Files, path: &Path) -> io::Result<()> {
     }
 }
 
+/// Remove a file and sync its directory, so the removal survives a power cut. A missing file is not an error.
+pub(crate) fn durable_remove(files: &mut impl Files, path: &Path) -> io::Result<()> {
+    let dir = path.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    match files.remove(path) {
+        Ok(()) => files.sync_dir(dir),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
 /// For a serialized writer. Discard a stale staging file and create a private one.
 pub(crate) fn replace_private(files: &mut impl Files, path: &Path, bytes: &[u8]) -> io::Result<()> {
     let temporary = path.with_added_extension("new");

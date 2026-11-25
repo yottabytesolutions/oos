@@ -118,3 +118,57 @@ fn private_replacement_discards_a_loose_stale_file_and_cleans_up_after_failed_re
     assert!(!staged.exists());
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[derive(Default)]
+struct Removal {
+    present: bool,
+    synced: Vec<std::path::PathBuf>,
+}
+
+impl Files for Removal {
+    type Staged = ();
+
+    fn create(&mut self, _: &Path, _: &OpenOptions) -> io::Result<()> {
+        unreachable!("a removal stages nothing")
+    }
+
+    fn write(&mut self, (): &mut (), _: &[u8]) -> io::Result<()> {
+        unreachable!("a removal writes nothing")
+    }
+
+    fn sync_file(&mut self, (): ()) -> io::Result<()> {
+        unreachable!("a removal syncs no file")
+    }
+
+    fn rename(&mut self, _: &Path, _: &Path) -> io::Result<()> {
+        unreachable!("a removal renames nothing")
+    }
+
+    fn sync_dir(&mut self, dir: &Path) -> io::Result<()> {
+        self.synced.push(dir.to_path_buf());
+        Ok(())
+    }
+
+    fn remove(&mut self, _: &Path) -> io::Result<()> {
+        if std::mem::take(&mut self.present) {
+            Ok(())
+        } else {
+            Err(io::ErrorKind::NotFound.into())
+        }
+    }
+}
+
+#[test]
+fn a_removal_syncs_the_directory_so_the_file_cannot_reappear() {
+    let mut files = Removal { present: true, ..Removal::default() };
+    durable_remove(&mut files, Path::new("/data/update/kexec-restart")).unwrap();
+    assert!(!files.present);
+    assert_eq!(files.synced, [Path::new("/data/update")]);
+}
+
+#[test]
+fn removing_a_missing_file_succeeds_without_a_sync() {
+    let mut files = Removal::default();
+    durable_remove(&mut files, Path::new("/data/update/kexec-restart")).unwrap();
+    assert!(files.synced.is_empty());
+}

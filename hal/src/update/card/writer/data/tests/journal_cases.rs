@@ -210,7 +210,7 @@ fn forced_replay_with_a_wrong_free_block_count_reports_an_ordinary_repair() {
     assert_eq!(run_check(&probe.0, &["-y", "-E", "journal_only"]), Ok(Check::Corrected));
 
     let (notice, _, recovered) = fixture.run();
-    assert_eq!(notice.unwrap().as_deref(), Some("The data area was repaired"));
+    assert_eq!(notice.unwrap().as_deref(), Some("The data area was repaired. Damaged entries may be missing. Check your saved files and look in lost+found for recovered copies."));
     fs::write(&fixture.image.0, recovered).unwrap();
     assert_eq!(fixture.fsck("-fn"), 0);
     assert_eq!(contents_hash(&fixture, "/committed"), sha256(&[0x36; BLOCK_BYTES]));
@@ -230,7 +230,7 @@ fn startup_warns_when_fsck_resets_a_corrupt_journal() {
     assert_eq!(run_check(&probe.0, &["-p", "-E", "journal_only"]), Ok(Check::Corrected));
 
     let (notice, _, recovered) = fixture.run();
-    assert_eq!(notice.unwrap().as_deref(), Some("The data area was repaired. Recent changes may be lost"));
+    assert_eq!(notice.unwrap().as_deref(), Some("The data area was repaired. Recent changes may be lost because the journal was reset. Check your settings and restore missing files from backup."));
     fs::write(&fixture.image.0, recovered).unwrap();
     assert_eq!(fixture.fsck("-fn"), 0);
     assert_eq!(contents_hash(&fixture, "/committed"), sha256(&[0x21; BLOCK_BYTES]));

@@ -88,3 +88,13 @@ fn affinity_pins_only_the_calling_thread_and_is_inherited() {
     .join()
     .unwrap();
 }
+
+#[test]
+fn shutdown_write_admission_fails_explicitly_and_fails_closed_on_lookup_error() {
+    assert!(super::data_write_admission(Ok(false)).is_ok());
+    let error = super::data_write_admission(Ok(true)).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::ReadOnlyFilesystem);
+    assert_eq!(error.to_string(), "/oos is closed for shutdown");
+    let missing_access = std::io::ErrorKind::PermissionDenied;
+    assert_eq!(super::data_write_admission(Err(missing_access.into())).unwrap_err().kind(), missing_access);
+}

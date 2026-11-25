@@ -26,7 +26,7 @@ fn first_format_completes_after_every_sector_cut() {
     assert_eq!(writes.last().unwrap().0, geometry::PRIMARY.start);
     eprintln!("first format: checking all {} sector prefixes", writes.len() + 1);
     test_prefixes(&mut fixture, &before, &after, &writes, |fixture, notice| {
-        assert!(matches!(notice, None | Some("The data area was repaired")));
+        assert!(matches!(notice, None | Some("The data area was repaired. Damaged entries may be missing. Check your saved files and look in lost+found for recovered copies.")));
         assert_journalled_without_marker(fixture);
     });
 }
@@ -93,7 +93,7 @@ fn stale_format_marker_preserves_files_with_a_primary_or_backup() {
         fs::write(&fixture.image.0, &after).unwrap();
         assert_eq!(fixture.file_hashes(&paths), hashes);
         if torn_primary {
-            assert_eq!(notice.unwrap().as_deref(), Some("The data area was repaired"));
+            assert_eq!(notice.unwrap().as_deref(), Some("The data area was repaired. Damaged entries may be missing. Check your saved files and look in lost+found for recovered copies."));
         } else {
             assert_eq!(notice, Ok(None));
             assert_eq!(after[SECTOR_BYTES..], original[SECTOR_BYTES..]);

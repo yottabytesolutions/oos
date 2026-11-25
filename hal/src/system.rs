@@ -8,12 +8,49 @@ pub use cores::{capacities, cpus, Cores};
 mod ifaddrs;
 pub use ifaddrs::ipv4_all;
 
+#[cfg(any(target_os = "linux", test))]
+mod shutdown;
+#[cfg(target_os = "linux")]
+pub use shutdown::{report_power_failure, DataShutdown};
+
 use std::io;
 use std::path::Path;
 
 /// Whether the data partition is mounted at /oos, by the text of /proc/mounts.
 pub(crate) fn oos_mounted(mounts: &str) -> bool {
     mounts.lines().any(|line| line.split_whitespace().nth(1) == Some("/oos"))
+}
+
+/// Reject data-area mutations during shutdown, including while /oos is unmounted.
+pub fn check_data_write(path: &Path) -> io::Result<()> {
+    #[cfg(target_os = "linux")]
+    if path.starts_with("/oos") || path.starts_with("/tmp/oos") {
+        return data_write_admission(Path::new("/tmp/oos-data.closing").try_exists());
+    }
+    let _ = path;
+    Ok(())
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn data_write_admission(closing: io::Result<bool>) -> io::Result<()> {
+    if closing? {
+        return Err(io::Error::new(io::ErrorKind::ReadOnlyFilesystem, "/oos is closed for shutdown"));
+    }
+    Ok(())
+}
+
+/// Signal one Linux process. Reject process-group, broadcast and init targets.
+#[cfg(target_os = "linux")]
+pub fn signal_process(pid: i32, signal: i32) -> io::Result<()> {
+    if pid <= 1 {
+        return Err(io::Error::new(io::ErrorKind::InvalidInput, "expected a process ID above 1"));
+    }
+    // SAFETY: kill takes two scalar arguments. The positive PID selects one process.
+    if unsafe { libc::kill(pid, signal) } == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
 }
 
 /// Pins the calling thread and its future children to `cores`.

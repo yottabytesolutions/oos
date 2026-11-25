@@ -172,14 +172,10 @@ pub(in crate::update) fn simulate_reset(at_jump: impl FnOnce()) {
         &mut device,
         || {},
         |watchdog| {
-            super::reboot(
-                watchdog,
-                || {},
-                || {
-                    at_jump();
-                    "simulated watchdog reset".into()
-                },
-            )
+            super::reboot(watchdog, || {
+                at_jump();
+                "simulated watchdog reset".into()
+            })
         },
     );
     assert_eq!(result, "simulated watchdog reset");

@@ -8,6 +8,7 @@
 # so the kernel keeps every write inside these 16 MiB.
 # First use creates a journaled "oosdata" filesystem. Existing filesystems are checked before mounting.
 . "${OOS_BOARD_FILE:-/etc/oos-board}"
+[ ! -e /tmp/oos-data.closing ] || { echo "oos-mount-data: /oos is closed for shutdown" >&2; exit 1; }
 P=/dev/mmcblk0p1
 S=/sys/class/block/mmcblk0p1
 stock_confirmed=${1:-0}

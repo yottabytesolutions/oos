@@ -1,0 +1,154 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+closing=/tmp/oos-data.closing
+
+stop_ui() {
+    killall -TERM oos-ui || :
+    for _ in $(seq 30); do
+        pidof oos-ui >/dev/null || return 0
+        sleep 0.1
+    done
+    killall -KILL oos-ui
+    for _ in $(seq 5); do
+        pidof oos-ui >/dev/null || return 0
+        sleep 0.1
+    done
+    ! pidof oos-ui >/dev/null
+}
+
+log() {
+    printf 'oos-shutdown-data: %s\n' "$1" 2>/dev/null > /dev/kmsg ||
+        printf 'oos-shutdown-data: %s\n' "$1" >&2
+}
+
+read_mount() {
+    mounted_source='' mounted_fs='' mounted_options=''
+    while read -r source target fs options rest; do
+        if [ "$target" = /oos ]; then
+            mounted_source=$source mounted_fs=$fs mounted_options=$options
+        fi
+    done < /proc/mounts
+}
+
+close_data() {
+    # Let the running UI save before closing admission. It must not respawn.
+    if [ "$1" = stop-ui ]; then
+        if ! stop_ui; then
+            log 'UI still running after TERM and KILL; leaving /oos mounted'
+            return 1
+        fi
+        mkdir "$closing" || { log 'could not close data write admission'; return 1; }
+    fi
+    [ -d "$closing" ] || return 1
+    read_mount || { log 'could not read mount state'; return 1; }
+    case ,$mounted_options, in
+        *,rw,*) printf 'mount %s %s %s\n' "$mounted_source" "$mounted_fs" "$mounted_options" > "$2" || return 1 ;;
+    esac
+    sync || { log 'sync failed; leaving /oos mounted'; return 1; }
+    if [ -z "$mounted_source" ]; then
+        log '/oos already unmounted'
+        return 0
+    fi
+    case ,$mounted_options, in
+        *,ro,*) log '/oos already read-only'; return 0 ;;
+    esac
+    # Seal the filesystem before umount. A writable open file or an IO error can
+    # prevent this transition. In that case leave the mount for journal replay.
+    if ! error=$(mount -o remount,ro /oos 2>&1); then
+        log "could not make /oos read-only (busy or IO error): $error; leaving /oos mounted"
+        return 1
+    fi
+    if ! error=$(umount /oos 2>&1); then
+        log "could not unmount /oos: $error; leaving /oos read-only"
+        return 1
+    fi
+}
+
+wait_for_worker() {
+    [ -n "$1" ] || return 0
+    case $1 in 0|1|*[!0-9]*) return 1 ;; esac
+    # A task killed while blocked in a syscall can still complete that syscall.
+    while kill -0 "-$1" 2>/dev/null; do sleep 0.05; done
+}
+
+writable_mount() {
+    [ "$mounted_source" = "$1" ] && [ "$mounted_fs" = "$2" ] || return 1
+    case ,$mounted_options, in *,rw,*) return 0 ;; *) return 1 ;; esac
+}
+
+restore_data() {
+    wait_for_worker "$1" || return 1
+    shift
+    [ "$#" -ne 0 ] || return 0
+    for _ in 1 2; do
+        read_mount || return 1
+        if writable_mount "$1" "$2"; then break; fi
+        if [ -z "$mounted_source" ]; then
+            mount -t "$2" -o "$3" "$1" /oos
+        elif [ "$mounted_source" = "$1" ] && [ "$mounted_fs" = "$2" ]; then
+            mount -o "remount,$3" /oos
+        else
+            return 1
+        fi >&2
+    done
+    read_mount && writable_mount "$1" "$2"
+}
+
+if [ "${1:-}" = --worker ]; then
+    shift
+    case $1 in
+        stop-ui|ui-drained) close_data "$@" ;;
+        restore) shift; restore_data "$@" ;;
+        *) exit 2 ;;
+    esac
+    printf '%s\n' "$?" >&3
+    exit
+fi
+
+mode=${1:-stop-ui}
+if [ "$#" -gt 0 ]; then shift; fi
+case $mode in
+    stop-ui) seconds=5; : > /tmp/oos-ui.off || exit 73 ;;
+    ui-drained|restore) seconds=2 ;;
+    *) exit 2 ;;
+esac
+
+cd / || exit 73
+dir=$(mktemp -d /tmp/oos-shutdown.XXXXXX) || { log "cannot start $mode"; exit 73; }
+trap 'rm -f "$dir/result" "$dir/mount"; rmdir "$dir"' EXIT
+if ! mkfifo "$dir/result" || ! exec 3<>"$dir/result"; then
+    log "cannot start $mode"
+    exit 73
+fi
+
+case $mode in
+    ui-drained)
+        mkdir "$closing" || { log 'could not close data write admission'; exit 73; }
+        set -- "$dir/mount" ;;
+    stop-ui) set -- "$dir/mount" ;;
+esac
+
+# The worker has a separate group. Its stdout/stderr must not keep the caller waiting.
+setsid "$0" --worker "$mode" "$@" </dev/null >/dev/null 2>&1 &
+worker=$!
+# BusyBox ash provides the deadline on the result FIFO.
+# shellcheck disable=SC3045
+if read -r -t "$seconds" result <&3; then
+    [ ! -f "$dir/mount" ] || cat "$dir/mount"
+    if [ "$result" = 0 ]; then
+        [ "$mode" != restore ] || rmdir "$closing" || exit 1
+        exit 0
+    fi
+    log "$mode failed (worker status $result)"
+    exit 1
+fi
+kill -KILL "$worker" 2>/dev/null
+# Image BusyBox kill takes a negative PID after the explicit signal, without --.
+kill -KILL "-$worker" 2>/dev/null
+if [ "$mode" != restore ]; then
+    printf 'worker %s\n' "$worker"
+    [ ! -f "$dir/mount" ] || cat "$dir/mount"
+fi
+log "$mode timed out after ${seconds}s"
+exit 124

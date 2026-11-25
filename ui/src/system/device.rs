@@ -234,3 +234,28 @@ impl Device {
         }
     }
 }
+
+/// Request panel power after teardown (board.md 4/8.3).
+fn power(inp: &mut input::Inputs, action: ui::PowerAction) {
+    use board::Board;
+    use oos_hal::system::{report_power_failure, DataShutdown};
+
+    eprintln!("oos-ui: power {action:?}");
+    let (command, repeats, failure) = match action {
+        ui::PowerAction::Off => (board::PanelCmd::PowerOff, 2, "The scope did not power off."),
+        ui::PowerAction::Restart => (board::PanelCmd::Restart, 1, "The scope did not restart."),
+    };
+    system::shutdown::panel_power(
+        failure.into(),
+        DataShutdown::prepare,
+        || {
+            let frame = board::board().panel_cmd(command);
+            for _ in 0..repeats {
+                inp.send(&frame);
+            }
+        },
+        || std::thread::sleep(std::time::Duration::from_secs(2)),
+        DataShutdown::restore,
+        report_power_failure,
+    );
+}

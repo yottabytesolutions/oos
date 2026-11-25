@@ -43,6 +43,7 @@ pub(super) struct UpdateUi {
     next_check: f64,
     notice_shown: String,
     data_notice_shown: bool,
+    power_notice_shown: String,
     /// output of the last job (web page)
     pub(super) last: String,
 }

@@ -14,6 +14,7 @@ pub fn lock(state_path: &Path) -> Result<Lock, String> {
 }
 
 pub(super) fn lock_with(state_path: &Path, nonblocking: bool) -> Result<Lock, String> {
+    crate::system::check_data_write(state_path).map_err(io("opening the update lock"))?;
     if let Some(d) = state_path.parent() {
         std::fs::create_dir_all(d).map_err(io("creating the update state directory"))?;
     }
@@ -32,5 +33,8 @@ pub(super) fn lock_with(state_path: &Path, nonblocking: bool) -> Result<Lock, St
             return Err(format!("locking the update state: {}", std::io::Error::last_os_error()));
         }
     }
+    // An operation already holding the writable descriptor may finish. A queued one
+    // must recheck admission after the previous holder releases the lock.
+    crate::system::check_data_write(state_path).map_err(io("locking the update state"))?;
     Ok(Lock { _file: f })
 }

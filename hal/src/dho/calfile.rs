@@ -137,6 +137,7 @@ fn save_all_with_sync(
     s: Stamp,
     sync: impl FnOnce(&str) -> std::io::Result<()>,
 ) -> Result<(), SaveError> {
+    crate::system::check_data_write(std::path::Path::new(dir))?;
     let mut paths = Vec::new();
     for (name, payload) in files {
         match stage(dir, name, payload, s) {

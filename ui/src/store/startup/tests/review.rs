@@ -37,7 +37,7 @@ fn persist_failure_backs_off_and_reports_once_until_recovery() {
 }
 
 #[test]
-fn failed_power_off_save_still_stops_the_supervisor() {
+fn failed_power_off_save_leaves_the_supervisor_available() {
     let shared = Shared(std::rc::Rc::new(std::cell::RefCell::new(fs())));
     let mut s = Startup::start(
         DataFailure { disk: shared.clone(), failure: None },
@@ -48,8 +48,8 @@ fn failed_power_off_save_still_stops_the_supervisor() {
     )
     .unwrap();
     s.fs.failure = Some(libc::ENOSPC);
-    assert!(s.power_off("new".into(), Duration::ZERO).is_err());
-    assert_eq!(shared.0.borrow().text("/temporary/oos-ui.off").as_deref(), Some(""));
+    assert!(s.clean("new".into(), Duration::ZERO, true).is_err());
+    assert_eq!(shared.0.borrow().text("/temporary/oos-ui.off"), None);
 }
 
 struct DataFailure {

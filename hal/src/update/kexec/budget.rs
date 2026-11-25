@@ -3,7 +3,7 @@
 
 //! Payload guard for the kexec watchdog gap. Slot staging removes the doubled image, so the card limits
 //! staged image growth. Legacy packages still carry the full image across the jump. Measured at 85 MB
-//! and raised to 90 MiB without a new measurement (docs/update.md).
+//! and raised to 90 MiB without a new measurement (docs/update.md). The bounded data cleanup runs before watchdog takeover.
 
 const MAX_PAYLOAD: usize = 90 << 20;
 

@@ -363,55 +363,8 @@ fn restore(q: &Quiet) {
     }
 }
 
-/// Load the prepared payload and start it. The running recovery image survives a failed start.
 #[cfg(target_os = "linux")]
-fn start_kexec(sp: &Path, s: update::Staged) {
-    let short = update::short(&s.build).to_string();
-    let payload = s.payload_size();
-    // stopped: None before oos-ui and the devices were stopped
-    let undo = |why: &str, stopped: Option<&Quiet>| -> ! {
-        kexec::undo::warn("unload kexec image", kexec::unload());
-        if stopped.is_some() {
-            kexec::undo::remount_writable();
-        }
-        let event = format!("kexec start of build {short} failed ({why}): nothing installed");
-        kexec::undo::warn("clear kexec state", update::kexec_clear(sp, &event));
-        if let Some(q) = stopped {
-            restore(q);
-            kexec::undo::remove_marker("/tmp/oos-ui.off");
-            kexec::undo::resume_ui(UI_LOOP);
-        }
-        notice(&messages::failed_before_start(&short, why));
-        std::process::exit(1)
-    };
-    let cmd = s.cmdline(&kexec::running_cmdline());
-    let loaded = match &s.tree {
-        Some(t) => kexec::load_with_tree(&s.kernel, &s.initrd, t, &cmd),
-        None => kexec::load(&s.kernel, &s.initrd, &cmd),
-    };
-    if let Err(e) = loaded {
-        undo(&e, None);
-    }
-    let supplied_tree = s.tree.is_some();
-    drop(s);
-    tell(&format!("build {short} loaded ({payload} bytes payload). Restarting into it by kexec."));
-    // under the update lock: a write of the start-up watcher (a rollback, the persist arm) finishes first, then the
-    // watcher is stopped, so no card write runs into the restart
-    let lock = kexec::lock_for_start(sp).unwrap_or_else(|e| undo(&e, None));
-    stop_watcher();
-    stop_ui();
-    let q = quiesce();
-    // the lock file is open for writing: /oos can only go read only without it
-    drop(lock);
-    let jump = supplied_tree.then(kexec::prepare_jump);
-    // the kernel does not sync or unmount on kexec
-    unsafe { libc::sync() };
-    if !std::process::Command::new("mount").args(["-o", "remount,ro", "/oos"]).status().is_ok_and(|x| x.success()) {
-        out!("warning: /oos stays writable (busy); synced");
-    }
-    let e = jump.map_or_else(kexec::start, |j| j.start());
-    undo(&e, Some(&q));
-}
+use oos_update::recovery::start_kexec;
 
 #[cfg(not(target_os = "linux"))]
 fn start_kexec(sp: &Path, s: update::Staged) {
@@ -491,17 +444,6 @@ fn ui_pid(keep: Option<u32>) -> Option<u32> {
     best
 }
 
-/// oos-ui off for the kexec start: no restart, no transfer of the acquisition hardware in flight.
-#[cfg(target_os = "linux")]
-fn stop_ui() {
-    let _ = std::fs::write("/tmp/oos-ui.off", "");
-    for i in 0..50 {
-        let Some(pid) = ui_pid(None) else { return };
-        unsafe { libc::kill(pid as i32, if i < 30 { libc::SIGTERM } else { libc::SIGKILL }) };
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-}
-
 /// The start-up watcher (`oos-update watch`) of this start: stopped before a kexec start (called with the lock held).
 #[cfg(target_os = "linux")]
 fn stop_watcher() {
@@ -554,7 +496,8 @@ fn restart_for_trial(a: &Args, p: &Path) {
         notice(&messages::no_restart(&build, &e, magic == Some(*b"OOSK") && on_trial));
         return;
     }
-    if let Err(e) = kexec::write_restart_marker(&restart_mark(p), &build) {
+    let mark = restart_mark(p);
+    if let Err(e) = oos_hal::system::check_data_write(&mark).and_then(|()| kexec::write_restart_marker(&mark, &build)) {
         notice(&messages::no_restart(&build, &format!("mark not written: {}", e), true));
         return;
     }
@@ -569,16 +512,22 @@ fn restart_for_trial(a: &Args, p: &Path) {
 
 #[cfg(target_os = "linux")]
 fn restart() {
-    // the panel line stays readable for a moment; then the same order as before a kexec start: sync, /oos read only
+    use oos_hal::system::DataShutdown;
+    use oos_update::recovery;
+
+    // Leave the notice on the panel before the trial restart. rcS has not started the UI yet.
     std::thread::sleep(std::time::Duration::from_secs(3));
-    unsafe { libc::sync() };
-    if !std::process::Command::new("mount").args(["-o", "remount,ro", "/oos"]).status().is_ok_and(|x| x.success()) {
-        out!("warning: /oos stays writable (busy); synced");
-    }
-    unsafe { libc::sync() };
-    let r = unsafe { libc::reboot(libc::LINUX_REBOOT_CMD_RESTART) };
-    let why = format!("reboot returned {}: {}", r, std::io::Error::last_os_error());
-    notice(&messages::no_restart(&update::running_build().unwrap_or_default(), &why, true));
+    recovery::restart(
+        DataShutdown::prepare,
+        || {
+            // SAFETY: reboot takes a scalar command. The caller verified OOSK and the installed trial
+            // before entering this path, so a successful restart boots the trial via the normal loader.
+            let rc = unsafe { libc::reboot(libc::LINUX_REBOOT_CMD_RESTART) };
+            format!("reboot returned {rc}: {}", std::io::Error::last_os_error())
+        },
+        DataShutdown::restore,
+        |why| notice(&messages::no_restart(&update::running_build().unwrap_or_default(), why, true)),
+    );
 }
 
 #[cfg(not(target_os = "linux"))]
@@ -603,12 +552,7 @@ mod tests {
         let probe = root.path().join("pgrep");
         std::fs::write(&probe, "#!/bin/sh\n[ \"$*\" = '-x oos-ui-loop' ] || exit 2\nexit \"$PROBE_STATUS\"\n").unwrap();
         std::fs::set_permissions(&probe, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let script = UI_LOOP
-            .replace("while [ ! -e /tmp/oos-ui.off ]; do", "for attempt in 1; do")
-            .replace("/bin/oos-ui-loop", "echo supervisor")
-            .replace("/bin/oos-ui", "echo legacy")
-            .replace("$(cat /tmp/oos-ui.args)", "")
-            .replace("/tmp/oos-ui.log", "/dev/null");
+        let script = UI_LOOP.replace("/bin/oos-ui-loop", "echo supervisor");
         for (status, wanted) in [(0, ""), (1, "supervisor"), (2, "")] {
             let out = std::process::Command::new("sh")
                 .args(["-c", &script])

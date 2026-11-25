@@ -159,13 +159,6 @@ impl<F: Files> Startup<F> {
         Ok(())
     }
 
-    pub(crate) fn power_off(&mut self, text: String, now: Duration) -> io::Result<()> {
-        let saved = self.clean(text, now, true);
-        // Stop the supervisor even when the data partition cannot save or remove markers.
-        let stopped = self.stop_supervisor();
-        saved.and(stopped)
-    }
-
     /// A clean power-off blesses the current setup; an ordinary clean stop only promotes stable settings.
     pub(crate) fn clean(&mut self, text: String, now: Duration, power_off: bool) -> io::Result<()> {
         if self.disabled {
@@ -185,10 +178,6 @@ impl<F: Files> Startup<F> {
         }
         durable::remove(&mut self.fs, &self.paths.data.join("oos-ui.running"))?;
         durable::remove(&mut self.fs, &self.paths.data.join("oos-ui.stable"))
-    }
-
-    fn stop_supervisor(&mut self) -> io::Result<()> {
-        self.fs.write(&self.paths.temporary.join("oos-ui.off"), "")
     }
 }
 

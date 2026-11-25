@@ -59,12 +59,7 @@ impl Port for Native {
     }
 
     fn signal(&self, pid: libc::pid_t, signal: libc::c_int) -> io::Result<()> {
-        // SAFETY: Device validates positive pids above 1; signal is SIGUSR1 or the nonmutating existence check 0.
-        if unsafe { libc::kill(pid, signal) } == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
-        }
+        crate::system::signal_process(pid, signal)
     }
 
     fn open(&self) -> io::Result<File> {

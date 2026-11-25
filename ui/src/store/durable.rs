@@ -21,6 +21,7 @@ pub(crate) struct Disk;
 
 impl Files for Disk {
     fn prepare(&mut self, path: &Path) -> io::Result<()> {
+        oos_hal::system::check_data_write(path)?;
         super::check_target(path)?;
         super::check_target(&temporary(path))?;
         std::fs::create_dir_all(parent(path)?)
@@ -40,18 +41,21 @@ impl Files for Disk {
         Ok(text.into_boxed_str().into_string())
     }
     fn write(&mut self, path: &Path, text: &str) -> io::Result<()> {
+        oos_hal::system::check_data_write(path)?;
         std::fs::File::create(path)?.write_all(text.as_bytes())
     }
     fn sync_file(&mut self, path: &Path) -> io::Result<()> {
         std::fs::File::open(path)?.sync_all()
     }
     fn rename(&mut self, from: &Path, to: &Path) -> io::Result<()> {
+        oos_hal::system::check_data_write(to)?;
         std::fs::rename(from, to)
     }
     fn sync_dir(&mut self, path: &Path) -> io::Result<()> {
         std::fs::File::open(path)?.sync_all()
     }
     fn remove(&mut self, path: &Path) -> io::Result<()> {
+        oos_hal::system::check_data_write(path)?;
         match std::fs::remove_file(path) {
             Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
             other => other,
@@ -70,6 +74,11 @@ pub(crate) fn replace(fs: &mut impl Files, path: &Path, text: &str) -> io::Resul
 }
 
 pub(super) fn write(path: &Path, data: &[u8]) -> io::Result<()> {
+    oos_hal::system::check_data_write(path)?;
+    super::check_target(path)?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir)?;
+    }
     if path.starts_with("/oos") {
         replace_bytes(path, data)
     } else {

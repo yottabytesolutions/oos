@@ -27,6 +27,7 @@ pub(crate) fn run(args: &Args) {
 }
 
 fn prepare_data(args: &Args) -> Result<(), String> {
+    oos_hal::system::check_data_write(std::path::Path::new("/oos")).map_err(|error| error.to_string())?;
     if args.rest.get(1).is_some_and(|arg| arg == "clean-recovered") {
         let mounts = std::fs::read_to_string("/proc/mounts").map_err(|e| e.to_string())?;
         if !mounts.lines().any(|line| line.split_whitespace().nth(1) == Some("/oos")) {

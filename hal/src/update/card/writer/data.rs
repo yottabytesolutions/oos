@@ -198,9 +198,9 @@ impl Card {
         }
         let resumed_conversion = self.convert_data(&image, &before, &checked, changed != 0)?;
         let notice = if replay.is_some_and(|replay| replay.was_reset(&before, &checked)) {
-            Some("The data area was repaired. Recent changes may be lost")
+            Some("The data area was repaired. Recent changes may be lost because the journal was reset. Check your settings and restore missing files from backup.")
         } else if repaired && !resumed_conversion {
-            Some("The data area was repaired")
+            Some("The data area was repaired. Damaged entries may be missing. Check your saved files and look in lost+found for recovered copies.")
         } else {
             None
         };

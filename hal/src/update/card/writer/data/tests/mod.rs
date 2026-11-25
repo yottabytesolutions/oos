@@ -210,7 +210,7 @@ fn require_tools() {
 fn assert_repaired(fixture: &mut Fixture) {
     let (result, before, after) = fixture.run();
     assert_ne!(before, after);
-    assert_eq!(result.unwrap().unwrap(), "The data area was repaired");
+    assert_eq!(result.unwrap().unwrap(), "The data area was repaired. Damaged entries may be missing. Check your saved files and look in lost+found for recovered copies.");
     fs::write(&fixture.image.0, after).unwrap();
     assert_eq!(fixture.fsck("-fn"), 0);
 }
@@ -292,7 +292,7 @@ fn assert_repair_prefixes(fixture: &mut Fixture, journalled: bool) {
     assert_ne!(fixture.fsck("-p") & UNCORRECTED, 0);
 
     let (result, damaged, repaired) = fixture.run();
-    assert_eq!(result.unwrap().as_deref(), Some("The data area was repaired"));
+    assert_eq!(result.unwrap().as_deref(), Some("The data area was repaired. Damaged entries may be missing. Check your saved files and look in lost+found for recovered copies."));
     fs::write(&fixture.image.0, &repaired).unwrap();
     let name = fixture.recovered_name();
     let paths = ["/setups/keep", "/oos-ui.setup", &name];

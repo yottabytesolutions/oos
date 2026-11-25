@@ -66,7 +66,7 @@ pub fn prepare_jump() -> Jump {
         lines.push_str(s);
         lines.push('\n');
     };
-    log(&timestamp("before remount"));
+    log(&timestamp("before data shutdown"));
     let boot = std::fs::read_to_string("/proc/sys/kernel/random/boot_id").unwrap_or_default();
     log(&format!("boot_id={}", boot.trim()));
     warn(evidence::write(Path::new(evidence::DIR), "jump.log", lines.as_bytes(), evidence::TEXT_LIMIT));
@@ -74,7 +74,7 @@ pub fn prepare_jump() -> Jump {
 }
 
 impl Jump {
-    /// The caller has synced and attempted the read-only remount. Mark the jump immediately before the syscall.
+    /// Mark the jump before the final watchdog ping. Returns only on failure.
     pub fn start(self) -> String {
         super::watchdog::start(|| report(&timestamp("jump")))
     }

@@ -43,7 +43,9 @@ fi
 # 0d) experimental ADC clock (limits.conf adc.clock_hz): a start that did not reach the end leaves its mark, and the next
 #     one goes back to the stock clock by itself, so a clock that hangs the scope cannot keep it hanging
 if grep -q '^ *adc\.clock_hz' /oos/limits.conf 2>/dev/null; then
-	if [ -e /oos/clock-try ]; then
+	if [ -e /tmp/oos-data.closing ]; then
+		echo "oos: /oos is closed for shutdown; could not check the ADC clock trial marker" > /dev/kmsg
+	elif [ -e /oos/clock-try ]; then
 		if sync /oos/limits.conf && mv /oos/limits.conf /oos/limits.conf.failed && sync /oos; then
 			rm -f /oos/clock-try && sync /oos
 			echo "oos: the last start with adc.clock_hz did not finish, limits.conf set aside" > /dev/kmsg
@@ -131,7 +133,13 @@ if /bin/oos-board has-hardware; then
 		st() { printf "%s\t%s\t%s\t%s\n" "$(cut -d" " -f1 /proc/uptime)" "$1" "$2" "$3" >> $ST; }
 		/bin/oos-mount-rigol >> /tmp/oos-cold.log 2>&1
 		if /bin/oos-board bring-up $ST >> /tmp/oos-cold.log 2>&1; then
-			[ ! -e /oos/clock-try ] || { rm -f /oos/clock-try && sync /oos; }
+			if [ -e /oos/clock-try ]; then
+				if [ -e /tmp/oos-data.closing ]; then
+					echo "oos: /oos is closed for shutdown; ADC clock trial marker retained" > /dev/kmsg
+				else
+					rm -f /oos/clock-try && sync /oos
+				fi
+			fi
 			st end "" ""
 			echo "oos: acquisition hardware up" > /dev/kmsg
 		else

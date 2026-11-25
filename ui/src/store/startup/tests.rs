@@ -139,8 +139,8 @@ fn each_candidate_gets_a_full_stability_interval() {
 #[test]
 fn clean_power_off_persists_current_candidate() {
     let mut s = start(fs(), false).unwrap();
-    s.power_off("new".into(), Duration::from_secs(1)).unwrap();
-    assert_eq!(s.fs.text("/temporary/oos-ui.off").as_deref(), Some(""));
+    s.clean("new".into(), Duration::from_secs(1), true).unwrap();
+    assert_eq!(s.fs.text("/temporary/oos-ui.off"), None);
     let fs = s.fs.crash();
     assert_eq!(fs.text("/data/oos-ui.setup").as_deref(), Some("new"));
     assert_eq!(fs.text("/temporary/oos-ui.setup").as_deref(), Some("new"));
@@ -315,16 +315,16 @@ fn every_power_off_cut_can_retry_without_blessing_partial_files() {
         for boundary in 0..=13 {
             let mut s = start(fs(), false).unwrap();
             s.fs.cut = Some(s.fs.calls + boundary);
-            let result = s.power_off("new".into(), Duration::ZERO);
+            let result = s.clean("new".into(), Duration::ZERO, true);
             let disk = cut(&s.fs, namespace);
             if disk.text("/data/oos-ui.running").is_none() || result.is_ok() {
                 assert_eq!(disk.text("/data/oos-ui.setup").as_deref(), Some("new"));
                 assert_eq!(disk.text("/temporary/oos-ui.setup").as_deref(), Some("new"));
             }
             let mut retry = start(disk, false).unwrap();
-            retry.power_off("new".into(), Duration::ZERO).unwrap();
+            retry.clean("new".into(), Duration::ZERO, true).unwrap();
             assert_eq!(retry.fs.crash().text("/data/oos-ui.running"), None);
-            assert_eq!(retry.fs.text("/temporary/oos-ui.off").as_deref(), Some(""));
+            assert_eq!(retry.fs.text("/temporary/oos-ui.off"), None);
         }
     }
 }

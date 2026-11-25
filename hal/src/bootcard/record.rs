@@ -22,6 +22,7 @@ pub(super) fn read_bounded(path: &Path, limit: u64) -> Option<String> {
 
 /// Publish a complete record for the UI, including when detection yields an unknown status.
 pub fn write_state(path: &Path, status: Status) -> io::Result<()> {
+    crate::system::check_data_write(path)?;
     atomic_write(path, &encode(status), false)
 }
 

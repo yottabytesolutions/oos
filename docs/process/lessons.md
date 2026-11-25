@@ -108,7 +108,9 @@ pull request that fixes a mistake: what happened, then the rule.
   channel is full and check it before the coordinator blocks again.
 
 - `/bin/kill -KILL -<pgid>` from procps-ng 4.0.4 parses only the first digit of the group id. A group id starting
-  with 1 became `kill(-1)` and killed the CI runner. Put `--` before a negative process id.
+  with 1 became `kill(-1)` and killed the CI runner. Put `--` before a negative process id with procps-ng.
+  The image's BusyBox kill 1.37.0 rejects `--` after the signal. Under image ash use `kill -SIGNAL "-$group"`
+  and test cancellation with that shell.
 - macOS discarded blocked termination signals with an inherited ignore disposition. Block the signals before
   restoring their default dispositions and starting the CLI's workers.
 - Routing benchmark signals through the firmware HAL made every gate build compile the HAL. Keep the host signal

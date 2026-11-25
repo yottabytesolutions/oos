@@ -35,6 +35,7 @@ proc_start() (
 )
 unlock() { rmdir "$mine" "$lock" 2>/dev/null || :; }
 acquire() {
+    [ ! -e /tmp/oos-data.closing ] || { echo "oos-ui-exits: /oos is closed for shutdown" >&2; return 1; }
     started=$(proc_start "$$") || { echo 'oos-ui-exits: no process identity' >&2; return 1; }
     mine=$lock/$$.$started
     while :; do

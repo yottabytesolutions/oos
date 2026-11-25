@@ -224,9 +224,10 @@ Items marked "assumed" are design choices or guesses. Nothing here is verified o
 - Every 1 s read `/sys/class/thermal/thermal_zone0/temp` (CPU) and `thermal_zone1/temp` (GPU), m degC. Check the zone
   numbering under 6.12 with `type`.
 - When the FPGA is loaded, read register 0x1438 and convert as in 2.3 (FPGA die temperature and VCCINT).
-- Alarm logic of section 3: 3 consecutive hot samples -> warning in the UI + beeper tone; 11 consecutive -> orderly
-  shutdown and `FA 05 01`. Limits: 75 degC for the FPGA at a 1 s period; 90 degC for the SoC zones, because the kernel
-  already throttles at 70/85 degC. The limits are a design choice.
+- Three consecutive hot samples sound a warning. After eleven, the armed guard sends `FA 05 01` twice, then
+  starts a background sync if a frame was written. If the scope is still running after two seconds or both
+  writes fail, the guard logs the failure and posts a panel notice. The limits are 75 degC for the FPGA and
+  90 degC for the SoC zones at a 1 s period. The kernel already throttles at 70/85 degC.
 - No TMP421 / ADC128 handling (chips absent).
 - Optional diagnostics: SARADC channels 2/3 as "MGTAVTT" / "VCC_DDR" (needs `&saradc { status = "okay"; vref-supply }`
   in the OOS DT, which has it disabled; check for plausible values first).
@@ -246,7 +247,7 @@ Items marked "assumed" are design choices or guesses. Nothing here is verified o
   false). Which one means "power on when mains is applied" must be tested.
 - MCU firmware version: send `FA 06 BB 03 AF`, read the next frame from the MCU, version = data >> 4. Whether the reply
   arrives with cmd 6 is not known.
-- Over-temperature shutdown (8.2) uses the same power-off path.
+- Over-temperature shutdown sends the same MCU frame immediately. See section 8.2.
 
 ### 8.4 Beeper
 - Load `pwm-gpio`, export channel 0 of the beeper PWM chip, set period 500000 ns, duty_cycle 100000 ns, then toggle
@@ -268,5 +269,7 @@ Items marked "assumed" are design choices or guesses. Nothing here is verified o
   `Long`).
 - `oos-fpgad temp | beep | guard`; `status` also prints the XADC line. pwm-gpio.ko is in the dev image and loaded by rcS.
 - oos-ui (the front-panel UART owner): `FA 05 00` once at start; power key (0x1b) -> `FA 05 02` at once and a dialog
-  Power off / Restart / Cancel; Power off = LEDs off, `sync`, `FA 05 01` twice; Restart = `FA 05 03`. Built and
-  unit-tested, dialog rendered; the key press is not yet verified on hardware.
+  Power off / Restart / Cancel. Both power actions stop acquisition, turn off the LEDs and attempt bounded data
+  cleanup before sending the MCU frame. Power off sends `FA 05 01` twice. Restart sends `FA 05 03`. If the
+  scope stays up, the UI restores the data mount and relaunches with a notice. Recovery is host-tested and
+  awaits unit verification.

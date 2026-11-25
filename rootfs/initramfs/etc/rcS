@@ -76,6 +76,7 @@ echo "${name:-oos}" > /proc/sys/kernel/hostname
 /bin/oos-firewall >> /tmp/oos-net.log 2>&1
 (setsid sh -c '/bin/oos-firewall watch >> /tmp/oos-net.log 2>&1' < /dev/null > /dev/null 2>&1 &)
 # Resolve identity before the board probes Ethernet, so it becomes the permanent MAC.
+# oos-mac writes system.conf only here at boot, before the runtime writers start.
 if mac=$(/bin/oos-mac 2>> /tmp/oos-net.log) && /bin/oos-board ethernet "$mac" 2>> /tmp/oos-net.log; then
 	# `net.ipv6 = on`: stable SLAAC addresses and the services on IPv6 too (oos-net6, docs/network.md 8), before eth0 is up
 	[ "$(/bin/oos-conf net.ipv6)" = on ] && /bin/oos-net6 >> /tmp/oos-net.log 2>&1

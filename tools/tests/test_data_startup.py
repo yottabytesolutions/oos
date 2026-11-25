@@ -19,6 +19,7 @@ class DataStartup(unittest.TestCase):
         self.notice = self.root / "notice"
         self.kmsg = self.root / "kmsg"
         self.mount = self.root / "mount-attempted"
+        self.base = self.root / "base-attempted"
         self.kmsg.touch()
         (self.root / "area").touch()
         (self.root / "mounts").touch()
@@ -49,14 +50,21 @@ esac
 [ -z "$REPAIR_NOTICE" ] || printf '%s\n' "$REPAIR_NOTICE"
 exit "$REPAIR_EXIT"
 """)
-        self.stub("mount", 'printf "mounted\n" > "$MOUNT_ATTEMPT"\nexit "$MOUNT_EXIT"\n')
+        self.stub("mount", '''case "$2" in
+    tmpfs) printf 'base\n' > "$BASE_ATTEMPT"; exit "$BASE_EXIT" ;;
+    ext4) [ -f "$BASE_ATTEMPT" ] || exit 2 ;;
+esac
+printf 'mounted\n' > "$MOUNT_ATTEMPT"
+exit "$MOUNT_EXIT"
+''')
+        self.stub("umount", 'rm "$BASE_ATTEMPT"\n')
 
     def stub(self, name, body):
         path = self.root / name
         path.write_text("#!/bin/sh\n" + body)
         path.chmod(0o700)
 
-    def run_startup(self, repair_notice="", repair_exit=0, mount_exit=0, stock_confirmed=True):
+    def run_startup(self, repair_notice="", repair_exit=0, mount_exit=0, stock_confirmed=True, base_exit=0):
         env = {
             **os.environ,
             "PATH": f"{self.root}{os.pathsep}{os.environ['PATH']}",
@@ -65,6 +73,8 @@ exit "$REPAIR_EXIT"
             "REPAIR_EXIT": str(repair_exit),
             "MOUNT_EXIT": str(mount_exit),
             "MOUNT_ATTEMPT": str(self.mount),
+            "BASE_ATTEMPT": str(self.base),
+            "BASE_EXIT": str(base_exit),
         }
         return subprocess.run(["sh", str(self.script), str(int(stock_confirmed))], env=env,
                               capture_output=True, text=True)
@@ -72,6 +82,7 @@ exit "$REPAIR_EXIT"
     def test_repaired_data_mounts_and_reports_to_panel_and_kernel(self):
         result = self.run_startup(REPAIRED)
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.base.exists())
         self.assertTrue(self.mount.exists())
         self.assertEqual(self.notice.read_text().strip(), REPAIRED)
         self.assertIn(REPAIRED, self.kmsg.read_text())
@@ -82,10 +93,17 @@ exit "$REPAIR_EXIT"
         self.assertTrue(self.mount.exists())
         self.assertFalse(self.notice.exists())
 
+    def test_data_is_never_mounted_without_a_readonly_base(self):
+        result = self.run_startup(base_exit=1)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("could not protect the mount point", result.stdout)
+        self.assertFalse(self.mount.exists())
+
     def test_failed_repair_does_not_mount_and_explains_unavailable_data(self):
         result = self.run_startup(repair_exit=1)
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertFalse(self.mount.exists())
+        self.assertFalse(self.base.exists())
         message = self.notice.read_text().strip()
         self.assertIn("Saved settings and the calibration copy are unavailable", message)
         self.assertIn("Network identity is temporary for this start", message)
@@ -104,4 +122,5 @@ exit "$REPAIR_EXIT"
         result = self.run_startup(REPAIRED, mount_exit=1)
         self.assertEqual(result.returncode, 1, result.stderr)
         self.assertTrue(self.mount.exists())
+        self.assertFalse(self.base.exists())
         self.assertIn("The data area is unavailable", self.notice.read_text())

@@ -136,6 +136,8 @@ pull request that fixes a mistake: what happened, then the rule.
 
 ## Update state
 
+- A writer admitted before shutdown could reach the writable initramfs between unmount and restore. Keep a
+  read-only mount under the data area so mount transitions cannot expose writable storage.
 - An ordinary-start notice could replace the only record of a torn slot write. Persist slot ownership
   independently of the last event so the next verified install can reuse a slot with a damaged header.
 - A failed direct read-back opened a trial that blocked its own retry. Keep the direct retry available when a

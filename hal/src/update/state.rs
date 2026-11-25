@@ -7,6 +7,15 @@ use super::{
 };
 use std::path::Path;
 
+/// Publish the trial restart guard before requesting a reboot.
+pub fn write_restart_mark(path: &Path, build: &str) -> std::io::Result<()> {
+    crate::system::check_data_write(path)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    let bytes = format!("{}\n", build.trim());
+    crate::system::durable_replace(path, &path.with_extension("new"), bytes.as_bytes(), &options)
+}
+
 pub(super) fn write_slot(
     card: &mut Card,
     state_path: &Path,

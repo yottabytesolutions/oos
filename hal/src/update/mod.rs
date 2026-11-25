@@ -37,7 +37,7 @@ pub use card::Card;
 use card::{check_image, Region};
 pub use kexec::receive::kexec_clear;
 pub use reconcile::{leave, reconcile_recovery};
-pub use state::{confirm, confirm_running, confirm_with_sd_mode};
+pub use state::{confirm, confirm_running, confirm_with_sd_mode, write_restart_mark};
 use std::path::Path;
 
 /// Default place of the state file (OOS data partition).

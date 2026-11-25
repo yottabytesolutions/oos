@@ -51,7 +51,7 @@ for f in "$@"; do
 	esac
 done
 [ -n "$reason" ] || { echo "oos-crash-save: dmesg records without a panic or oops, pstore left as it is"; exit 0; }
-[ -n "${OOS_TEST:-}" ] || grep -q " $mnt " /proc/mounts || fail "$mnt not mounted"
+[ -n "${OOS_TEST:-}" ] || grep -Fq " $mnt ext4 " /proc/mounts || fail "$mnt not mounted"
 [ ! -e /tmp/oos-data.closing ] || fail "/oos is closed for shutdown"
 t=$(date -u -r "$1" +%Y%m%dT%H%M%SZ)
 sum=$(cat "$@" | md5sum | cut -c1-12)

@@ -164,7 +164,7 @@ fn need_data(a: &Args) {
         return;
     }
     if let Ok(m) = std::fs::read_to_string("/proc/mounts") {
-        if !m.lines().any(|l| l.split_whitespace().nth(1) == Some("/oos")) {
+        if !oos_hal::system::oos_mounted(&m) {
             die("/oos (OOS data partition) is not mounted: the update state lives there (oos-mount-data)");
         }
     }
@@ -497,7 +497,7 @@ fn restart_for_trial(a: &Args, p: &Path) {
         return;
     }
     let mark = restart_mark(p);
-    if let Err(e) = oos_hal::system::check_data_write(&mark).and_then(|()| kexec::write_restart_marker(&mark, &build)) {
+    if let Err(e) = update::write_restart_mark(&mark, &build) {
         notice(&messages::no_restart(&build, &format!("mark not written: {}", e), true));
         return;
     }

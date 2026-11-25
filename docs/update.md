@@ -25,9 +25,9 @@ Boot card mode is device-local: `sd.mode` in `/oos/system.conf` defaults to `hs`
 DTB selection; the signed package stays unchanged while the selected image's loader id and local update hash
 are recomputed. Kexec stages the selected tree too. **System > Boot card mode** shows the requested
 mode and the timing negotiated by this boot. Choose **Restage** to confirm. The updater keeps an HS rollback image
-and uses the same path as `oos-update sd-mode [hs|sdr104] [--execute]`. An update in progress, pending handoff,
+   and uses the same path as `oos-update sd-mode [hs|sdr104] [--execute]`. An update in progress, pending handoff,
 or open trial blocks a change. A successful restage takes effect on the next OOS boot. See
-[boot mode](boot.md#device-boot-card-mode) for the pre-rcS safety boundary. The new paths still need a unit run.
+[boot mode](boot.md#device-boot-card-mode) for the pre-rcS safety boundary. Manual restaging was host-tested only.
 
 ## What it protects against
 
@@ -312,7 +312,9 @@ startup journal replay. An already admitted update or rollback holds a writable 
 read-only remount leaves the transaction able to finish. A new request gets a shutdown error and a pending trial
 remains eligible for rollback on the next boot.
 
-Closing write admission makes OOS writers report an explicit error. The helper runs `sync -f /oos` with the image's
+Closing write admission makes OOS writers report an explicit error and pauses USB automounts. The helper tries to
+unmount `/mnt/usb` within 0.5 s of the shared budget before starting data cleanup. A failed or timed-out USB
+unmount is logged and data cleanup still proceeds. The helper runs `sync -f /oos` with the image's
 BusyBox, then remounts the area read-only before unmounting. Sync still runs with a deadline if admission is already
 closed or the helper cannot start. The trial restart guard is synced before and after its rename. A busy writer
 or an I/O error can prevent the read-only transition. The helper then leaves the mount in place and startup can
@@ -324,9 +326,10 @@ The kernel may finish an in-flight operation after the timeout.
 
 If a reboot or panel command leaves OOS running, recovery has a separate 2 s budget to wait for any unfinished
 shutdown worker, remove the shutdown cover and restore the previous writable mount. Write admission reopens after
-verification. If recovery fails, the UI reports that saving is unavailable and offers a restart to retry. The
-pending DHO924S unit round covers restart, panel power-off, staged install with trial restart, restart with a busy
-data area, power pull during cleanup and during trial restart, and shutdown with a USB stick mounted.
+verification. If recovery fails, the UI reports that saving is unavailable and offers a restart to retry. On a
+DHO924S on 2026-11-25, restart unmounted the data area and the next start mounted it without replay or a notice.
+A power cut just after a restart command found the area clean. USB cleanup, a cut inside unmount and a busy data
+area were host-tested only.
 
 ### Data area after an unclean shutdown
 

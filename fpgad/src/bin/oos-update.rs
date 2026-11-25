@@ -487,14 +487,12 @@ fn restart_for_trial(a: &Args, p: &Path) {
     let magic = a.open_card(false).unwrap_or_else(|e| die(&e)).boot_magic().ok();
     let st = State::load(p).unwrap_or_default();
     let on_trial = st.trial.is_some() && st.current.as_ref().is_some_and(|c| c.build.trim() == build.trim());
-    if let Err(e) =
-        may_restart(magic, on_trial, std::fs::read_to_string(update::restart_mark(p)).ok().as_deref(), &build)
-    {
+    let mark = update::read_restart_mark(p).ok().flatten();
+    if let Err(e) = may_restart(magic, on_trial, mark.as_deref(), &build) {
         notice(&messages::no_restart(&build, &e, magic == Some(*b"OOSK") && on_trial));
         return;
     }
-    let mark = update::restart_mark(p);
-    if let Err(e) = update::write_restart_mark(&mark, &build) {
+    if let Err(e) = update::write_restart_mark(p, &build) {
         notice(&messages::no_restart(&build, &format!("mark not written: {}", e), true));
         return;
     }
@@ -572,11 +570,6 @@ mod tests {
         assert!(may_restart(None, true, None, b).is_err());
         assert!(may_restart(Some(*b"OOSK"), false, None, b).unwrap_err().contains("trial"));
         assert!(may_restart(Some(*b"OOSK"), true, Some("20261114-120000\n"), b).unwrap_err().contains("already"));
-    }
-
-    #[test]
-    fn the_restart_mark_sits_beside_the_state() {
-        assert_eq!(update::restart_mark(Path::new("/oos/update/state")), Path::new("/oos/update/kexec-restart"));
     }
 
     /// Counts write calls; fails every one with `fail`, or none.

@@ -29,8 +29,6 @@ mod evidence;
 #[cfg(target_os = "linux")]
 mod legacy;
 pub(super) mod receive;
-mod restart_marker;
-pub use restart_marker::write_restart_marker;
 mod stage;
 #[cfg(any(target_os = "linux", test))]
 pub mod undo;

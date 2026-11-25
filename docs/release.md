@@ -4,6 +4,17 @@ GitHub-hosted runners test the packaging tools with temporary keys and build the
 The draft release carries the image, its build ID and model list, the image contents manifest,
 `SHA256SUMS.unsigned` and the CI attestations. The maintainer signs the release on the offline machine.
 
+## Version bump
+
+- [ ] From the repository root, run `cargo xtask bump X.Y.Z` with the next release version. It updates
+  the workspace crate manifests, both lockfiles, the version-bearing golden pictures and RGB hashes,
+  and the changelog. It promotes an existing Unreleased heading and keeps its notes. Add the release
+  notes below the new heading if it was empty.
+- [ ] Review the bump diff and run `cargo xtask bump --check`. The fast gate runs the same check.
+  If Cargo rejects a stale workspace lockfile before xtask starts, run the previously built
+  `target/debug/xtask bump --check` for the full mismatch list. Use `--allow-same` to refresh the
+  current version. Downgrades are refused.
+
 ## Inputs
 
 - [ ] Take the unsigned assets and CI attestations from the draft for the tag being released. Verify the

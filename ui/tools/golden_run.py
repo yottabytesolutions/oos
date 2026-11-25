@@ -74,6 +74,14 @@ def load_inventory(path):
     return rows
 
 
+def release_versions(run):
+    prefix = 'release-version '
+    return {shot: version for version, shot in (
+        line[len(prefix):].split(' ', 1) for line in (run / 'stdout.log').read_text().splitlines()
+        if line.startswith(prefix)
+    )}
+
+
 def capture_case(row, args, out, candidate):
     name, kind, script, shots, provenance = row
     shots = shots.split(',')
@@ -82,6 +90,9 @@ def capture_case(row, args, out, candidate):
     for repeat in ('one', 'two'):
         child(args.binary, script, kind, case / repeat)
         require_captures(case / repeat, shots)
+    versions = release_versions(case / 'one')
+    if versions != release_versions(case / 'two') or not versions.keys() <= set(shots):
+        raise ValueError(f'nondeterministic or unknown release capture: {case}')
     result, failures = [], []
     routes, route, decode = {}, 'Demo records', 'Demo records'
     for line in (case / 'one/stdout.log').read_text().splitlines():
@@ -116,6 +127,8 @@ def capture_case(row, args, out, candidate):
                            width=a[0], height=a[1], regions=regions, settings=settings,
                            script_sha256=hashlib.sha256(script.read_bytes()).hexdigest(), provenance=provenance,
                            source_route=routes[shot][0], decode_route=routes[shot][1]))
+        if shot in versions:
+            result[-1]['release_version'] = versions[shot]
     return result, failures
 
 
@@ -233,8 +246,9 @@ def main():
         # Reference hashes describe the baseline; ordinary comparisons require exact decoded RGB bytes.
         for new in captures:
             old = reference_capture(previous[new['path']])
-            for key in ('path', 'regions', 'settings', 'script_sha256', 'provenance', 'source_route', 'decode_route'):
-                if old[key] != json.loads(json.dumps(new[key])):
+            for key in ('path', 'regions', 'settings', 'script_sha256', 'provenance', 'source_route', 'decode_route',
+                        'release_version'):
+                if old.get(key) != json.loads(json.dumps(new.get(key))):
                     raise ValueError(f'capture contract changed: {new["path"]} {key}; explicit update required')
     print(f'elapsed_seconds={elapsed:.3f} profile={args.profile} subset={args.subset}')
     print(f'PASS: {len(rows)} cases, {2 * len(rows)} fresh processes, {2 * len(captures)} exact-repeat captures; {out}')

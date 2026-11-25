@@ -17,6 +17,36 @@ class GoldenTests(unittest.TestCase):
     def image(self, n=1000, value=40):
         return n, 1, bytes([value] * n * 3)
 
+    def test_release_check_names_bad_version_hash_and_missing_picture(self):
+        from golden_version import check, references
+        with tempfile.TemporaryDirectory() as d, patch('golden_version.REFERENCE', Path(d)):
+            root = Path(d)
+            write_png(root / 'about.png', self.image())
+            captures = [
+                dict(path='about.png', release_version='0.2.0', rgb_sha256='wrong'),
+                dict(path='missing.png', release_version='0.2.1'),
+                dict(path='ordinary.png', rgb_sha256='outside the release set'),
+            ]
+            (root / 'manifest.txt').write_text(json.dumps(dict(captures=captures)))
+            _, versions = references()
+            self.assertEqual(set(versions), {'about.png', 'missing.png'})
+            errors = check(versions, '0.2.1')
+            self.assertEqual(len(errors), 3, errors)
+            self.assertIn('about.png: manifest.txt records release 0.2.0', errors[0])
+            self.assertIn('about.png: decoded RGB differs', errors[1])
+            self.assertIn('missing.png:', errors[2])
+
+    def test_release_capture_selection_preserves_frame_steps(self):
+        from golden_version import select
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            script = root / 'script.txt'
+            script.write_text('frames 2\nshot ordinary.png\ndo About OOS\nshot renamed.png\n')
+            row = ('demo/size/menu', 'demo', str(script), 'ordinary.png,renamed.png', 'fixture')
+            selected = select(row, {'demo/size/menu/renamed.png': {}}, root / 'stage')
+            self.assertEqual(selected[3], 'renamed.png')
+            self.assertEqual(Path(selected[2]).read_text(), 'frames 2\nframes 1\ndo About OOS\nshot renamed.png\n')
+
     def test_reference_demo_labels_map_to_current_metadata(self):
         old = dict(path='demo/default.png', settings='settings dots=Auto Demo acq.pipeline=batch',
                    source_route='Demo records; acq.pipeline=batch', rgb_sha256='unchanged')

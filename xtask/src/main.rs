@@ -12,6 +12,7 @@ mod agent_rules;
 mod arch;
 mod attrs;
 mod base;
+mod bump;
 mod check;
 mod clippy;
 mod coverage;
@@ -49,7 +50,7 @@ mod workspace;
 use std::process::ExitCode;
 
 const USAGE: &str =
-    "usage: cargo xtask doctor [--gpu] [--sim] [--image] | cargo xtask check [--fast] [--no-coverage] [--list] [--image] | cargo xtask step <id>... | cargo xtask ratchet [--coverage] [--move] [--init] | cargo xtask elf-static <file>... | cargo xtask loc [--json] [--compare <git-ref>] | cargo xtask plan-matrix [--update] | cargo xtask unit-bench --help | cargo xtask unit-matrix --help | cargo xtask public-bench --help";
+    "usage: cargo xtask doctor [--gpu] [--sim] [--image] | cargo xtask check [--fast] [--no-coverage] [--list] [--image] | cargo xtask step <id>... | cargo xtask ratchet [--coverage] [--move] [--init] | cargo xtask elf-static <file>... | cargo xtask loc [--json] [--compare <git-ref>] | cargo xtask plan-matrix [--update] | cargo xtask unit-bench --help | cargo xtask unit-matrix --help | cargo xtask public-bench --help | cargo xtask bump --help";
 
 /// The command line: a command and its flags.
 fn parse(args: &[String]) -> Result<(&str, Vec<&str>), String> {
@@ -58,7 +59,7 @@ fn parse(args: &[String]) -> Result<(&str, Vec<&str>), String> {
     let allowed: &[&str] = match cmd.as_str() {
         "step" | "elf-static" if flags.is_empty() => return Err(USAGE.into()),
         "step" => return check::known(&flags).map(|()| (cmd.as_str(), flags)),
-        "elf-static" | "public-bench" | "unit-bench" | "unit-matrix" => return Ok((cmd.as_str(), flags)),
+        "elf-static" | "bump" | "public-bench" | "unit-bench" | "unit-matrix" => return Ok((cmd.as_str(), flags)),
         "loc" => return loc::Options::parse(&flags).map(|_| (cmd.as_str(), flags)),
         "doctor" => &["--gpu", "--sim", "--image"],
         "check" => &["--fast", "--no-coverage", "--list", "--image"],
@@ -93,6 +94,7 @@ fn main() -> ExitCode {
         }
         "step" => check::steps(&root, &flags),
         "elf-static" => elf::run(&flags),
+        "bump" => return bump::run(&root, &flags),
         "loc" => loc::run(&root, &flags),
         "plan-matrix" => plan_matrix::run(&root, flags.contains(&"--update")),
         "public-bench" => return public_bench::run(&flags),

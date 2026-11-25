@@ -153,20 +153,19 @@ which are never changed.
 
 ## Updates
 
-Take `oos-<version>.oosupd` from the [latest release](https://github.com/yottabytesolutions/oos/releases/latest), or
-build a package yourself (`target/image/oos-dev.oosupd`), then install it on the running scope:
+Take the project-signed update package from the [latest release](https://github.com/yottabytesolutions/oos/releases/latest)
+and verify it against the release's `SHA256SUMS`. This example uses `oos-v0.2.1.oosupd`. Substitute the package
+filename and scope address for your install. For a local build, use `target/image/oos-dev.oosupd`.
 
 ```sh
-curl --max-time 300 --data-binary @oos-<version>.oosupd http://<scope>:8080/update
+curl --fail-with-body --max-time 300 --data-binary @oos-v0.2.1.oosupd 'http://<scope-ip>:8080/update'
 ```
 
-or open `http://<scope>:8080/update` in a browser. The scope restarts into the new build by kexec before anything is
-written, and the new build installs itself from there; if its kernel hangs, a power-cycle starts the previous build
-again. After the install, power-cycle: that start is the trial (coming from 0.1.0, which has no kexec start, too).
-From 0.1.6 or older go to 0.1.7 first: 0.1.8 and later bring another device tree (the GPU and the video encoder on),
-and only 0.1.7 and later start such an image by kexec with its own tree; 0.1.6 refuses it.
-The new build runs on trial. If it crashes in a loop or never becomes stable, the previous image is written back. System > Update shows the state and
-System > Roll back update returns to the previous image. Details: [docs/update.md](https://github.com/yottabytesolutions/oos/blob/main/docs/update.md).
+You can also upload the package at `http://<scope-ip>:8080/update` in a browser. With a 0.2.1 release update,
+the scope starts the new image by kexec, installs it, then restarts automatically into the trial. Wait for
+confirmation in **System > Update**. If the trial fails, the updater restores the previous image. A direct
+install without kexec requires a power-cycle to start the trial. See [Signed updates with rollback](https://github.com/yottabytesolutions/oos/blob/main/docs/update.md)
+for the update sequence, and [[Switching between OOS versions]] when coming from upstream.
 
 ## Network
 

@@ -14,11 +14,21 @@ versus 30-34. The accepted host cost was +685 production LOC, +2.86% ARM binary 
 
 ## Decision
 
+The [IO layer design](../architecture/io.md) is the detailed target for #222 under #220.
+It audits 0.2.1 and specifies the replacement of the M15 ports, credits, reservations, parked replies and router.
+Keep one frame-owned SCPI interpreter. Use one task per connection, one bounded frame mpsc and one oneshot
+reply per request, with a separate typed oneshot for preflight. Bound response windows and retained ownership
+with semaphores. Use tokio send deadlines, one CancellationToken tree and the existing frame wake.
+The synchronous facade keeps runtime types private to netio. Frame intake drains without awaiting.
+The design owns the detailed admission rules, allocation and protocol bounds, cleanup lifetimes, HTTP upload
+isolation, VXI-11 UDP, deletions and boundary acceptance tests.
+
 Use tokio for network IO: raw SCPI, VXI-11, HiSLIP, HTTP, NTP, update checks. USB bulk or WLAN control moves
 qualify when they remove a blocking call from the frame thread or remove a dedicated thread. Use one current-thread IO
 runtime in netio. Clean ports take priority over executor choice. Tokio types never cross the port; synchronous owned
-values and bounded channels do. The frame thread never awaits or waits on sockets; it drains its port and is woken by
-eventfd. Send timers close after 2 seconds without progress or 30 seconds total.
+values and bounded channels do. The frame thread drains its port without awaiting or waiting on sockets.
+Keep the pollable frame wake, currently a nonblocking Unix datagram pair. Send timers close after 2 seconds
+without progress or 30 seconds total.
 
 Synchronous exceptions are:
 
@@ -41,7 +51,8 @@ Synchronous exceptions are:
   in the application. This is a source assessment for issue #205, not yet verified on hardware.
 - GPU-helper shutdown: `std::net::Shutdown` selects a half-close of the existing Unix socket; no IP socket IO.
 
-USB/WLAN moves must demonstrate the criterion above. Other synchronous IO exceptions require a reason in this record.
+WLAN #219 is redone as the device task in the design after the coherent IO replacement is accepted.
+USB bulk stays synchronous for the reason above. Other synchronous IO exceptions require a reason in this record.
 
 Check: `architecture` confines tokio to netio and std::net to netio plus the named synchronous exceptions,
 including imports through aliases and re-exports. Pure address values use core::net. Transport fixtures cover
@@ -57,3 +68,7 @@ the CPU-bound frame thread gains latency and no useful waiting concurrency.
 
 Raw SCPI, VXI-11, HiSLIP and HTTP/MCP use the netio runtime today. mDNS uses a crate-owned daemon behind netio.
 NTP, update checks and device-stream moves meeting the criterion above remain targets.
+The [implementation plan](../architecture/io.md#implementation-and-acceptance) calls for one PR with
+raw-first development, all transport cutovers, final deletion and the production-LOC check. Streaming windows
+and bounded source retention replace reservation growth in that target. Unit acceptance and dependency
+approval precede rollout.

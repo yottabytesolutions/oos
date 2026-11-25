@@ -17,8 +17,8 @@ tools to use and what to watch out for: [docs/sdcard-backup.md](https://github.c
   lacks that target and `rust-lld`. Hosts: macOS on Apple silicon, Linux on arm64 or x86-64. On Linux, run the scripts
   as yourself, not with `sudo`: put yourself in the `docker` group (`sudo usermod -aG docker $USER`, then log in again).
   On x86-64 the kernel is cross-compiled; the image's busybox, wpa_supplicant and e2fsck come from arm64 containers,
-  which need QEMU once: `docker run --privileged --rm tonistiigi/binfmt --install arm64`. The workflow
-  `.github/workflows/image.yml` builds it all on both Linux hosts. Step by step: [Building on Linux](Building-OOS#building-on-linux).
+  which need QEMU once: `docker run --privileged --rm tonistiigi/binfmt --install arm64`. See
+  [Building on Linux](Building-OOS#building-on-linux).
 
 The whole process takes about an hour, mostly for copying the cards.
 
@@ -68,8 +68,9 @@ With a file from a release, skip this step. Otherwise build the kernel and the i
 
 ## Install OOS on the second card
 
-Put the second card in the reader. Unmount it, then do a dry run, which only checks the card and prints the plan. With a
-file from a release, write `--image oos-<version>.img` instead:
+Put the second card in the reader. Unmount it, then do a dry run to check the card and print the plan. With a
+release image, verify it against `SHA256SUMS` and substitute its path for `target/image/oos-dev.img` in both
+commands. The 0.2.1 release image is `oos-v0.2.1.img`.
 
 ```sh
 diskutil unmountDisk /dev/diskM

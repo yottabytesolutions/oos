@@ -8,6 +8,17 @@ For the USB install from stock, download both the GEL and `SHA256SUMS` from that
 | `oos-<version>.oosupd` | [Update a running OOS installation](https://github.com/yottabytesolutions/oos/blob/main/docs/install.md#update-a-running-oos-installation) |
 | `SHA256SUMS` | Check the files you downloaded from this release |
 
+The [0.2.1 release](https://github.com/yottabytesolutions/oos/releases/tag/v0.2.1) contains these downloads.
+
+| 0.2.1 file | Size in bytes |
+|---|---:|
+| `DHO800_DHO900_OOS_Install.GEL` | 28,826,524 |
+| `oos-v0.2.1.img` | 44,857,344 |
+| `oos-v0.2.1.oosupd` | 44,857,872 |
+| `oos-v0.2.1-bridge-for-upstream-verify-with-SHA256SUMS.oosupd` | 44,857,783 |
+
+Use the bridge only when [[switching from upstream OOS|Switching between OOS versions]].
+
 ## Verify the download
 
 1. Open a terminal in the download folder. Run the command for your computer. Replace the filename if you

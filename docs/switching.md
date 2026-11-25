@@ -31,8 +31,10 @@ Install upstream OOS from stock with its GEL.
 
 ## Upstream OOS to this fork
 
-1. Get the labelled bridge package for this fork. It is signed with upstream's community key so that upstream's
-   update page accepts it. Verify it against this release's `SHA256SUMS`.
+1. Get the labelled bridge package for this fork. For 0.2.1 it is
+   `oos-v0.2.1-bridge-for-upstream-verify-with-SHA256SUMS.oosupd` (44,857,783 bytes). It is signed with
+   upstream's community key so that upstream's update page accepts it. Verify it against the same release's
+   `SHA256SUMS`.
 2. Upload the bridge through upstream's update page at `http://<scope-ip>:8080/update`. To use `curl`, send the
    package as the raw body of `POST /update`. The upload limit is 73,400,320 bytes. Use the scope's IP address.
    The upstream code returns HTTP 403 for a fully qualified host name outside `.local`.
@@ -43,7 +45,7 @@ Install upstream OOS from stock with its GEL.
      --data-binary @BRIDGE.oosupd 'http://<scope-ip>:8080/update'
    ```
 
-   Substitute the bridge filename and scope IP address. The unit answered HTTP 200 with this text.
+   Substitute the bridge filename and scope IP address. The 2026-11-24 candidate run answered HTTP 200 with this text.
 
    ```text
    signature ok, build 20261124-200342: the scope restarts into it by kexec and installs it from there
@@ -78,6 +80,7 @@ Every confirmed start selects OOS again. An unconfirmed ordinary start leaves st
 ## Calibration and card mode
 
 Skip self-calibration under the other system to preserve the existing calibration copy.
-After a GEL or bridge install, the unit negotiated High Speed (HS) on a warm restart and showed
-`SD card is in slow mode.` The card stays in HS until SDR104 is selected again. A cold start or a restage
-restored SDR104 on the unit. See [Device boot card mode](boot.md#device-boot-card-mode) for the restage procedure.
+The release GEL writes the default High Speed (HS) boot image when it replaces `recovery`. During an SDR104
+trial, the card can negotiate HS on a warm restart and show `SD card is in slow mode.` A cold start restored
+SDR104 on the unit when SDR104 was already selected. If the updater reports a fallback to HS, see
+[Device boot card mode](boot.md#device-boot-card-mode) for the restage procedure.

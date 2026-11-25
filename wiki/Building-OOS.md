@@ -3,7 +3,7 @@ and Docker: see [You will need](Install-on-a-second-card#you-will-need).
 
 ## Build the kernel
 
-Download `linux-6.12.115-base.tar.xz` from the [releases](https://github.com/yottabytesolutions/oos/releases) into `kernel/src/`
+Download `linux-6.12.115-base.tar.xz` from the [kernel-base-6.12.115 prerelease](https://github.com/yottabytesolutions/oos/releases/tag/kernel-base-6.12.115) into `kernel/src/`
 ([kernel/README.md](https://github.com/yottabytesolutions/oos/blob/main/kernel/README.md)), then:
 
 ```sh
@@ -62,13 +62,13 @@ docker run --privileged --rm tonistiigi/binfmt --install arm64
 git clone https://github.com/yottabytesolutions/oos.git && cd oos
 mkdir -p kernel/src
 curl -fL -o kernel/src/linux-6.12.115-base.tar.xz \
-  https://github.com/yottabytesolutions/oos/releases/latest/download/linux-6.12.115-base.tar.xz
+  https://github.com/yottabytesolutions/oos/releases/download/kernel-base-6.12.115/linux-6.12.115-base.tar.xz
 kernel/build-base.sh
 boot/build-dev-image.sh
 ```
 
 The scripts say what is missing before they start: Docker not reachable, no rustup or no target, no arm64 containers.
 On x86-64 the first build takes longer than on arm64, mostly for wpa_supplicant and e2fsck under QEMU; they are built
-once. A finished build leaves the same files as on macOS. The workflow `.github/workflows/image.yml` builds on arm64
-and on x86-64 for every release and compares the kernel, the DTB and the files inside the image of the two. CI publishes unsigned images; sign and package them offline with the project release key. To install them on a second card from Linux, see
-[[Install on a second card]], with `/dev/sdX` for the card.
+once. The scripts use the same output paths as on macOS. The release workflow builds the unsigned image on an
+arm64 runner. The maintainer signs and packages it offline with the project release key. To install an image on a
+second card from Linux, see [[Install on a second card]], with `/dev/sdX` for the card.

@@ -55,8 +55,9 @@ on the DHO924S on 2026-11-24. If you are in one-shot mode, select OOS for the ne
 To select SDR104 for an installed OOS image, use the OOS shell.
 See [SSH setup](https://github.com/yottabytesolutions/oos/blob/main/docs/network.md#7-ssh).
 
-1. Check `oos-update status`. Restaging requires a tracked, confirmed image. If the GEL install left it
-   untracked, install a newer signed `.oosupd` and wait for confirmation.
+1. Check `oos-update status`. Restaging requires a tracked, confirmed image. Since 0.2.1, a GEL reinstall of
+   the same tracked build keeps its tracking and rollback entry. If tracking is absent after a first install or
+   a change of build via GEL, install a newer signed `.oosupd` and wait for confirmation.
 2. Set `sd.mode = sdr104` in `/oos/system.conf`.
 3. Run `oos-update sd-mode` to preview the change, then `oos-update sd-mode --execute` to stage it.
    Power-cycle to try the new mode.

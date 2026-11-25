@@ -160,7 +160,7 @@ networks, see [docs/wlan.md](https://github.com/yottabytesolutions/oos/blob/main
 | Logic analyser with a PLA2216: lines, pulse widths, edge, pulse, pattern, duration and protocol trigger, UART, SPI and I2C on the lines, roll, scan, whole deep records, CSV | run on a DHO924S, three lines (D0 to D2) driven; thresholds have no effect here, under stock neither |
 | Generator modulation (AM, FM, PM), deep memory, limits, web, MCP, VXI-11 | run on a DHO924S |
 | HDMI output | run on a DHO924S |
-| Automatic rollback of a bad update | tests on the host only |
+| Automatic rollback of a bad update | run on a DHO924S on 2026-11-24 after a failed bridge trial with the release candidate |
 | USB install without opening the scope | run on a DHO924S with a modified stock system: dry run, first install, run again |
 | Generator noise, system info, bandwidth test | tests on the host only |
 | Bode with a free-running sweep | tests on the host only (synthetic sweeps); the scan path for sweeps above about 0.9 s is not yet tried on a unit |

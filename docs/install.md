@@ -45,6 +45,8 @@ The stock USB route has yet to be verified with an unmodified stock application.
 If the card already holds the same or a newer OOS build, use an empty `oos-reinstall.txt` next to the GEL to
 install the GEL's build. Without it, the installer keeps the build on the card and selects it for the next power-on.
 If the image is already byte-for-byte identical, the log says `recovery already holds this image`.
+As of OOS 0.2.1, reinstalling the same tracked build keeps its rollback entry, including when the GEL restores
+the default High Speed device tree over the SDR104 variant.
 
 ### Over ADB
 
@@ -60,8 +62,9 @@ The ADB route ran on a DHO924S with modified stock on 2026-11-07.
 2. Expect the card to run in High Speed (HS) after a GEL install. If an image requests SDR104 but the card
    negotiates HS, OOS shows “SD card is in slow mode”. A full power-off followed by a cold start restored SDR104
    on the test unit.
-3. To select SDR104, use the OOS shell. Check `oos-update status` for a tracked, confirmed image. If the GEL
-   install left it untracked, install a newer signed `.oosupd` and wait for confirmation.
+3. To select SDR104, use the OOS shell. Check `oos-update status` for a tracked, confirmed image. If tracking
+   is absent after a first install or a change of build via GEL, install a newer signed `.oosupd` and wait for
+   confirmation.
 4. Set `sd.mode = sdr104` in `/oos/system.conf`. Run `oos-update sd-mode` to preview the change, then
    `oos-update sd-mode --execute` to stage it. Power-cycle to try the new mode. See [SSH setup](network.md#7-ssh),
    [SD mode and trial behavior](update.md) and [boot card mode](boot.md#device-boot-card-mode).

@@ -1,5 +1,5 @@
 Switch between this fork and [upstream OOS](https://github.com/dekajoule/oos).
-Both directions were tested with upstream OOS 0.1.15 on a DHO924S on 2026-11-24.
+Both directions were tested on a DHO924S on 2026-11-24 with upstream OOS 0.1.15 and this fork's release candidate.
 
 ## This fork to upstream OOS
 
@@ -23,8 +23,10 @@ Use stock and upstream's GEL to switch.
 
 ## Upstream OOS to this fork
 
-1. Download this fork's labelled bridge package. It is signed with upstream's community key so that upstream's
-   update page accepts it. Verify it against this release's `SHA256SUMS`.
+1. Download this fork's labelled bridge package. For 0.2.1 it is
+   `oos-v0.2.1-bridge-for-upstream-verify-with-SHA256SUMS.oosupd` (44,857,783 bytes). It is signed with
+   upstream's community key so that upstream's update page accepts it. Verify it against the same release's
+   `SHA256SUMS`.
 2. Upload the bridge at `http://<scope-ip>:8080/update` in a browser or from a terminal with `curl`.
    Use the scope's IP address. A fully qualified host name outside `.local` gets HTTP 403, according to the
    upstream code. The unit upload used `curl` and the IP address. The upload limit is 73,400,320 bytes.
@@ -36,7 +38,7 @@ Use stock and upstream's GEL to switch.
      --data-binary @BRIDGE.oosupd 'http://<scope-ip>:8080/update'
    ```
 
-   The upload on the unit returned HTTP 200 with this text.
+   The candidate upload on the unit returned HTTP 200 with this text.
 
    ```text
    signature ok, build 20261124-200342: the scope restarts into it by kexec and installs it from there
@@ -60,7 +62,9 @@ rolled back from 20261124-200342 to untracked-015ca17b3e8a: oos-ui crashed 3 tim
 ## After switching
 
 Skip self-calibration under the other system to preserve the existing calibration copy.
-The card can come up in High Speed (HS) after a switch and show `SD card is in slow mode.`
-It stays in HS until SDR104 is selected again. A cold start or a restage restored SDR104 on the unit.
+The release GEL writes the default High Speed (HS) boot image when it replaces `recovery`. During an SDR104
+trial, the card can negotiate HS on a warm restart and show `SD card is in slow mode.` A cold start restored
+SDR104 on the unit when SDR104 was already selected. For a reported fallback to HS, see
+[SDR104 restaging](Troubleshooting#an-update-did-not-finish-after-a-power-cut).
 
 To power on into stock from either version, use [[Going back to stock]].

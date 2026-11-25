@@ -33,8 +33,7 @@ fn once(path: &Path, record: impl FnOnce() -> io::Result<()>) -> io::Result<()> 
 }
 
 fn record(path: &Path) -> io::Result<()> {
-    let mounted = std::fs::read_to_string("/proc/mounts")
-        .is_ok_and(|text| text.lines().any(|line| line.split_whitespace().nth(1) == Some("/oos")));
+    let mounted = fs::read_to_string("/proc/mounts").is_ok_and(|text| oos_hal::system::oos_mounted(&text));
     let history_path = mounted.then(|| Path::new(bootcard::HISTORY_PATH));
     let build = update::running_build();
     let kexec = kexec::flags(&kexec::running_cmdline()).is_some();

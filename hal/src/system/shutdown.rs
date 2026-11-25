@@ -6,6 +6,8 @@ use std::io;
 use std::process::Output;
 #[cfg(target_os = "linux")]
 use std::process::{Command, Stdio};
+#[cfg(any(target_os = "linux", test))]
+use std::time::Duration;
 
 /// The mount to recover if the power or restart request returns.
 #[cfg(target_os = "linux")]
@@ -18,7 +20,26 @@ pub struct DataShutdown {
 impl DataShutdown {
     /// Close write admission and attempt to unmount after UI teardown.
     pub fn prepare() -> Self {
-        let result = helper(&["ui-drained"]);
+        let result = prepare_helper(
+            || helper(&["ui-drained"]),
+            || {
+                if let Err(error) = bounded_sync(Duration::from_secs(2), || {
+                    let status = Command::new("/bin/sync")
+                        .args(["-f", "/oos"])
+                        .stdin(Stdio::null())
+                        .stdout(Stdio::null())
+                        .stderr(Stdio::null())
+                        .status()?;
+                    if status.success() {
+                        Ok(())
+                    } else {
+                        Err(io::Error::other(status.to_string()))
+                    }
+                }) {
+                    log(&format!("fallback sync of /oos failed: {error}"));
+                }
+            },
+        );
         if let Err(error) = helper_status(result.as_ref()) {
             log(&format!("data cleanup failed: {error}; continuing shutdown"));
         }
@@ -43,6 +64,28 @@ impl DataShutdown {
         });
         report_restore(failure, result, |message| write_notice("/tmp/oos-data.notice", message))
     }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn prepare_helper(run: impl FnOnce() -> io::Result<Output>, sync: impl FnOnce()) -> io::Result<Output> {
+    let result = run();
+    if result.is_err() {
+        sync();
+    }
+    result
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn bounded_sync(seconds: Duration, sync: impl FnOnce() -> io::Result<()> + Send + 'static) -> io::Result<()> {
+    let (done, result) = std::sync::mpsc::channel();
+    std::thread::Builder::new().name("oos-shutdown-sync".into()).spawn(move || {
+        let _ = done.send(sync());
+    })?;
+    // Dropping the handle keeps the caller independent of a sync stuck in the kernel.
+    result.recv_timeout(seconds).map_err(|error| match error {
+        std::sync::mpsc::RecvTimeoutError::Timeout => io::Error::new(io::ErrorKind::TimedOut, error),
+        std::sync::mpsc::RecvTimeoutError::Disconnected => io::Error::other(error),
+    })?
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -157,6 +200,33 @@ mod tests {
         let output = std::process::Command::new("sh").args(["-c", "exit 7"]).output().unwrap();
         let error = helper_status(Ok(&output)).unwrap_err().to_string();
         assert!(error.contains(&output.status.to_string()), "{error}");
+    }
+
+    #[test]
+    fn only_spawn_failure_uses_the_fallback_sync() {
+        let synced = std::cell::Cell::new(false);
+        let result = prepare_helper(|| Err(io::ErrorKind::NotFound.into()), || synced.set(true));
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::NotFound);
+        assert!(synced.get());
+        let result = prepare_helper(
+            || std::process::Command::new("sh").args(["-c", "exit 73"]).output(),
+            || panic!("helper has already attempted sync"),
+        );
+        assert_eq!(result.unwrap().status.code(), Some(73));
+    }
+
+    #[test]
+    fn sync_deadline_does_not_join_a_blocked_worker() {
+        let (release, blocked) = std::sync::mpsc::channel();
+        let (started, running) = std::sync::mpsc::channel();
+        let result = bounded_sync(Duration::ZERO, move || {
+            started.send(()).unwrap();
+            blocked.recv().unwrap();
+            Ok(())
+        });
+        assert_eq!(result.unwrap_err().kind(), io::ErrorKind::TimedOut);
+        running.recv().unwrap();
+        release.send(()).unwrap();
     }
 
     #[test]

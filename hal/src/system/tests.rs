@@ -98,3 +98,11 @@ fn shutdown_write_admission_fails_explicitly_and_fails_closed_on_lookup_error() 
     let missing_access = std::io::ErrorKind::PermissionDenied;
     assert_eq!(super::data_write_admission(Err(missing_access.into())).unwrap_err().kind(), missing_access);
 }
+
+#[test]
+fn readonly_mounts_cover_the_path_without_providing_data() {
+    let base = "oos-base /oos tmpfs ro 0 0\n";
+    assert!(!oos_mounted(base));
+    assert!(!oos_mounted(&format!("{base}oos-closed /oos tmpfs ro 0 0\n")));
+    assert!(oos_mounted(&format!("{base}/dev/data /oos ext4 rw,noatime 0 0\n")));
+}

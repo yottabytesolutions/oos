@@ -12,7 +12,7 @@
 P=/dev/mmcblk0p1
 S=/sys/class/block/mmcblk0p1
 stock_confirmed=${1:-0}
-grep -q ' /oos ' /proc/mounts && exit 0
+grep -q ' /oos ext4 ' /proc/mounts && exit 0
 notice() {
 	printf '%s\n' "$1" > /tmp/oos-data.notice
 	printf '%s\n' "$1"
@@ -34,7 +34,14 @@ unavailable() {
 # Reconcile a regular image, including any journal replay, before mounting the checked data.
 repair=$(oos-update storage-data --card /dev/mmcblk0) || unavailable "data preparation failed"
 mkdir -p /oos || unavailable "could not create the mount point"
-mount -t ext4 -o noatime $P /oos || unavailable "mount failed"
+# Keep the underlying directory read-only across unmount and recovery.
+grep -q '^oos-base /oos tmpfs ro[, ]' /proc/mounts ||
+	mount -t tmpfs -o ro oos-base /oos || unavailable "could not protect the mount point"
+if ! mount -t ext4 -o noatime $P /oos; then
+	# Leave the boot-time fallback directory available for a temporary network identity.
+	umount /oos || echo "oos-mount-data: could not remove the unused read-only mount"
+	unavailable "mount failed"
+fi
 [ -z "$repair" ] || notice "$repair"
 oos-update storage-data clean-recovered || echo "oos-mount-data: could not finish inspecting lost+found"
 mkdir -p /oos/cal /oos/setups /oos/shots

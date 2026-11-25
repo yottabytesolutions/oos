@@ -15,7 +15,7 @@ kind=${5:--}
 now=$(date +%s)
 if [ -n "${OOS_TEST:-}" ] && [ -n "${OOS_NOW_FILE:-}" ]; then now=$(cat "$OOS_NOW_FILE"); fi
 case "$now" in ''|*[!0-9]*) echo 'oos-ui-exits: no clock' >&2; exit 1 ;; esac
-[ -n "${OOS_TEST:-}" ] || grep -q " $mnt " /proc/mounts || exit 1
+[ -n "${OOS_TEST:-}" ] || grep -Fq " $mnt ext4 " /proc/mounts || exit 1
 case "$op" in count|mode|clear|recover) ;; *) exit 2 ;; esac
 # mode reads the atomically renamed ledger without locking. Every writer, including recover's
 # validation, holds the same lock until directory sync finishes. /tmp clears orphan locks at boot.

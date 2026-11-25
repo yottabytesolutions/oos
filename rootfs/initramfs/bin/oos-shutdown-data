@@ -24,11 +24,17 @@ log() {
 
 read_mount() {
     mounted_source='' mounted_fs='' mounted_options=''
+    base=0
     while read -r source target fs options rest; do
         if [ "$target" = /oos ]; then
+            case "$source,$fs,$options," in oos-base,tmpfs,ro,*) base=1 ;; esac
             mounted_source=$source mounted_fs=$fs mounted_options=$options
         fi
     done < /proc/mounts
+}
+
+sync_data() {
+    /bin/sync -f /oos || { log 'sync of /oos failed'; return 1; }
 }
 
 close_data() {
@@ -36,33 +42,45 @@ close_data() {
     if [ "$1" = stop-ui ]; then
         if ! stop_ui; then
             log 'UI still running after TERM and KILL; leaving /oos mounted'
+            sync_data
             return 1
         fi
-        mkdir "$closing" || { log 'could not close data write admission'; return 1; }
+        if ! mkdir "$closing"; then
+            log 'could not close data write admission'
+            sync_data
+            return 73
+        fi
     fi
-    [ -d "$closing" ] || return 1
-    read_mount || { log 'could not read mount state'; return 1; }
-    case ,$mounted_options, in
-        *,rw,*) printf 'mount %s %s %s\n' "$mounted_source" "$mounted_fs" "$mounted_options" > "$2" || return 1 ;;
-    esac
-    sync || { log 'sync failed; leaving /oos mounted'; return 1; }
-    if [ -z "$mounted_source" ]; then
+    if [ ! -d "$closing" ] || ! read_mount; then
+        log 'could not read mount state with admission closed'
+        sync_data
+        return 1
+    fi
+    sync_data || return 1
+    if [ "$mounted_fs" != ext4 ]; then
         log '/oos already unmounted'
         return 0
     fi
     case ,$mounted_options, in
         *,ro,*) log '/oos already read-only'; return 0 ;;
     esac
+    if ! printf 'mount %s %s %s\n' "$mounted_source" "$mounted_fs" "$mounted_options" > "$2"; then
+        log 'could not record mount state; leaving /oos mounted'
+        return 1
+    fi
     # Seal the filesystem before umount. A writable open file or an IO error can
     # prevent this transition. In that case leave the mount for journal replay.
-    if ! error=$(mount -o remount,ro /oos 2>&1); then
+    if ! error=$(mount -t "$mounted_fs" -o remount,ro "$mounted_source" /oos 2>&1); then
         log "could not make /oos read-only (busy or IO error): $error; leaving /oos mounted"
         return 1
     fi
+    # The boot-time base keeps /oos read-only even between mount operations.
+    [ "$base" = 1 ] || { log 'missing read-only /oos base; leaving data mounted read-only'; return 1; }
     if ! error=$(umount /oos 2>&1); then
         log "could not unmount /oos: $error; leaving /oos read-only"
         return 1
     fi
+    mount -t tmpfs -o ro oos-closed /oos
 }
 
 wait_for_worker() {
@@ -84,10 +102,14 @@ restore_data() {
     for _ in 1 2; do
         read_mount || return 1
         if writable_mount "$1" "$2"; then break; fi
-        if [ -z "$mounted_source" ]; then
+        if [ "$mounted_source" = oos-closed ] && [ "$mounted_fs" = tmpfs ]; then
+            umount /oos >&2 || return 1
+            read_mount || return 1
+        fi
+        if [ "$mounted_source" = oos-base ] && [ "$base" = 1 ]; then
             mount -t "$2" -o "$3" "$1" /oos
         elif [ "$mounted_source" = "$1" ] && [ "$mounted_fs" = "$2" ]; then
-            mount -o "remount,$3" /oos
+            mount -t "$2" -o "remount,$3" "$1" /oos
         else
             return 1
         fi >&2
@@ -99,6 +121,7 @@ if [ "${1:-}" = --worker ]; then
     shift
     case $1 in
         stop-ui|ui-drained) close_data "$@" ;;
+        sync-only) sync_data ;;
         restore) shift; restore_data "$@" ;;
         *) exit 2 ;;
     esac
@@ -109,46 +132,67 @@ fi
 mode=${1:-stop-ui}
 if [ "$#" -gt 0 ]; then shift; fi
 case $mode in
-    stop-ui) seconds=5; : > /tmp/oos-ui.off || exit 73 ;;
+    stop-ui) seconds=5 ;;
     ui-drained|restore) seconds=2 ;;
     *) exit 2 ;;
 esac
 
-cd / || exit 73
-dir=$(mktemp -d /tmp/oos-shutdown.XXXXXX) || { log "cannot start $mode"; exit 73; }
-trap 'rm -f "$dir/result" "$dir/mount"; rmdir "$dir"' EXIT
-if ! mkfifo "$dir/result" || ! exec 3<>"$dir/result"; then
+setup_failed() {
     log "cannot start $mode"
+    if [ "$mode" != restore ]; then
+        # A failed FIFO setup leaves no completion channel. Never wait on sync itself.
+        /bin/sync -f /oos </dev/null >/dev/null 2>&1 &
+        sync_pid=$!
+        sleep "$seconds"
+        kill -KILL "$sync_pid" 2>/dev/null
+    fi
     exit 73
-fi
+}
 
-case $mode in
-    ui-drained)
-        mkdir "$closing" || { log 'could not close data write admission'; exit 73; }
-        set -- "$dir/mount" ;;
-    stop-ui) set -- "$dir/mount" ;;
-esac
+run_worker() {
+    case $mode in
+        ui-drained)
+            if mkdir "$closing"; then
+                set -- "$dir/mount"
+            else
+                log 'could not close data write admission'
+                mode=sync-only
+            fi ;;
+        stop-ui) set -- "$dir/mount" ;;
+    esac
 
-# The worker has a separate group. Its stdout/stderr must not keep the caller waiting.
-setsid "$0" --worker "$mode" "$@" </dev/null >/dev/null 2>&1 &
-worker=$!
-# BusyBox ash provides the deadline on the result FIFO.
-# shellcheck disable=SC3045
-if read -r -t "$seconds" result <&3; then
-    [ ! -f "$dir/mount" ] || cat "$dir/mount"
-    if [ "$result" = 0 ]; then
+    # With job control disabled the background child inherits our group and
+    # cannot be its leader. setsid therefore keeps $! as its new group ID.
+    set +m
+    setsid "$0" --worker "$mode" "$@" </dev/null >/dev/null 2>&1 &
+    worker=$!
+    # BusyBox ash provides the deadline on the result FIFO.
+    # shellcheck disable=SC3045
+    if read -r -t "$seconds" result <&3; then
+        [ ! -f "$dir/mount" ] || cat "$dir/mount"
+        [ "$result" = 0 ] || log "$mode failed (worker status $result)"
+        [ "$mode" != sync-only ] && [ "$result" != 73 ] || exit 73
+        [ "$result" = 0 ] || exit 1
         [ "$mode" != restore ] || rmdir "$closing" || exit 1
         exit 0
     fi
-    log "$mode failed (worker status $result)"
-    exit 1
-fi
-kill -KILL "$worker" 2>/dev/null
-# Image BusyBox kill takes a negative PID after the explicit signal, without --.
-kill -KILL "-$worker" 2>/dev/null
-if [ "$mode" != restore ]; then
-    printf 'worker %s\n' "$worker"
-    [ ! -f "$dir/mount" ] || cat "$dir/mount"
-fi
-log "$mode timed out after ${seconds}s"
-exit 124
+    kill -KILL "$worker" 2>/dev/null
+    # Image BusyBox kill takes a negative PID after the explicit signal, without --.
+    kill -KILL "-$worker" 2>/dev/null
+    log "$mode timed out after ${seconds}s"
+    [ "$mode" != sync-only ] || exit 73
+    if [ "$mode" != restore ]; then
+        printf 'worker %s\n' "$worker"
+        [ ! -f "$dir/mount" ] || cat "$dir/mount"
+    fi
+    exit 124
+}
+
+# ash exits on a failed redirection of the special builtin ":".
+[ "$mode" != stop-ui ] || true > /tmp/oos-ui.off || setup_failed
+cd / || setup_failed
+dir=$(mktemp -d /tmp/oos-shutdown.XXXXXX) || setup_failed
+trap 'rm -f "$dir/result" "$dir/mount"; rmdir "$dir"' EXIT
+mkfifo "$dir/result" || setup_failed
+run_worker "$@" 3<>"$dir/result"
+setup_failed

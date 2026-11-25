@@ -16,15 +16,18 @@ pub use shutdown::{report_power_failure, DataShutdown};
 use std::io;
 use std::path::Path;
 
-/// Whether the data partition is mounted at /oos, by the text of /proc/mounts.
-pub(crate) fn oos_mounted(mounts: &str) -> bool {
-    mounts.lines().any(|line| line.split_whitespace().nth(1) == Some("/oos"))
+/// Whether /proc/mounts lists the data filesystem at /oos.
+pub fn oos_mounted(mounts: &str) -> bool {
+    mounts.lines().any(|line| {
+        let mut fields = line.split_whitespace().skip(1);
+        fields.next() == Some("/oos") && fields.next() == Some("ext4")
+    })
 }
 
-/// Reject data-area mutations during shutdown, including while /oos is unmounted.
+/// Reject data-area mutations during shutdown. Runtime files in /tmp remain writable.
 pub fn check_data_write(path: &Path) -> io::Result<()> {
     #[cfg(target_os = "linux")]
-    if path.starts_with("/oos") || path.starts_with("/tmp/oos") {
+    if path.starts_with("/oos") {
         return data_write_admission(Path::new("/tmp/oos-data.closing").try_exists());
     }
     let _ = path;

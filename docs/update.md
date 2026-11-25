@@ -310,17 +310,21 @@ startup journal replay. An already admitted update or rollback holds a writable 
 read-only remount leaves the transaction able to finish. A new request gets a shutdown error and a pending trial
 remains eligible for rollback on the next boot.
 
-Closing write admission makes OOS writers report an explicit error. The helper syncs and remounts the data area
-read-only before unmounting, so new filesystem writes cannot start while unmount is in progress. A busy writer
+Closing write admission makes OOS writers report an explicit error. The helper runs `sync -f /oos` with the image's
+BusyBox, then remounts the area read-only before unmounting. Sync still runs with a deadline if admission is already
+closed or the helper cannot start. The trial restart guard is synced before and after its rename. A busy writer
 or an I/O error can prevent the read-only transition. The helper then leaves the mount in place and startup can
 recover it. A busy unmount after a successful read-only transition leaves the data area read-only. An already
-unmounted or already read-only area is recorded and left alone. On timeout the caller continues and can rely on
-startup repair if needed. The kernel may finish an in-flight operation after the timeout.
+unmounted or already read-only area is recorded and left alone. An empty read-only cover replaces the data mount
+after a successful unmount. A read-only mount under the data area, set up at boot, keeps late writes from reaching the
+initramfs between mount operations. On timeout the caller continues and can rely on startup repair if needed.
+The kernel may finish an in-flight operation after the timeout.
 
 If a reboot or panel command leaves OOS running, recovery has a separate 2 s budget to wait for any unfinished
-shutdown worker and restore the previous writable mount. Write admission reopens after verification. If recovery
-fails, the UI reports that saving is unavailable and offers a restart to retry. These paths have host fakes;
-restart, power-off, staged install and a power pull still need verification on a DHO924S.
+shutdown worker, remove the shutdown cover and restore the previous writable mount. Write admission reopens after
+verification. If recovery fails, the UI reports that saving is unavailable and offers a restart to retry. The
+pending DHO924S unit round covers restart, panel power-off, staged install with trial restart, restart with a busy
+data area, power pull during cleanup and during trial restart, and shutdown with a USB stick mounted.
 
 ### Data area after an unclean shutdown
 

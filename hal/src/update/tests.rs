@@ -273,6 +273,21 @@ fn rollback_checks_the_slot_first() {
 }
 
 #[test]
+fn restart_mark_replaces_the_previous_build_and_consumes_the_staging_file() {
+    let fixture = Fake::new("restart-mark", None);
+    let mark = fixture.state().with_file_name("kexec-restart");
+    std::fs::create_dir_all(mark.parent().unwrap()).unwrap();
+    std::fs::write(&mark, "previous-long-build\n").unwrap();
+    let staging = mark.with_extension("new");
+    std::fs::write(&staging, "interrupted-long-build\n").unwrap();
+
+    write_restart_mark(&mark, " trial \n").unwrap();
+
+    assert_eq!(std::fs::read_to_string(&mark).unwrap(), "trial\n");
+    assert!(!staging.exists());
+}
+
+#[test]
 fn state_text_round_trip() {
     let s = State {
         current: Some(Entry { build: "20261105-170000 kernel 6.12.115+".into(), sha256: [1; 32], len: 30689280 }),

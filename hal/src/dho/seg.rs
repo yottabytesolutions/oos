@@ -11,6 +11,7 @@
 //! Generic over `Bus` and the C2H reader, so the whole sequence runs against `sim::Engine` on the host.
 
 use crate::dho::bus::{Bus, DmaBuf};
+use crate::dho::seq::time::{execute_bus_with_clock, Clock, ExecuteError, Real};
 use crate::dho::{hz, scu, seq};
 
 /// One LSB of the latched and first-trigger stamps (0x40b0, 0x40c0) in femtoseconds: 0.8 ns, one sample at 1.25 GSa/s.
@@ -141,10 +142,24 @@ pub fn stamps<B: Bus, R: std::io::Read>(
     first: u32,
     count: u32,
 ) -> Result<Vec<Stamp>, String> {
+    stamps_with_clock(st, s, p, (bar, c2h), first..first + count, &Real, || {}).map_err(String::from)
+}
+
+/// Read stamps with typed DMA errors and notify the caller after each successful transfer.
+pub fn stamps_with_clock<B: Bus, R: std::io::Read>(
+    st: &mut seq::State,
+    s: &seq::Settings,
+    p: &hz::Params,
+    (bar, c2h): (&mut B, &mut R),
+    frames: std::ops::Range<u32>,
+    clock: &impl Clock,
+    mut read_succeeded: impl FnMut(),
+) -> Result<Vec<Stamp>, ExecuteError> {
     let mut dma = DmaBuf::new();
-    let mut out = Vec::with_capacity(count as usize);
-    for k in first..first + count {
-        seq::execute_bus(&st.segment_stamp_steps(s, p, k), bar, c2h, &mut dma, |_| {})?;
+    let mut out = Vec::with_capacity(frames.len());
+    for k in frames {
+        execute_bus_with_clock(&st.segment_stamp_steps(s, p, k), bar, c2h, &mut dma, &mut |_| {}, &|| false, clock)?;
+        read_succeeded();
         let header = header_stamp(&dma.data()[..dma.data().len().min(16)]);
         out.push(Stamp { latch: Some(read_pair(bar, scu::stamp::LATCHED)), header });
     }
@@ -168,8 +183,21 @@ pub fn read<B: Bus, R: std::io::Read>(
     first: u32,
     count: u32,
 ) -> Result<(), String> {
+    read_with_clock(st, s, p, (bar, c2h, dma), first, count, &Real).map_err(String::from)
+}
+
+/// Read segment waveforms with typed DMA errors and the supplied sequencer clock.
+pub fn read_with_clock<B: Bus, R: std::io::Read>(
+    st: &mut seq::State,
+    s: &seq::Settings,
+    p: &hz::Params,
+    (bar, c2h, dma): (&mut B, &mut R, &mut DmaBuf),
+    first: u32,
+    count: u32,
+    clock: &impl Clock,
+) -> Result<(), ExecuteError> {
     let steps = st.read_steps_at(s, p, first, count).map_err(|error| error.to_string())?;
-    seq::execute_bus(&steps, bar, c2h, dma, |_| {})
+    execute_bus_with_clock(&steps, bar, c2h, dma, &mut |_| {}, &|| false, clock)
 }
 
 /// A model of the record engine and the play path for host runs of the whole sequence: what the steps of

@@ -110,9 +110,19 @@ pub(super) struct SourceStatus {
     latest: String,
     diagnostic: Option<(u64, CaptureStatus)>,
     capture: Option<(Identity, String)>,
+    dma_backoff: Option<std::time::Instant>,
 }
 
 impl SourceStatus {
+    #[cfg(any(target_os = "linux", test))]
+    pub(super) fn set_dma_backoff(&mut self, since: Option<std::time::Instant>) {
+        self.dma_backoff = since;
+    }
+
+    pub(super) fn dma_backoff(&self) -> Option<std::time::Instant> {
+        self.dma_backoff
+    }
+
     #[cfg(any(target_os = "linux", test))]
     pub(super) fn applied_capture(&mut self, identity: Identity, description: String) {
         self.capture = Some((identity, description));

@@ -34,7 +34,8 @@ impl<T: PacingPolicy> AcqLoop<T> {
         self.service.readings(io, &self.out);
         let request = {
             let mut g = lock(&self.out);
-            match g.cal_req.take() {
+            // Self-calibration arms and reads. Keep its request queued until STOPPED is confirmed.
+            match if io.dma_fault.pending() { None } else { g.cal_req.take() } {
                 Some(calibration) => {
                     g.stop_replies.calibrated_through(self.seq);
                     Err(calibration)
@@ -51,6 +52,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
                 self.configured.current = None;
                 self.replay.discard();
                 if P::calibrate(io, &self.options.cal_dir, &self.out, req) {
+                    io.dma_fault.read_succeeded();
                     self.units.reset_trim();
                 }
                 return None;
@@ -228,6 +230,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
                 |_| {},
             ) {
                 Ok(()) => {
+                    io.dma_fault.read_succeeded();
                     self.seq += 1;
                     let frame = decode_with(
                         self.batch.raw.dma.data(),
@@ -282,6 +285,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
             let steps = io.state.reread_steps(&settings, params, batch.index);
             match steps.map_err(|error| error.to_string().into()).and_then(|steps| io.execute(&steps)) {
                 Ok(bytes) => {
+                    io.dma_fault.read_succeeded();
                     let fb = seq::frame_bytes(&settings, params);
                     self.seq += 1;
                     let frame = decode_with(

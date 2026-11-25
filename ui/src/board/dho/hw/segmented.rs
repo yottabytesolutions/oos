@@ -14,7 +14,10 @@ use oos_core::change::Identity;
 use oos_hal::dho::{
     bus::{Bus, DmaBuf},
     hz, seg,
-    seq::{Settings, State},
+    seq::{
+        time::{Clock, ExecuteError},
+        Settings, State,
+    },
 };
 
 /// A recording retains the identity captured before its first hardware arm.
@@ -57,25 +60,28 @@ pub(super) fn seg_abort(
 }
 
 /// The borrowed IO of one segment poll. Hardware and the HAL simulator use the same phases.
-pub(super) struct SegmentIo<'a, B, R> {
+pub(super) struct SegmentIo<'a, B, R, C> {
     state: &'a mut State,
     bar: &'a mut B,
     c2h: &'a mut R,
     dma: &'a mut DmaBuf,
     out: &'a HwShared,
     seq: &'a mut u64,
+    clock: &'a C,
+    read_succeeded: &'a mut dyn FnMut(),
 }
 
-impl<'a, B: Bus, R: std::io::Read> SegmentIo<'a, B, R> {
+impl<'a, B: Bus, R: std::io::Read, C: Clock> SegmentIo<'a, B, R, C> {
     pub(super) fn new(
         state: &'a mut State,
         bar: &'a mut B,
         c2h: &'a mut R,
         dma: &'a mut DmaBuf,
-        out: &'a HwShared,
-        seq: &'a mut u64,
+        (out, seq): (&'a HwShared, &'a mut u64),
+        clock: &'a C,
+        read_succeeded: &'a mut dyn FnMut(),
     ) -> Self {
-        Self { state, bar, c2h, dma, out, seq }
+        Self { state, bar, c2h, dma, out, seq, clock, read_succeeded }
     }
 
     pub(super) fn step(
@@ -84,7 +90,7 @@ impl<'a, B: Bus, R: std::io::Read> SegmentIo<'a, B, R> {
         s: &Settings,
         p: &hz::Params,
         id: Identity,
-    ) -> Result<(), String> {
+    ) -> Result<(), ExecuteError> {
         if run.as_ref().is_some_and(|r| {
             (r.recording || r.next < r.count) && publication::boundary(Some((r.identity.gen(), r.identity.epoch())), id)
         }) {
@@ -128,7 +134,7 @@ impl<'a, B: Bus, R: std::io::Read> SegmentIo<'a, B, R> {
             return Ok(());
         };
         if r.recording {
-            return self.record(r, running);
+            return self.record(r, running).map_err(Into::into);
         }
         let rs = seg_read_plan(s, p);
         if r.next < r.count {
@@ -163,14 +169,22 @@ impl<'a, B: Bus, R: std::io::Read> SegmentIo<'a, B, R> {
         rs: &Settings,
         p: &hz::Params,
         running: bool,
-    ) -> Result<(), String> {
+    ) -> Result<(), ExecuteError> {
         r.deliver &= running;
         let cnt = rs.frames.min(r.count - r.next);
         if r.deliver && lock(self.out).queue.len() + cnt as usize > crate::board::QUEUE_MAX {
             std::thread::sleep(std::time::Duration::from_millis(5));
             return Ok(());
         }
-        let st = seg::stamps(self.state, rs, p, self.bar, self.c2h, r.next, cnt)?;
+        let st = seg::stamps_with_clock(
+            self.state,
+            rs,
+            p,
+            (self.bar, self.c2h),
+            r.next..r.next + cnt,
+            self.clock,
+            &mut self.read_succeeded,
+        )?;
         if r.next == 0 {
             for (k, x) in st.iter().take(8).enumerate() {
                 eprintln!("oos-ui hw: segment {} latch {:?} header {:?}", k, x.latch, x.header);
@@ -179,7 +193,7 @@ impl<'a, B: Bus, R: std::io::Read> SegmentIo<'a, B, R> {
         let times: Vec<Option<f64>> = st.iter().map(|x| r.tl.push(*x)).collect();
         let mut frames = Vec::new();
         if r.deliver {
-            seg::read(self.state, rs, p, self.bar, self.c2h, self.dma, r.next, cnt)?;
+            self.read_waveform(rs, p, r.next, cnt)?;
             frames = self
                 .dma
                 .data()
@@ -192,15 +206,26 @@ impl<'a, B: Bus, R: std::io::Read> SegmentIo<'a, B, R> {
                 .map(std::sync::Arc::new)
                 .collect();
         }
+        self.publish(r, cnt, times, frames);
+        Ok(())
+    }
+
+    fn publish(
+        &self,
+        r: &mut SegRun,
+        count: u32,
+        times: Vec<Option<f64>>,
+        mut frames: Vec<std::sync::Arc<crate::board::Frame>>,
+    ) {
         let mut g = lock(self.out);
         frames.retain(|f| publication::current(&g, f));
         // A new publication can arrive during DMA. Its timestamps and status are obsolete too.
         if publication::boundary(Some((r.identity.gen(), r.identity.epoch())), g.acquisition.identity())
             || g.seg.run != r.run
         {
-            return Ok(());
+            return;
         }
-        r.next += cnt;
+        r.next += count;
         g.seg.times.extend(times);
         g.seg.read = r.next;
         let sample = frames.last().map(crate::perfguard::deep::clone_frame).map(|(frame, sample)| {
@@ -215,7 +240,6 @@ impl<'a, B: Bus, R: std::io::Read> SegmentIo<'a, B, R> {
         if let Some(sample) = sample {
             sample.record();
         }
-        Ok(())
     }
 
     fn show(
@@ -226,12 +250,12 @@ impl<'a, B: Bus, R: std::io::Read> SegmentIo<'a, B, R> {
         p: &hz::Params,
         want: Option<u32>,
         id: Identity,
-    ) -> Result<(), String> {
+    ) -> Result<(), ExecuteError> {
         match want {
             Some(k) if k < r.count => {
                 lock(self.out).seg.want = None;
                 let one = seg::read_settings(rs, 1);
-                seg::read(self.state, &one, p, self.bar, self.c2h, self.dma, k, 1)?;
+                self.read_waveform(&one, p, k, 1)?;
                 *self.seq += 1;
                 let fb = oos_hal::dho::seq::frame_bytes(rs, p);
                 let f = tag(
@@ -257,6 +281,12 @@ impl<'a, B: Bus, R: std::io::Read> SegmentIo<'a, B, R> {
             Some(_) => lock(self.out).seg.want = None,
             None => std::thread::sleep(std::time::Duration::from_millis(10)),
         }
+        Ok(())
+    }
+
+    fn read_waveform(&mut self, s: &Settings, p: &hz::Params, first: u32, count: u32) -> Result<(), ExecuteError> {
+        seg::read_with_clock(self.state, s, p, (self.bar, self.c2h, self.dma), first, count, self.clock)?;
+        (self.read_succeeded)();
         Ok(())
     }
 }

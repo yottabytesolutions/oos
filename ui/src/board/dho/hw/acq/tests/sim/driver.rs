@@ -21,6 +21,10 @@ impl Virtual {
         self.signals.hide_stopped.set(true);
     }
 
+    pub(in super::super) fn restore_stopped_status(&self) {
+        self.signals.hide_stopped.set(false);
+    }
+
     pub(in super::super) fn fail_done_after_stop(&self) {
         self.signals.done.set(DoneRead::AllOnes);
     }

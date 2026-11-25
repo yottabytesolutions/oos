@@ -239,6 +239,7 @@ impl Stream {
                 return false;
             }
         };
+        io.dma_fault.read_succeeded();
         let s = sweep.settings;
         let (words, logic) =
             if has_la { roll::split_la(data, s.mask) } else { (roll::split(data, s.mask), Vec::new()) };

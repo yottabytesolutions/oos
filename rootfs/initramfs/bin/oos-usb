@@ -5,12 +5,14 @@
 # and CSV files to it while it is there (System > Storage) and syncs after each file, so a stick can be pulled when the
 # scope is not saving. Log in /tmp/oos-usb.log.
 MP=/mnt/usb
+closing=/tmp/oos-data.closing
+mounting=/tmp/oos-usb.mounting
 mkdir -p $MP
 dev=
 bad=
 seen=
 
-try() {
+mount_stick() {
 	# the codepage has to be named: the kernel's default one is not built in
 	# nodev, nosuid, noexec: what is on a stick is data, an ext4 stick could otherwise bring device nodes of its own
 	mount -t vfat -o noatime,nodev,nosuid,noexec,flush,codepage=437,iocharset=utf8,umask=0 "/dev/$1" $MP 2>/dev/null && return 0
@@ -18,10 +20,27 @@ try() {
 	mount -t ext4 -o noatime,nodev,nosuid,noexec "/dev/$1" $MP 2>/dev/null
 }
 
+try() {
+	mkdir "$mounting" || return 1
+	# Check after taking the marker so shutdown can see any mount in progress.
+	[ ! -d "$closing" ] && mount_stick "$1"
+	status=$?
+	rmdir "$mounting"
+	return "$status"
+}
+
 while :; do
+	if [ -d "$closing" ]; then
+		sleep 2
+		continue
+	fi
 	if [ -n "$dev" ] && [ ! -e "/sys/class/block/$dev" ]; then
 		echo "oos-usb: $dev pulled"
 		umount -l $MP
+		dev=
+	fi
+	# A returned restart reopens admission after the shutdown helper unmounted the stick.
+	if [ -n "$dev" ] && ! grep -Fq " $MP " /proc/mounts; then
 		dev=
 	fi
 	if [ -z "$dev" ]; then
@@ -42,6 +61,7 @@ while :; do
 				fi
 			done
 			[ -n "$dev" ] && break
+			[ ! -d "$closing" ] || break
 			echo "oos-usb: nothing to mount on $n"
 			bad="$bad $n"
 		done

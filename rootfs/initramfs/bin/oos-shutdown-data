@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 
 closing=/tmp/oos-data.closing
+usb_mounting=/tmp/oos-usb.mounting
 
 stop_ui() {
     killall -TERM oos-ui || :
@@ -24,13 +25,47 @@ log() {
 
 read_mount() {
     mounted_source='' mounted_fs='' mounted_options=''
-    base=0
+    base=0 usb_mounted=0
     while read -r source target fs options rest; do
-        if [ "$target" = /oos ]; then
-            case "$source,$fs,$options," in oos-base,tmpfs,ro,*) base=1 ;; esac
-            mounted_source=$source mounted_fs=$fs mounted_options=$options
-        fi
+        case $target in
+            /oos)
+                case "$source,$fs,$options," in oos-base,tmpfs,ro,*) base=1 ;; esac
+                mounted_source=$source mounted_fs=$fs mounted_options=$options ;;
+            /mnt/usb) usb_mounted=1 ;;
+        esac
     done < /proc/mounts
+}
+
+unmount_usb() {
+    usb_pid=
+    trap '[ -z "$usb_pid" ] || kill -KILL "$usb_pid" 2>/dev/null; exit 1' TERM
+    # Admission is closed. Let an automount already in progress finish first.
+    while [ -d "$usb_mounting" ]; do sleep 0.05; done
+    if ! read_mount; then
+        printf '1\n' >&5
+        exit
+    fi
+    if [ "$usb_mounted" = 0 ]; then
+        printf '0\n' >&5
+        exit
+    fi
+    (exec /bin/umount /mnt/usb) &
+    usb_pid=$!
+    wait "$usb_pid"
+    printf '%s\n' "$?" >&5
+}
+
+close_usb() {
+    unmount_usb &
+    usb_worker=$!
+    # Reserve most of the enclosing shutdown deadline for the data area.
+    # shellcheck disable=SC3045
+    if read -r -t 0.5 usb_result <&5; then
+        [ "$usb_result" = 0 ] || log "could not unmount /mnt/usb (status $usb_result)"
+    else
+        kill -TERM "$usb_worker" 2>/dev/null
+        log '/mnt/usb timed out after 0.5s'
+    fi
 }
 
 sync_data() {
@@ -51,10 +86,20 @@ close_data() {
             return 73
         fi
     fi
+    usb_pending=0
+    [ ! -d "$usb_mounting" ] || usb_pending=1
     if [ ! -d "$closing" ] || ! read_mount; then
         log 'could not read mount state with admission closed'
         sync_data
         return 1
+    fi
+    if [ "$usb_mounted" = 1 ] || [ "$usb_pending" = 1 ]; then
+        usb_fifo=${2%/*}/usb
+        if mkfifo "$usb_fifo"; then
+            close_usb 5<>"$usb_fifo" || log 'could not start /mnt/usb cleanup'
+        else
+            log 'could not create /mnt/usb cleanup FIFO'
+        fi
     fi
     sync_data || return 1
     if [ "$mounted_fs" != ext4 ]; then
@@ -209,7 +254,7 @@ run_worker() {
 [ "$mode" != stop-ui ] || true > /tmp/oos-ui.off || setup_failed
 cd / || setup_failed
 dir=$(mktemp -d /tmp/oos-shutdown.XXXXXX) || setup_failed
-trap 'rm -f "$dir/result" "$dir/mount"; rmdir "$dir"' EXIT
+trap 'rm -f "$dir/result" "$dir/mount" "$dir/usb"; rmdir "$dir"' EXIT
 mkfifo "$dir/result" || setup_failed
 run_worker "$@" 3<>"$dir/result"
 setup_failed

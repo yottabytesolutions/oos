@@ -111,13 +111,6 @@ fn scan() -> Result<Vec<Net>, String> {
     })
 }
 
-fn saved_to_card(c: &Ctrl) -> Result<(), String> {
-    c.save()?;
-    // the scope is usually switched off at the mains
-    crate::store::sync_disks();
-    Ok(())
-}
-
 /// Joins a network and keeps it only if that worked.
 fn join(ssid: &[u8], how: How) -> Result<String, String> {
     let name = wlan::name(ssid);
@@ -149,7 +142,7 @@ fn join(ssid: &[u8], how: How) -> Result<String, String> {
             }
             return Err(format!("Could not join {}: {}", name, wrong));
         }
-        saved_to_card(c)?;
+        c.save()?;
         Ok(format!("Connected to {}", name))
     })
 }
@@ -157,7 +150,7 @@ fn join(ssid: &[u8], how: How) -> Result<String, String> {
 fn forget(id: u32) -> Result<String, String> {
     with_ctrl(|c| {
         c.remove(id)?;
-        saved_to_card(c)?;
+        c.save()?;
         Ok("Network forgotten".to_string())
     })
 }
@@ -1205,7 +1198,7 @@ mod tests {
         println!("wrong password: {}", e);
         assert!(e.contains("wrong password"), "{}", e);
         assert!(link().1.saved.is_empty(), "a failed join must not stay");
-        assert!(!std::fs::read_to_string(conf).unwrap().contains("network="), "a failed join must not be saved");
+        assert!(!Path::new(conf).try_exists().unwrap(), "a failed join must not be saved");
 
         // a password with the characters that would break a quoted file
         assert_eq!(join(b"OOS-Test", How::Pass("se\"cr#t p\\ss".into())).unwrap(), "Connected to OOS-Test");

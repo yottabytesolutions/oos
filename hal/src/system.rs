@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 //! Safe OS calls shared by system services and worker threads.
 
+pub(crate) mod durable;
+pub(crate) use durable::durable_replace;
 mod cores;
 pub use cores::{capacities, cpus, Cores};
 mod ifaddrs;
@@ -12,24 +14,6 @@ use std::path::Path;
 /// Whether the data partition is mounted at /oos, by the text of /proc/mounts.
 pub(crate) fn oos_mounted(mounts: &str) -> bool {
     mounts.lines().any(|line| line.split_whitespace().nth(1) == Some("/oos"))
-}
-
-/// Publish a complete file after syncing its staged contents, then sync the renamed entry.
-pub(crate) fn durable_replace(
-    path: &Path,
-    temporary: &Path,
-    bytes: &[u8],
-    options: &std::fs::OpenOptions,
-) -> io::Result<()> {
-    use std::io::Write;
-    let dir = path.parent().filter(|dir| !dir.as_os_str().is_empty()).unwrap_or(Path::new("."));
-    {
-        let mut file = options.open(temporary)?;
-        file.write_all(bytes)?;
-        file.sync_all()?;
-    }
-    std::fs::rename(temporary, path)?;
-    std::fs::File::open(dir)?.sync_all()
 }
 
 /// Pins the calling thread and its future children to `cores`.

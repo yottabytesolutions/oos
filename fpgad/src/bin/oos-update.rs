@@ -554,7 +554,7 @@ fn restart_for_trial(a: &Args, p: &Path) {
         notice(&messages::no_restart(&build, &e, magic == Some(*b"OOSK") && on_trial));
         return;
     }
-    if let Err(e) = std::fs::write(restart_mark(p), format!("{}\n", build.trim())) {
+    if let Err(e) = kexec::write_restart_marker(&restart_mark(p), &build) {
         notice(&messages::no_restart(&build, &format!("mark not written: {}", e), true));
         return;
     }

@@ -3,10 +3,12 @@
 
 //! WLAN through a USB stick (docs/wlan.md): the client side of wpa_supplicant's control socket and the parsers
 //! of its answers. `/bin/oos-wlan` loads the driver and runs wpa_supplicant and DHCP; this module asks it for networks
-//! and tells it which one to join. The configuration is wpa_supplicant's own file, written by its SAVE_CONFIG.
+//! and tells it which one to join. SAVE_CONFIG writes to RAM before OOS publishes the saved copy.
 //!
 //! Only the hexadecimal forms reach wpa_supplicant (SSID bytes, the 256-bit key derived here), so no name or password
 //! can break out of a command or of the saved file, and the password itself is never stored.
+
+mod config;
 
 use crate::update::hash::{hex, sha1};
 use std::io;
@@ -337,9 +339,14 @@ impl Ctrl {
         self.ok(&format!("REMOVE_NETWORK {}", id))
     }
 
-    /// Writes the networks to wpa_supplicant's file.
+    /// Save the RAM configuration, then publish it to the data area when mounted.
     pub fn save(&self) -> Result<(), String> {
-        self.ok("SAVE_CONFIG")
+        self.save_with(config::persist)
+    }
+
+    fn save_with(&self, persist: impl FnOnce() -> io::Result<()>) -> Result<(), String> {
+        self.ok("SAVE_CONFIG")?;
+        persist().map_err(|error| format!("Save WLAN configuration: {error}"))
     }
 }
 
@@ -436,9 +443,13 @@ mod tests {
             loop {
                 let (n, from) = srv.recv_from(&mut b).unwrap();
                 let c = String::from_utf8_lossy(&b[..n]).into_owned();
-                let a = if c == "ADD_NETWORK" { "3\n" } else { "OK\n" };
+                let end = c == "SAVE_CONFIG" && seen.iter().any(|previous| previous == "SAVE_CONFIG");
+                let a = match c.as_str() {
+                    "ADD_NETWORK" => "3\n",
+                    "SAVE_CONFIG" if !end => "FAIL\n",
+                    _ => "OK\n",
+                };
                 srv.send_to(a.as_bytes(), from.as_pathname().unwrap()).unwrap();
-                let end = c == "SAVE_CONFIG";
                 seen.push(c);
                 if end {
                     return seen;
@@ -448,7 +459,9 @@ mod tests {
         let c = Ctrl::open(&p).unwrap();
         let id = c.add(b"a b\"\n", Some(&[0xab; 32])).unwrap();
         c.select(id).unwrap();
-        c.save().unwrap();
+        assert_eq!(c.save_with(|| panic!("failed save must not be published")).unwrap_err(), "SAVE_CONFIG: FAIL");
+        let error = c.save_with(|| Err(io::Error::other("disk full"))).unwrap_err();
+        assert_eq!(error, "Save WLAN configuration: disk full");
         let seen = t.join().unwrap();
         assert_eq!(seen[1], "SET_NETWORK 3 ssid 612062220a");
         assert_eq!(seen[3], format!("SET_NETWORK 3 psk {}", "ab".repeat(32)));

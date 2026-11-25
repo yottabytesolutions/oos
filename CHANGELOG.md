@@ -1,5 +1,10 @@
 # Changes
 
+## Unreleased
+
+- Protect the kexec restart marker, kexec diagnostic files and saved WLAN settings against torn writes during
+  power loss. Missing or rejected WLAN configuration starts with an empty network list.
+
 ## 0.2.1: Fixes from the first release
 
 Found while 0.2.0 was installed, switched and released on a DHO924S (2026-11-24). All of it is tested on the host.

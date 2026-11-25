@@ -17,6 +17,7 @@ BASE = "oos-base /oos tmpfs ro 0 0\n"
 COVER = "oos-closed /oos tmpfs ro 0 0\n"
 WRITABLE = "/dev/example /oos ext4 rw,noatime 0 0\n"
 READ_ONLY = "/dev/example /oos ext4 ro,noatime 0 0\n"
+USB = "/dev/example-usb /mnt/usb vfat rw 0 0\n"
 SYNC = "sync -f /oos"
 SEAL = "mount -t ext4 -o remount,ro /dev/example /oos"
 REOPEN = "mount -t ext4 -o remount,rw,noatime /dev/example /oos"
@@ -35,6 +36,7 @@ class DataShutdown(unittest.TestCase):
         self.kmsg = self.root / "kmsg"
         self.marker = self.root / "off"
         self.closing = self.root / "closing"
+        self.usb_mounting = self.root / "usb.mounting"
         self.mounts = self.root / "proc" / "mounts"
         self.trace.touch()
         self.kmsg.touch()
@@ -49,6 +51,7 @@ class DataShutdown(unittest.TestCase):
             "/dev/kmsg": self.kmsg,
             "/tmp/oos-ui.off": self.marker,
             "/tmp/oos-data.closing": self.closing,
+            "/tmp/oos-usb.mounting": self.usb_mounting,
             "/tmp/oos-shutdown.": self.root / "shutdown.",
         }
         source = source.replace(" > /dev/kmsg", " >> /dev/kmsg")
@@ -56,6 +59,7 @@ class DataShutdown(unittest.TestCase):
         self.worker_pid = self.root / "worker.pid"
         source = source.replace('setsid "$0"', '"$STUBS/setsid" "$0"')
         source = source.replace("/bin/sync", '"$STUBS/sync"')
+        source = source.replace("/bin/umount", '"$STUBS/umount"')
         source = source.replace('    shift\n    case $1 in', '    printf "%s\\n" "$$" > "$WORKER_PID"\n    shift\n    case $1 in')
         stubs = ("killall", "pidof", "umount", "mount", "mktemp", "mkfifo")
         # The image's standalone ash can prefer applets to PATH, so point test functions at fixtures.
@@ -73,12 +77,35 @@ sleep() {
     fi
 }
 
+if [ "$1" = --worker ]; then
+    read() {
+        if [ "$2" = source ] && [ -d "$USB_MOUNTING" ]; then
+            # Publish the new mount after the helper has opened the old snapshot.
+            { printf '%s\n' "$USB_MOUNT"; cat "$MOUNTS"; } > "$MOUNTS.new"
+            mv "$MOUNTS.new" "$MOUNTS"
+            rmdir "$USB_MOUNTING"
+        fi
+        if [ "$2" != -t ]; then command read "$@"; return; fi
+        [ "$3" = 0.5 ] || exit 92
+        if [ "$TIMEOUT_AT" = usb ]; then
+            exec 6<"$SLEEPING"
+            command read -r ready <&6 && [ "$ready" = blocked ] || exit 93
+            return 1
+        fi
+        command read -r "$4"
+    }
+fi
+
 kill() {
     if [ "$1" = -0 ] && [ "$2" = "-42" ]; then
         printf 'probe %s\n' "$2" >> "$TRACE"
         [ "$LATE_WORKER" = 1 ] && grep -q 'ext4' "$MOUNTS"
     else
         command kill "$@"
+        if [ "$TIMEOUT_AT" = usb ] && [ "$1" = -TERM ] && [ "$2" = "$usb_worker" ]; then
+            # EOF proves the USB umount child was killed before the test proceeds.
+            if command read -r unexpected <&6; then exit 94; fi
+        fi
         if [ "$CHECK_GROUP_KILL" = 1 ] && [ "$1" = -KILL ] && [ "$2" = "-$worker" ]; then
             # The sync child alone holds this FIFO open. EOF proves the group signal reached it.
             if read -r unexpected <&4; then exit 90; fi
@@ -131,6 +158,16 @@ fi
 exit "$SYNC_EXIT"
 ''')
         self.stub("umount", '''printf "umount %s\n" "$*" >> "$TRACE"
+if [ "$1" = /mnt/usb ]; then
+    if [ "$TIMEOUT_AT" = usb ]; then
+        exec 5>&-
+        exec "$STUBS/blocked-sync"
+    fi
+    [ "$USB_EXIT" = 0 ] || exit "$USB_EXIT"
+    sed '\\| /mnt/usb |d' "$MOUNTS" > "$MOUNTS.new"
+    mv "$MOUNTS.new" "$MOUNTS"
+    exit
+fi
 if [ "$TIMEOUT_AT" = umount ]; then
     printf 'IO in progress\n' >&3
     exec cat "$BLOCKED"
@@ -181,6 +218,8 @@ exit "$MOUNT_EXIT"
             "MARKER": str(self.marker),
             "CLOSING": str(self.closing),
             "MOUNTS": str(self.mounts),
+            "USB_MOUNTING": str(self.usb_mounting),
+            "USB_MOUNT": USB.rstrip(),
             "BLOCKED": str(self.root / "blocked"),
             "FALLBACK": str(self.root / "fallback"),
             "SLEEPING": str(self.root / "sleeping"),
@@ -189,6 +228,7 @@ exit "$MOUNT_EXIT"
             "SETUP_FAIL": "",
             "FALLBACK_BLOCKED": "0",
             "UMOUNT_EXIT": "0",
+            "USB_EXIT": "0",
             "COVER_EXIT": "0",
             "MOUNT_EXIT": "0",
             "MOUNT_ERROR": "Input/output error",
@@ -247,6 +287,38 @@ read() {
         self.assertTrue(self.closing.exists())
         self.assertEqual(calls, CLEANUP)
         self.assertEqual(logs, [])
+
+    def test_removable_media_unmounts_before_data_in_both_modes(self):
+        for mode in ("ui-drained", "stop-ui"):
+            with self.subTest(mode=mode):
+                self.mounts.write_text(USB + BASE + WRITABLE)
+                self.trace.write_text("")
+                if self.closing.exists():
+                    self.closing.rmdir()
+                calls, logs, _ = self.run_helper(mode)
+                preceding = ["killall -TERM oos-ui", "pidof oos-ui"] if mode == "stop-ui" else []
+                self.assertEqual(calls, [*preceding, "umount /mnt/usb", *CLEANUP])
+                self.assertEqual(self.mounts.read_text(), BASE + COVER)
+                self.assertEqual(logs, [])
+
+    def test_failed_usb_unmount_still_unmounts_data(self):
+        self.mounts.write_text(USB + BASE + WRITABLE)
+        calls, logs, _ = self.run_helper(USB_EXIT="1")
+        self.assertEqual(calls, ["umount /mnt/usb", *CLEANUP])
+        self.assertIn("could not unmount /mnt/usb", logs[0])
+
+    def test_automount_finishing_during_the_mount_scan_is_unmounted(self):
+        self.usb_mounting.mkdir()
+        calls, logs, _ = self.run_helper()
+        self.assertEqual(calls, ["umount /mnt/usb", *CLEANUP])
+        self.assertEqual(logs, [])
+
+    def test_usb_timeout_still_unmounts_data(self):
+        self.mounts.write_text(USB + BASE + WRITABLE)
+        calls, logs, _ = self.run_helper(TIMEOUT_AT="usb")
+        self.assertEqual(calls, ["umount /mnt/usb", *CLEANUP])
+        self.assertIn("/mnt/usb timed out after 0.5s", logs[0])
+        self.assertEqual(self.mounts.read_text(), USB + BASE + COVER)
 
     def test_busy_unmount_stays_read_only(self):
         calls, logs, receipt = self.run_helper(code=1, UMOUNT_EXIT="1")

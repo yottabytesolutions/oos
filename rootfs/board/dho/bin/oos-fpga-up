@@ -38,7 +38,7 @@ xdma_params() {
 		fi
 		poll=poll_mode=1 interrupt=;;
 	esac
-	echo "${poll:+$poll }${interrupt:+$interrupt }${c2h:-c2h_timeout=1} ${h2c:-h2c_timeout=1}"
+	echo "${poll:+$poll }${interrupt:+$interrupt }${c2h:-c2h_timeout=1}${h2c:+ $h2c}"
 }
 
 M=/lib/modules/$(uname -r)

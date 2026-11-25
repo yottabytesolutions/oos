@@ -61,6 +61,8 @@ pub(super) fn steps_at(
     }
     let points = compression.map_or(n, |(_, len)| len);
     let frame = bytes(s.header, p.ratio, points);
+    // The stock 128/ratio minimum (record-play.md 7.1) is assumed for the
+    // 1 ns/div plans with masks 0x3 and 0x5 and awaits hardware confirmation.
     let extended = compression.is_none() && scu::tx_points(n * p.ratio, p.ratio) == 8;
     let stride = if extended { frame_stride(bytes(s.header, 1, STAMP_WORDS)) } else { frame_stride(frame) };
     let frames = nf as usize;

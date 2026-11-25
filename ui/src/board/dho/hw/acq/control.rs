@@ -240,7 +240,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
                     Some(read.tag(frame))
                 }
                 Err(e) => {
-                    io.report_read_error(&self.out, format!("raw read of the deep window at STOP: {e}"));
+                    io.report_read_error(&self.out, "raw read of the deep window at STOP", e);
                     None
                 }
             }
@@ -279,8 +279,8 @@ impl<T: PacingPolicy> AcqLoop<T> {
             self.replay.replayed = Some(view);
             let params = &batch.params;
             let (settings, point) = stop_plan(&batch.settings, params, view.scale, view.delay);
-            let result = io.state.reread_steps(&settings, params, batch.index).map_err(|error| error.to_string());
-            match result.and_then(|steps| io.execute(&steps)) {
+            let steps = io.state.reread_steps(&settings, params, batch.index);
+            match steps.map_err(|error| error.to_string().into()).and_then(|steps| io.execute(&steps)) {
                 Ok(bytes) => {
                     let fb = seq::frame_bytes(&settings, params);
                     self.seq += 1;
@@ -302,7 +302,7 @@ impl<T: PacingPolicy> AcqLoop<T> {
                         self.replay.replayed = None;
                     }
                 }
-                Err(e) => io.report_read_error(&self.out, format!("STOP read: {e}")),
+                Err(e) => io.report_read_error(&self.out, "STOP read", e),
             }
         } else {
             io.clock.wait(VIEW_POLL);

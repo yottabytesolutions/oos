@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::{execute_bus_with_clock, Clock, State};
+use super::{execute_bus_with_clock, Clock, ExecuteError, State};
 use crate::dho::{
     hz,
     seq::{raw_settings, Settings},
@@ -36,7 +36,7 @@ pub fn read_raw_again_with_clock(
     io: RawReadIo<'_, impl crate::dho::bus::Bus, impl std::io::Read, impl Clock>,
     index: u32,
     mut log: impl FnMut(String),
-) -> Result<(), String> {
+) -> Result<(), ExecuteError> {
     let steps = st.reread_steps(&raw_settings(s), p, index).map_err(|error| error.to_string())?;
     execute_bus_with_clock(&steps, io.bar, io.stream, io.dma, &mut log, &|| false, io.clock)
 }
@@ -50,7 +50,7 @@ pub fn acquire_la_with_clock(
     c2h: &mut impl std::io::Read,
     mut log: impl FnMut(String),
     clock: &impl Clock,
-) -> Result<Vec<u16>, String> {
+) -> Result<Vec<u16>, ExecuteError> {
     use crate::dho::la;
     let (n, _) = la::window(&la::timing(p, s.mask));
     let mut dma = crate::dho::bus::DmaBuf::new();

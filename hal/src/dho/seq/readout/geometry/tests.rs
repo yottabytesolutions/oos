@@ -72,3 +72,12 @@ fn modeled_compression_cannot_finish_the_historical_overlong_play() {
     let writes = [(0x4008, 1), (0x1100, 1_000_000 + 0x248), (0x11f0, 3912), (0x1170, 0xc000_0100)];
     assert_eq!(played_bytes(&writes, (1_000_000, false)), None);
 }
+
+#[test]
+fn rejects_la_stream_with_a_stale_analog_transfer_length() {
+    use crate::dho::{la, scu};
+    let mut writes = vec![(0x11f0, 64)];
+    let mut shadows = scu::Shadows::HANDOVER;
+    writes.extend(la::readout(&mut shadows, 1000, 0, 2, 3));
+    assert_eq!(played_bytes(&writes, (1000, true)), None);
+}

@@ -90,6 +90,8 @@ impl Publication {
 pub(super) enum CaptureStatus {
     SingleHandoffMissed,
     StopUnconfirmed,
+    DmaStopDeadline,
+    DmaStopLink,
 }
 
 impl CaptureStatus {
@@ -97,6 +99,8 @@ impl CaptureStatus {
         match self {
             Self::SingleHandoffMissed => "SINGLE completed but the UI did not take over",
             Self::StopUnconfirmed => "stop not confirmed by the hardware",
+            Self::DmaStopDeadline => "DMA recovery deadline expired before STOPPED",
+            Self::DmaStopLink => "DMA recovery could not read FPGA status",
         }
     }
 }

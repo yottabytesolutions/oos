@@ -228,14 +228,14 @@ impl Stream {
             Ok(data) => data,
             Err(error) => {
                 let name = if sweep.scan.is_some() { "scan" } else { "roll" };
-                let message = if error.kind() == std::io::ErrorKind::TimedOut {
+                let (context, error) = if error.kind() == std::io::ErrorKind::TimedOut {
                     let writes = self.writes.iter().copied().chain(pulse);
                     let detail = seq::time::dma_timeout(&mut io.bar, (asked, received), writes);
-                    format!("{name} FIFO 0x11e8={fifo:#010x}: {detail}")
+                    (format!("{name} FIFO 0x11e8={fifo:#010x}"), seq::time::ExecuteError::DmaTimeout(detail))
                 } else {
-                    format!("{name} read of {chunks} chunks: {error}")
+                    (format!("{name} read of {chunks} chunks"), seq::time::ExecuteError::DmaRead(error.to_string()))
                 };
-                io.report_read_error(out, message);
+                io.report_read_error(out, &context, error);
                 return false;
             }
         };

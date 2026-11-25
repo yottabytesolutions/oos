@@ -95,7 +95,7 @@ impl Io<Linux> {
         };
         let state = seq::State::handover(o.mask, cal_adc.as_ref());
         let dma_fault = super::dma_fault::DmaFault::default();
-        #[cfg(all(feature = "private-picture-counts", debug_assertions))]
+        #[cfg(feature = "private-picture-counts")]
         let dma_fault = {
             let mut fault = dma_fault;
             fault.inject_stall = std::env::var_os("OOS_OBSERVE_DMA_STALL_ONCE").as_deref() == Some("1".as_ref());

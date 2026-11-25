@@ -18,7 +18,10 @@ use oos_core::change::Identity;
 use oos_hal::dho::{
     bus::{Bus, DmaBuf},
     hz, mask,
-    seq::{self, time::Clock},
+    seq::{
+        self,
+        time::{Clock, ExecuteError},
+    },
     zone,
 };
 use std::{io::Read, time::Instant};
@@ -33,11 +36,11 @@ pub(super) struct ReadIo<'a, B, R, C> {
 }
 
 impl<B: Bus, R: Read, C: Clock> ReadIo<'_, B, R, C> {
-    pub(super) fn report_read_error(&mut self, out: &HwShared, message: String) {
-        self.dma_fault.report(self.state, &mut self.bar, self.clock, out, message);
+    pub(super) fn report_read_error(&mut self, out: &HwShared, context: &str, error: ExecuteError) {
+        self.dma_fault.report(self.state, &mut self.bar, self.clock, out, context, error);
     }
 
-    pub(super) fn execute(&mut self, steps: &[seq::Step], dma: &mut DmaBuf) -> Result<(), String> {
+    pub(super) fn execute(&mut self, steps: &[seq::Step], dma: &mut DmaBuf) -> Result<(), ExecuteError> {
         seq::time::execute_bus_with_clock(steps, &mut self.bar, self.c2h, dma, &mut |_| {}, &|| false, self.clock)
     }
 }
@@ -128,7 +131,7 @@ impl BatchState {
         (ahead, mut timing, pacing): (bool, batch_timing::SourceTiming, &impl PacingPolicy),
         (out, reserved, prearm): (&HwShared, bool, bool),
         plan: &super::super::dma_source::ArmPlan<'_>,
-    ) -> Result<Completed, String> {
+    ) -> Result<Completed, ExecuteError> {
         let (b, p, request) = (capture.settings, capture.params, capture.request);
         let asked = (request.want.as_ref(), request.mode);
         let wait = stop::FirstWait::default();
@@ -146,7 +149,7 @@ impl BatchState {
         };
         let fill_ms = pacing.fill_ms(&mut self.fill, started);
         let allowed = |count| capture_read_allowed(plan, out, &mut self.record_wait, request, count, clock);
-        #[cfg(all(feature = "private-picture-counts", debug_assertions))]
+        #[cfg(feature = "private-picture-counts")]
         if std::mem::take(&mut io.dma_fault.inject_stall) {
             self.dma.destination().stall_next_play();
         }
@@ -175,9 +178,9 @@ impl BatchState {
                 |phase| timing.observe(phase),
             )
         })
-        .inspect_err(|message| {
+        .inspect_err(|error| {
             self.first.proven = None;
-            if stop::needs_disarm(message) {
+            if stop::needs_disarm(error.message()) {
                 super::disarm(io.state, &mut io.bar, clock, out);
             }
         })?;
@@ -227,13 +230,13 @@ impl BatchState {
         let live = raw_newest(b, p);
         crate::compress::note_batch_k(if live { b.compress } else { 1 });
         let mut la_error = None;
-        let la = batch::read_la(io.state, (b, p), (&mut io.bar, io.c2h, io.clock), &mut self.la_fails, |message| {
-            la_error = Some(message);
+        let la = batch::read_la(io.state, (b, p), (&mut io.bar, io.c2h, io.clock), &mut self.la_fails, |error| {
+            la_error = Some(error);
         })
         .map(|words| la_record(words, b, p));
         let mut failed = la_error.is_some();
-        if let Some(message) = la_error {
-            io.report_read_error(out, message);
+        if let Some(error) = la_error {
+            io.report_read_error(out, &format!("LA read ({} of 3)", self.la_fails), error);
         }
         let replay = !io.dma_fault.pending() && raw::replay_due(count, live, &mut self.raw.live, io.clock);
         let mut wrote_after_dma = la.is_some() || replay;
@@ -288,7 +291,7 @@ impl BatchState {
         );
         if let Err(e) = read {
             let what = if deep { "deep window" } else { "newest frame" };
-            io.report_read_error(out, format!("raw read of the {what}: {e}"));
+            io.report_read_error(out, &format!("raw read of the {what}"), e);
             return Err(());
         }
         let decoded_at = started.map(|_| io.clock.now());

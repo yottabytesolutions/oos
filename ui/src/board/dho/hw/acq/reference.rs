@@ -216,10 +216,10 @@ fn read_capture_profile(
         Err(error) => {
             source.batch.first.proven = None;
             if transition {
-                if !super::dma_fault::is_timeout(&error) {
+                if !matches!(&error, seq::time::ExecuteError::DmaTimeout(_)) {
                     super::disarm(io.state, &mut io.bar, io.clock, &source.out);
                 }
-                if error != seq::NEW_SETTINGS {
+                if error.message() != seq::NEW_SETTINGS {
                     source.batch.raw.reference.reject(pair);
                 }
             }
@@ -270,7 +270,7 @@ fn read_capture_transition(
     (reference, force): (bool, bool),
     mut timing: SourceTiming,
     obsolete: impl Fn() -> bool,
-) -> Result<Option<Completed>, String> {
+) -> Result<Option<Completed>, seq::time::ExecuteError> {
     let (s, p) = (capture.settings, capture.params);
     if p.max_frames < 2 {
         return Err("capture transition needs two ring slots".into());

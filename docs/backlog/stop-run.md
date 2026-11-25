@@ -144,9 +144,10 @@ of at most 4 MiB.
 The synchronous XDMA timeout path aborts the queued transfer and stops the engine when its status
 is accessible. The local driver returns `ETIMEDOUT` even if earlier chains in the syscall completed.
 Userspace discards the failed read and takes the FPGA snapshot before the stop sequence. The sequence
-clears play info and pulses the SPU and TX resets. The worker discards retained replay state and waits
-for a post-reset STOPPED read before the next arm. A stalled engine, late completion or unread FIFO
-data could still affect the next read if the hardware does not honor the reset. Check the driver and
+clears play info and pulses the SPU and TX resets. The worker discards retained replay state and services
+requests while polling for STOPPED. It repeats disarm every 200 ms and reconfigures when STOPPED arrives,
+status reads fail, or the one-second recovery deadline expires. A stalled engine, late completion or unread
+FIFO data could still affect the next read if the hardware does not honor the reset. Check the driver and
 FPGA behavior on a DHO924S before relying on automatic recovery.
 
 [XDMA return path](../../kernel/modules/xdma/xdma/libxdma.c) ·

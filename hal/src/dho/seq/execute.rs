@@ -16,8 +16,10 @@ pub(super) mod linux;
 mod tests;
 
 mod dma;
+mod error;
 mod replay;
 pub use dma::{timeout as dma_timeout, DMA_TIMEOUT};
+pub use error::ExecuteError;
 pub use replay::{acquire_la_with_clock, read_raw_again_with_clock, RawReadIo};
 
 #[derive(Debug)]
@@ -46,7 +48,7 @@ pub fn acquire_batch_observed<B: crate::dho::bus::Bus, R: std::io::Read>(
     stop: impl Fn() -> bool,
     (stop_fill, before_read): (impl Fn() -> bool, impl FnMut(u32) -> bool),
     observe: impl FnMut(BatchPhase),
-) -> Result<u32, String> {
+) -> Result<u32, ExecuteError> {
     acquire_batch_phases(
         st,
         s,
@@ -154,6 +156,7 @@ pub fn acquire_batch_with_clock<B: crate::dho::bus::Bus, R: std::io::Read>(
         clock,
         None::<(fn(BatchPhase), fn() -> bool, fn(u32) -> bool)>,
     )
+    .map_err(String::from)
 }
 
 #[allow(clippy::too_many_arguments)] // Shares execution with the existing clock and optional phase observer.
@@ -171,7 +174,7 @@ fn acquire_batch_phases<B: crate::dho::bus::Bus, R: std::io::Read>(
     mut idle: impl FnMut() -> bool,
     clock: &impl Clock,
     mut observed: Option<(impl FnMut(BatchPhase), impl Fn() -> bool, impl FnMut(u32) -> bool)>,
-) -> Result<u32, String> {
+) -> Result<u32, ExecuteError> {
     validate_readout(s, p).map_err(|error| error.to_string())?;
     let arm = batch_arm(st, s, p, armed);
     let observed_fill = observed.is_some();
@@ -207,7 +210,7 @@ fn first_record(
     (bar, c2h, dma): (&mut impl crate::dho::bus::Bus, &mut impl std::io::Read, &mut crate::dho::bus::DmaBuf),
     (log, stop, clock): (&mut impl FnMut(String), &impl Fn() -> bool, &impl Clock),
     observe: &mut impl FnMut(BatchPhase),
-) -> Result<(), String> {
+) -> Result<(), ExecuteError> {
     let at = arm.iter().position(|step| matches!(step, Step::Poll { .. })).unwrap_or(arm.len());
     let (writes, steps) = arm.split_at(at);
     let started = clock.now();
@@ -234,7 +237,7 @@ fn read_batch<B: crate::dho::bus::Bus, R: std::io::Read>(
     log: &mut impl FnMut(String),
     clock: &impl Clock,
     observe: Option<impl FnMut(BatchPhase)>,
-) -> Result<(), String> {
+) -> Result<(), ExecuteError> {
     let Some(mut observe) = observe else {
         return execute_bus_with_clock(steps, bar, c2h, dma, log, &|| false, clock);
     };
@@ -281,7 +284,7 @@ pub fn execute_bus_until<B: crate::dho::bus::Bus, R: std::io::Read>(
     log: &mut impl FnMut(String),
     stop: &impl Fn() -> bool,
 ) -> Result<(), String> {
-    execute_bus_with_clock(steps, bar, c2h, dma, log, stop, &time::Real)
+    execute_bus_with_clock(steps, bar, c2h, dma, log, stop, &time::Real).map_err(String::from)
 }
 
 /// Runs bus-only steps using the supplied clock for polls and delays.
@@ -293,7 +296,7 @@ pub fn execute_bus_with_clock<B: crate::dho::bus::Bus, R: std::io::Read>(
     log: &mut impl FnMut(String),
     stop: &impl Fn() -> bool,
     clock: &impl Clock,
-) -> Result<(), String> {
+) -> Result<(), ExecuteError> {
     for (index, step) in steps.iter().enumerate() {
         plain_step((step, &steps[..index]), bar, c2h, dma, log, stop, clock)?;
         if matches!(step, Step::Wr(_)) && !matches!(steps.get(index + 1), Some(Step::Wr(_))) {
@@ -312,7 +315,7 @@ fn plain_step<B: crate::dho::bus::Bus, R: std::io::Read>(
     log: &mut impl FnMut(String),
     stop: &impl Fn() -> bool,
     clock: &impl Clock,
-) -> Result<(), String> {
+) -> Result<(), ExecuteError> {
     match s {
         Step::Wr((off, v)) => bar.wr(*off, *v),
         Step::Afe(_) => return Err("AFE step without AFE bus".into()),

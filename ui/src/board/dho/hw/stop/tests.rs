@@ -110,7 +110,7 @@ fn run(
     script: &Script<'_>,
     serial: bool,
     done_at: Duration,
-    check: impl FnOnce(&mut Ring<'_>, &mut seq::State, Option<Batch>, Result<u32, String>, bool),
+    check: impl FnOnce(&mut Ring<'_>, &mut seq::State, Option<Batch>, Result<u32, seq::time::ExecuteError>, bool),
 ) {
     let _scope = crate::drawpipe::test_scope::Scope::new();
     let settings = Settings { auto: false, depth: 4000, compress: 4, ..Settings::default() };
@@ -154,7 +154,7 @@ fn run(
             true
         }
         Err(error) => {
-            if needs_disarm(error) {
+            if needs_disarm(error.message()) {
                 crate::board::dho::lifecycle::disarm(|| state.disarm_capture(&mut ring, script));
             }
             previous.take_if(|batch| batch.index < seq::frames(&settings, &params));
@@ -202,7 +202,7 @@ fn overlapping_trigger_timeout_disarms_even_before_hold_is_seen() {
     let out = HwShared::default();
     let script = Script::new(&out, None, None);
     run(&script, false, ms(100_000), |ring, _, _, result, _| {
-        assert!(is_stall(&result.unwrap_err()));
+        assert!(is_stall(result.unwrap_err().message()));
         assert_eq!(ring.armed, None);
         let text = crate::drawpipe::counters().acquisition.text();
         assert!(text.contains("disarm=1"), "{text}");
@@ -273,7 +273,7 @@ fn default_serial_stop_invalidates_the_overwritten_slot_on_timeout() {
     let out = HwShared::default();
     let script = Script::new(&out, Some(ms(1)), None);
     run(&script, true, ms(100_000), |ring, _, batch, result, fresh| {
-        assert!(is_stall(&result.unwrap_err()));
+        assert!(is_stall(result.unwrap_err().message()));
         assert_eq!(ring.armed, None);
         assert_eq!(ring.slots[&0], 0);
         assert!(batch.is_none() && !fresh);

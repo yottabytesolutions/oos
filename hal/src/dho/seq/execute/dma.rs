@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::super::{readout::unpad_stride, Step};
+use super::{
+    super::{readout::unpad_stride, Step},
+    ExecuteError,
+};
 use crate::dho::bus::{Bus, DmaBuf};
 use std::{fmt::Write as _, io};
 
@@ -14,11 +17,11 @@ pub(super) fn read_play(
     c2h: &mut impl io::Read,
     dma: &mut DmaBuf,
     log: &mut impl FnMut(String),
-) -> Result<(), String> {
+) -> Result<(), ExecuteError> {
     let planned = frames * stride;
-    #[cfg(all(feature = "private-picture-counts", debug_assertions))]
+    #[cfg(feature = "private-picture-counts")]
     let bytes = dma.observer_read_bytes(planned);
-    #[cfg(not(all(feature = "private-picture-counts", debug_assertions)))]
+    #[cfg(not(feature = "private-picture-counts"))]
     let bytes = planned;
     let mut received = 0;
     let buf = dma
@@ -35,14 +38,17 @@ pub(super) fn read_play(
                     &before[first.map_or(0, |index| index + 1)..=last]
                 });
                 let writes = writes.iter().filter_map(|step| if let Step::Wr(w) = step { Some(*w) } else { None });
-                timeout(bar, (bytes, received), writes)
+                ExecuteError::DmaTimeout(timeout(bar, (bytes, received), writes))
             } else {
-                format!("c2h read of {bytes} bytes: {error} (0x4034 = {:#x})", bar.rd(0x4034))
+                ExecuteError::DmaRead(format!("c2h read of {bytes} bytes: {error} (0x4034 = {:#x})", bar.rd(0x4034)))
             }
         })?;
+    #[cfg(feature = "private-picture-counts")]
     if bytes != planned {
         dma.truncate(0);
-        return Err(format!("c2h read of {bytes} bytes: observer's oversized read unexpectedly completed"));
+        return Err(ExecuteError::DmaRead(format!(
+            "c2h read of {bytes} bytes: observer's oversized read unexpectedly completed"
+        )));
     }
     let n = unpad_stride(buf, frame, stride);
     dma.truncate(n);
@@ -115,7 +121,7 @@ mod tests {
         }
     }
 
-    #[cfg(all(feature = "private-picture-counts", debug_assertions))]
+    #[cfg(feature = "private-picture-counts")]
     #[test]
     fn observer_asks_for_an_extra_word_once_and_leaves_no_batch_data() {
         let steps = [Step::Read { frames: 1, frame: 16 }];

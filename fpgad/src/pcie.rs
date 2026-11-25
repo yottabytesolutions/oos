@@ -34,7 +34,7 @@ impl<'a> XdmaParams<'a> {
         } else {
             (self.poll, self.interrupt)
         };
-        [poll, interrupt, Some(self.c2h.unwrap_or("c2h_timeout=1")), Some(self.h2c.unwrap_or("h2c_timeout=1"))]
+        [poll, interrupt, Some(self.c2h.unwrap_or("c2h_timeout=1")), self.h2c]
             .into_iter()
             .flatten()
             .collect::<Vec<_>>()
@@ -140,7 +140,7 @@ pub(crate) fn down() -> std::io::Result<()> {
 mod tests {
     use super::*;
 
-    const DEFAULT: &str = "poll_mode=1 c2h_timeout=1 h2c_timeout=1";
+    const DEFAULT: &str = "poll_mode=1 c2h_timeout=1";
 
     fn check(conf: &str, kexec: bool, expected: &str, warning: bool) {
         let (args, why) = xdma_params_for(Some(conf), kexec);
@@ -162,13 +162,13 @@ mod tests {
     fn xdma_parameters_from_the_system_settings() {
         assert_eq!(xdma_params_for(None, false), (DEFAULT.to_owned(), None));
         check(" \n", false, DEFAULT, false);
-        check("poll_mode=0\n", false, "poll_mode=0 c2h_timeout=1 h2c_timeout=1", false);
+        check("poll_mode=0\n", false, "poll_mode=0 c2h_timeout=1", false);
         check("h2c_timeout=10 c2h_timeout=2", false, "poll_mode=1 c2h_timeout=2 h2c_timeout=10", false);
-        check("interrupt_mode=2", false, "interrupt_mode=2 c2h_timeout=1 h2c_timeout=1", false);
+        check("interrupt_mode=2", false, "interrupt_mode=2 c2h_timeout=1", false);
         check(
             "poll_mode=0\tinterrupt_mode=3 c2h_timeout=10",
             false,
-            "poll_mode=0 interrupt_mode=3 c2h_timeout=10 h2c_timeout=1",
+            "poll_mode=0 interrupt_mode=3 c2h_timeout=10",
             false,
         );
         for bad in [
@@ -195,7 +195,7 @@ mod tests {
     fn kexec_forces_polling_and_keeps_timeout_overrides() {
         check("", true, DEFAULT, false);
         check("poll_mode=7 c2h_timeout=9", true, DEFAULT, true);
-        check("c2h_timeout=9", true, "poll_mode=1 c2h_timeout=9 h2c_timeout=1", false);
+        check("c2h_timeout=9", true, "poll_mode=1 c2h_timeout=9", false);
         check(
             "poll_mode=0 interrupt_mode=1 c2h_timeout=10 h2c_timeout=3",
             true,

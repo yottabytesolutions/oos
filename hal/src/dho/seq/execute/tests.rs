@@ -198,7 +198,7 @@ fn serial_capture_can_be_canceled_at_admission_without_a_dma_read() {
             },
         )),
     );
-    assert_eq!(result, Err(NEW_SETTINGS.to_string()));
+    assert_eq!(result, Err(NEW_SETTINGS.into()));
     assert_eq!(attempted.get(), 1);
     assert!(dma.data().is_empty());
 }

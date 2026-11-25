@@ -25,7 +25,10 @@ use oos_hal::dho::{
     adc, afe, avg,
     bus::{Bus, DmaBuf},
     hz, la,
-    seq::{self, time::Clock},
+    seq::{
+        self,
+        time::{Clock, ExecuteError},
+    },
 };
 use std::{
     io::Read,
@@ -212,17 +215,24 @@ impl<T: pacing::PacingPolicy> AcqLoop<T> {
 
     fn run(&mut self, io: &mut Io<impl Port>) {
         while let Some(counter) = Service::before_pass(&self.out) {
+            let request = self.service(io, counter);
             if io.dma_fault.pending() {
                 self.replay.invalidate(&self.out, u32::MAX);
                 self.batch.first = FirstRecord::default();
-                if !io.dma_fault.ready(&mut io.bar) {
-                    io.clock.wait(Duration::from_millis(200));
+                {
+                    let mut g = crate::perfguard::deep::acq_lock(&self.out);
+                    if g.hold {
+                        // The timed-out play invalidated the ring. There is no final DMA to publish.
+                        g.final_ack = g.final_req;
+                    }
+                }
+                if !io.dma_fault.recover(&mut io.state, &mut io.bar, &io.clock, &self.out) {
                     continue;
                 }
                 self.configured.current = None;
             }
             let mut last_read = std::mem::take(&mut self.replay.fresh);
-            let Some(request) = self.service(io, counter) else { continue };
+            let Some(request) = request else { continue };
             let Some((settings, params)) = self.reconfigure(io, &request, &mut last_read) else { continue };
             if self.configured.mode != Slow::Off {
                 if !self.stream.poll(
@@ -264,19 +274,23 @@ impl<T: pacing::PacingPolicy> AcqLoop<T> {
             &mut self.seq,
         );
         if let Err(e) = segment.step(&mut self.segrun, settings, params, identity) {
-            io.report_read_error(&self.out, format!("segments: {e}"));
+            // The legacy segment executor reports its C2H timeouts as text.
+            let error = if e.contains(seq::time::DMA_TIMEOUT) { ExecuteError::DmaTimeout(e) } else { e.into() };
+            io.report_read_error(&self.out, "segments", error);
             io.abort_segments(&mut self.segrun, &self.out);
-            std::thread::sleep(Duration::from_millis(200));
+            if !io.dma_fault.pending() {
+                io.clock.wait(Duration::from_millis(200));
+            }
         }
     }
 }
 
 impl<P: Port> Io<P> {
-    pub(super) fn report_read_error(&mut self, out: &HwShared, message: String) {
-        self.dma_fault.report(&mut self.state, &mut self.bar, &self.clock, out, message);
+    pub(super) fn report_read_error(&mut self, out: &HwShared, context: &str, error: ExecuteError) {
+        self.dma_fault.report(&mut self.state, &mut self.bar, &self.clock, out, context, error);
     }
 
-    fn execute(&mut self, steps: &[seq::Step]) -> Result<Vec<u8>, String> {
+    fn execute(&mut self, steps: &[seq::Step]) -> Result<Vec<u8>, ExecuteError> {
         execute(steps, &mut self.bar, &mut self.c2h, &self.clock)
     }
 
@@ -295,7 +309,7 @@ fn execute(
     bar: &mut impl Bus,
     c2h: &mut impl Read,
     clock: &impl Clock,
-) -> Result<Vec<u8>, String> {
+) -> Result<Vec<u8>, ExecuteError> {
     let mut dma = DmaBuf::new();
     seq::time::execute_bus_with_clock(steps, bar, c2h, &mut dma, &mut |_| {}, &|| false, clock)?;
     Ok(dma.into_vec())

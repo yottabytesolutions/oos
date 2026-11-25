@@ -69,6 +69,13 @@ impl State {
         ]
         .into()
     }
+
+    pub(super) fn advanced_since(&self, start: &Self) -> Result<bool, Error> {
+        self.acquired
+            .zip(start.acquired)
+            .map(|(after, before)| after > before)
+            .ok_or(Error::Measurement("scope state does not report the acquired counter needed to prove triggering"))
+    }
 }
 
 fn field<'a>(fields: &[&'a str], name: &str) -> Option<&'a str> {

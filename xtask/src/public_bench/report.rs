@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-use super::{settings::Settings, BenchmarkOptions, Error, SETTLE, WINDOW};
+use super::{settings::Settings, trigger::Trigger, BenchmarkOptions, Error, SETTLE, WINDOW};
 use crate::unit_tools::report;
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, io, path::Path, time::Duration};
@@ -88,14 +88,39 @@ pub(super) struct ViewReport {
     name: String,
     pub(super) samples: Vec<Sample>,
     summary: BTreeMap<Metric, Option<Spread>>,
+    #[serde(default)]
+    status: ViewStatus,
+}
+
+#[derive(Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ViewStatus {
+    #[default]
+    Measured,
+    #[serde(rename = "no triggers")]
+    NoTriggers,
+}
+
+impl ViewStatus {
+    fn label(&self) -> &str {
+        match self {
+            Self::Measured => "",
+            Self::NoTriggers => "no triggers",
+        }
+    }
 }
 
 impl ViewReport {
     pub(super) fn new(name: &str) -> Self {
-        Self { name: name.into(), samples: Vec::new(), summary: BTreeMap::new() }
+        Self { name: name.into(), samples: Vec::new(), summary: BTreeMap::new(), status: ViewStatus::Measured }
     }
 
     pub(super) fn summarize(&mut self) {
+        if self.samples.iter().any(|sample| {
+            [Metric::AcquiredPerS, Metric::ShownPerS].iter().any(|metric| sample.values.get(metric) == Some(&Some(0.0)))
+        }) {
+            self.status = ViewStatus::NoTriggers;
+        }
         self.summary = Metric::ALL
             .into_iter()
             .map(|metric| {
@@ -103,6 +128,29 @@ impl ViewReport {
                 (metric, Spread::calculate(values.collect()))
             })
             .collect();
+    }
+
+    pub(super) fn write_progress(&self, out: &mut impl io::Write, run: usize, runs: usize) -> Result<(), Error> {
+        let [pictures, shown, rtt] = self.figures();
+        writeln!(
+            out,
+            "public-bench: run {run}/{runs} {}  pictures/s {pictures}  shown/s {shown}  *OPC? host RTT {rtt} ms  {}",
+            self.name,
+            self.status.label()
+        )
+        .and_then(|()| out.flush())
+        .map_err(Error::Output)
+    }
+
+    fn figures(&self) -> [String; 3] {
+        let spread = |metric| self.summary.get(&metric).and_then(Option::as_ref);
+        let show = |field: Option<f64>| field.map_or_else(|| "-".into(), |value| format!("{value:.3}"));
+        let pictures = show(spread(Metric::PicturesPerS).map(|s| s.median));
+        let shown = spread(Metric::ShownPerS)
+            .map_or_else(|| "-".into(), |s| format!("{:.3} [{:.3}, {:.3}]", s.median, s.min, s.max));
+        let median = show(spread(Metric::OpcHostMedianMs).map(|s| s.median));
+        let max = show(spread(Metric::OpcHostMaxMs).map(|s| s.max));
+        [pictures, shown, format!("{median} / {max}")]
     }
 }
 
@@ -117,6 +165,8 @@ pub(super) struct Report {
     settle_s: f64,
     window_s: f64,
     views: Vec<ViewReport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    trigger_level: Option<Trigger>,
 }
 
 impl Report {
@@ -126,6 +176,7 @@ impl Report {
         version: &str,
         card_mode: Option<String>,
         views: Vec<ViewReport>,
+        trigger_level: Trigger,
     ) -> Self {
         Self {
             schema: SCHEMA,
@@ -137,7 +188,30 @@ impl Report {
             settle_s: SETTLE.as_secs_f64(),
             window_s: WINDOW.as_secs_f64(),
             views,
+            trigger_level: Some(trigger_level),
         }
+    }
+
+    pub(super) fn check_rates(&self) -> Result<(), Error> {
+        if self.views.iter().any(|view| view.status == ViewStatus::NoTriggers) {
+            return Err(Error::ZeroRate);
+        }
+        Ok(())
+    }
+
+    pub(super) fn write_summary(&self, out: &mut impl io::Write) -> Result<(), Error> {
+        writeln!(
+            out,
+            "{:<18} {:>10} {:>27} {:>33}  status",
+            "view", "pictures/s", "shown/s median [min, max]", "*OPC? host RTT median / max ms"
+        )
+        .map_err(Error::Output)?;
+        for view in &self.views {
+            let [pictures, shown, rtt] = view.figures();
+            writeln!(out, "{:<18} {pictures:>10} {shown:>27} {rtt:>33}  {}", view.name, view.status.label())
+                .map_err(Error::Output)?;
+        }
+        out.flush().map_err(Error::Output)
     }
 }
 

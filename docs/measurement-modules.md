@@ -79,18 +79,35 @@ that spacing. An unresolved crossing returns the usual unavailable value.
 
 With the unit released for testing, take a test lease with `tools/scope-lease`
 and run `cargo xtask public-bench` on the host. Feed the selected channel a
-stable signal with a rising zero crossing. Keep the signal, front-end setup
-and display configuration matched between builds.
-The benchmark changes the scope settings and leaves the final view active.
+stable signal with a rising edge. Keep the signal, front-end setup and display
+configuration matched between builds.
 
 ```sh
 cargo xtask public-bench --host example.invalid --label reference --signal-channel 2 --out /path/to/results
 cargo xtask public-bench compare /path/to/results/public-reference.json /path/to/results/public-candidate.json
 ```
 
-The command uses one TCP connection on port 5555. It runs the 18 views three times
-by default (`--runs` overrides this), settles for 6 s per view and samples a
-12 s window. The report includes the actual elapsed time, checked settings
+The command uses SCPI on TCP port 5555 and the host's `python3` to handle
+interrupts. By default, `--trigger-level auto` measures the selected channel's
+`VMIN` and `VMAX` in Auto sweep at 1 ms/div and uses their midpoint. The report
+records the method, voltage and measured extrema. Supply `--trigger-level <volts>`
+if the build cannot measure distinct extrema or to use a fixed level.
+
+Before the first view, the acquired counter must advance during a 6 s settle
+in Normal sweep. If it does not, the command stops with a nonzero exit code.
+It runs the 18 views three times by default (`--runs` overrides this), settles
+for 6 s per view and samples a 12 s window. Progress shows the medians so far
+for each view, followed by a table of the final figures. A view with any zero
+acquired or shown rate is marked `no triggers` in the JSON and table and makes
+the run exit nonzero.
+
+The command reads the starting settings and Run/Stop state before changing them.
+It restores and verifies them after the run, on error or when interrupted, and
+names any settings that it could not verify. Use a live source and leave
+Single sweep before starting. Running the benchmark replaces live
+captures and resets accumulated measurement statistics.
+
+The report includes the actual elapsed time, checked settings
 (including unsupported or mismatched readbacks), firmware version field,
 start time in Unix seconds and boot card mode when available.
 

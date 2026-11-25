@@ -191,7 +191,7 @@ fn shutdown_flushes_accepted_saves_before_current_setup_and_marker_cleanup() {
     assert_eq!(fs.text("/temporary/oos-ui.setup").as_deref(), Some("shutdown"));
     assert_eq!(fs.text("/data/oos-ui.running"), None);
     assert_eq!(fs.text("/data/oos-ui.stable"), None);
-    assert_eq!(lock(&memory).text("/temporary/oos-ui.off").as_deref(), Some(""));
+    assert_eq!(lock(&memory).text("/temporary/oos-ui.off"), None);
     assert_eq!(
         *lock(&events),
         [
@@ -201,7 +201,6 @@ fn shutdown_flushes_accepted_saves_before_current_setup_and_marker_cleanup() {
             Event::Write("/data/oos-ui.setup.new".into(), "shutdown".into()),
             Event::Remove("/data/oos-ui.running".into()),
             Event::Remove("/data/oos-ui.stable".into()),
-            Event::Write("/temporary/oos-ui.off".into(), "".into()),
         ]
     );
 }
@@ -323,7 +322,7 @@ fn successful_promotions_stay_coalesced_until_the_candidate_changes() {
 }
 
 #[test]
-fn oversized_shutdown_reports_the_error_and_still_cleans_up_and_stops_the_supervisor() {
+fn oversized_shutdown_reports_the_error_and_still_cleans_up() {
     for power in [false, true] {
         let fs = filesystem();
         let memory = fs.memory.clone();
@@ -337,6 +336,6 @@ fn oversized_shutdown_reports_the_error_and_still_cleans_up_and_stops_the_superv
         assert_eq!(fs.text("/temporary/oos-ui.setup").as_deref(), Some("last stable"));
         assert_eq!(fs.text("/data/oos-ui.running"), None);
         assert_eq!(fs.text("/data/oos-ui.stable"), None);
-        assert_eq!(fs.text("/temporary/oos-ui.off").is_some(), power);
+        assert_eq!(fs.text("/temporary/oos-ui.off"), None);
     }
 }

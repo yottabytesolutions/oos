@@ -47,6 +47,7 @@ publish() { sync "$1.new" && mv "$1.new" "$1" && sync "$dir"; }
 
 # What the first start makes, kept in $dir.
 prepare() {
+	[ ! -e /tmp/oos-data.closing ] || { log "/oos is closed for shutdown"; return 1; }
 	umask 077
 	mkdir -p "$dir" && chmod 700 "$dir" && sync "$(dirname "$dir")" || return 1
 	if [ ! -s "$dir/password" ]; then

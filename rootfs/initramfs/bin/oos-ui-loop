@@ -8,6 +8,7 @@ tmp=${OOS_UI_TMP:-/tmp}
 ui=${OOS_UI_BIN:-/bin/oos-ui}
 exits=${OOS_UI_EXITS:-/bin/oos-ui-exits}
 crash_save=${OOS_CRASH_SAVE:-/bin/oos-crash-save}
+[ ! -e "$tmp/oos-ui.off" ] || exit 0
 boot=$(cat "${OOS_BOOT_ID:-/proc/sys/kernel/random/boot_id}") || exit 1
 up() { cut -d. -f1 "${OOS_UPTIME:-/proc/uptime}"; }
 marker() {
@@ -109,11 +110,13 @@ while [ ! -e "$tmp/oos-ui.off" ]; do
     t0=$(up)
     set -- $(cat "$tmp/oos-ui.args")
     [ "$mode" != safe ] || set -- "$@" --safe
+    [ ! -e "$tmp/oos-ui.off" ] || break
     run=$boot:$$:$seq
     OOS_UI_RUN_ID=$run "$ui" "$@" >> "$tmp/oos-ui.log" 2>&1
     rc=$?
     restore_clocks >> "$tmp/oos-ui.log" 2>&1 ||
         echo 'oos-ui-loop: clock_floor recovery failed; receipt retained' >> "$tmp/oos-ui.log"
+    [ ! -e "$tmp/oos-ui.off" ] || break
     # A full hour alive clears previous exits even if the RTC changed during the run.
     t1=$(up)
     if [ $((t1 - t0)) -ge 3600 ]; then ledger clear || failed; fi

@@ -14,6 +14,7 @@ ok() { echo "$1" | grep -Eqx '([0-9a-f]{4}:){7}[0-9a-f]{4}'; }
 # The secret is written once and synced at once: /oos is ext2 without a journal, and a reboot before the kernel's
 # writeback left an empty file, so every start made a new secret and new addresses (unit 2026-11-13, round 7).
 secret() {
+	[ ! -e /tmp/oos-data.closing ] || { log "/oos is closed for shutdown"; return 1; }
 	f=$1
 	s=$(cat "$f" 2>/dev/null)
 	if ok "$s"; then

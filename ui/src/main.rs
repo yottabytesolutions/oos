@@ -375,25 +375,6 @@ fn save_shot(ui: &mut Ui, cv: &Canvas, p: String, n: &mut u32) {
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 const SPLASH: [&str; 2] = ["/tmp/oos-splash.ppm", "/etc/oos/splash.ppm"];
 
-/// Power off / restart through the front-panel MCU, as the stock system does (board.md 4/8.3): file systems synced
-/// first, LEDs off, then `FA 05 01` twice (power off) or `FA 05 03` (restart). Whether the MCU waits for Linux to halt
-/// is not known; OOS keeps nothing on the card open for writing except during an update job (`Ui::update_busy`, which
-/// refuses the power-off), so a hard cut is harmless.
-#[cfg(target_os = "linux")]
-fn power(inp: &mut input::Inputs, a: ui::PowerAction) {
-    use board::Board;
-    eprintln!("oos-ui: power {:?}", a);
-    inp.set_leds(0);
-    unsafe { libc::sync() };
-    match a {
-        ui::PowerAction::Off => {
-            inp.send(&board::board().panel_cmd(board::PanelCmd::PowerOff));
-            inp.send(&board::board().panel_cmd(board::PanelCmd::PowerOff));
-        }
-        ui::PowerAction::Restart => inp.send(&board::board().panel_cmd(board::PanelCmd::Restart)),
-    }
-}
-
 /// Once a second: a link at 10 Mbit/s gets one more autonegotiation (System > Network > 10 Mbit retry, ethlink.rs).
 #[cfg(target_os = "linux")]
 fn eth_watch(ui: &mut Ui, now: f64) {

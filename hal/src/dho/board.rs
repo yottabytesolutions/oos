@@ -60,7 +60,7 @@ pub fn thermal_zones(root: &Path) -> Vec<Zone> {
 pub enum Alarm {
     /// Hot for `warn_after` periods in a row: show the warning and sound the tone.
     Warn,
-    /// Hot for `off_after` periods in a row: orderly shutdown, then `panel::POWER_OFF`.
+    /// Hot for `off_after` periods in a row: send `panel::POWER_OFF` immediately.
     PowerOff,
     /// Back below the limits after a warning: stop the tone, clear the warning.
     Cleared,

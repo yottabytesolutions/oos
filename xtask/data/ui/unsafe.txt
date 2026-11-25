@@ -5,7 +5,7 @@
 1 unsafe ui/src/ethlink.rs
 3 unsafe ui/src/fastdraw/samples.rs
 18 unsafe ui/src/gpu.rs
-2 unsafe ui/src/main.rs
+1 unsafe ui/src/main.rs
 1 unsafe ui/src/sntp.rs
 1 unsafe ui/src/store.rs
 1 unsafe ui/src/usbtmc.rs

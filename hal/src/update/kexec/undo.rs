@@ -52,11 +52,6 @@ fn command(command: &mut Command) -> Result<(), String> {
     }
 }
 
-/// Restore writable update state storage; both launch errors and nonzero exit status are diagnostic.
-pub fn remount_writable() {
-    warn("remount /oos read-write", command(Command::new("mount").args(["-o", "remount,rw", "/oos"])));
-}
-
 /// Run one `ip` restore command; launch errors and nonzero exit status are reported.
 pub fn ip(action: &str, args: &[&str]) {
     warn(action, command(Command::new("ip").args(args)));

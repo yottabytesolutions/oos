@@ -43,6 +43,7 @@ pub(super) fn run(command: &mut Command) -> Result<(ExitStatus, Vec<u8>, Vec<u8>
 }
 
 pub(super) fn write(dir: &Path, name: &str, bytes: &[u8], limit: usize) -> io::Result<()> {
+    crate::system::check_data_write(dir)?;
     write_with(&mut Disk, dir, name, bytes, limit)
 }
 
@@ -51,6 +52,7 @@ fn write_with(files: &mut impl Files, dir: &Path, name: &str, bytes: &[u8], limi
 }
 
 pub(super) fn begin(dir: &Path, kernel: usize, initrd: usize, tree: &[u8], from: u64) -> io::Result<()> {
+    crate::system::check_data_write(dir)?;
     std::fs::create_dir_all(dir)?;
     // Invalidate previous jump/output evidence before saving the new attempt, including on a load failure.
     for name in ["jump.log", "stdout", "stderr", "merged.dtb", "staged.log", "load.log"] {

@@ -184,6 +184,7 @@ fn keep(mounts: &str, path: &Path, line: &str) -> io::Result<()> {
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    crate::system::check_data_write(path)?;
     durable_replace(path, &tmp, line.as_bytes(), &options)
 }
 

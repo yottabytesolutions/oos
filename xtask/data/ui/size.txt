@@ -4,12 +4,12 @@
 649 file ui/src/gfx.rs
 531 file ui/src/gpu.rs
 647 file ui/src/http.rs
-438 file ui/src/main.rs
+423 file ui/src/main.rs
 460 file ui/src/measures/jitter.rs
 514 file ui/src/measures/power.rs
 516 file ui/src/measures/standard.rs
 3200 file ui/src/scpi.rs
-1464 file ui/src/store.rs
+1460 file ui/src/store.rs
 8197 file ui/src/ui.rs
 1485 file ui/src/ui/analysis.rs
 504 file ui/src/ui/autoset.rs

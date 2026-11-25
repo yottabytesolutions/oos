@@ -345,6 +345,7 @@ impl Ctrl {
     }
 
     fn save_with(&self, persist: impl FnOnce() -> io::Result<()>) -> Result<(), String> {
+        crate::system::check_data_write(Path::new("/oos")).map_err(|error| error.to_string())?;
         self.ok("SAVE_CONFIG")?;
         persist().map_err(|error| format!("Save WLAN configuration: {error}"))
     }

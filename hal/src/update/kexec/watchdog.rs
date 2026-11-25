@@ -38,29 +38,22 @@ pub(super) fn preflight() -> Result<(), String> {
     device.preflight().map(|_| ())
 }
 
-fn reboot(watchdog: &mut impl Handoff, sync: impl FnOnce(), syscall: impl FnOnce() -> String) -> String {
-    sync();
+fn reboot(watchdog: &mut impl Handoff, syscall: impl FnOnce() -> String) -> String {
     match watchdog.ping() {
         Ok(()) => syscall(),
-        Err(e) => e,
+        Err(error) => error,
     }
 }
 
 #[cfg(target_os = "linux")]
 pub(super) fn start(marker: impl FnOnce()) -> String {
     jump(&mut device::Device::new(native::Native), marker, |watchdog| {
-        reboot(
-            watchdog,
-            || {
-                // SAFETY: sync has no arguments; retain a final flush after all jump diagnostics, before the ping.
-                unsafe { libc::sync() };
-            },
-            || {
-                // SAFETY: the caller loaded the image and quiesced devices; the final ping immediately precedes this.
-                let rc = unsafe { libc::reboot(libc::LINUX_REBOOT_CMD_KEXEC) };
-                format!("reboot(KEXEC) returned {}: {}", rc, std::io::Error::last_os_error())
-            },
-        )
+        reboot(watchdog, || {
+            // SAFETY: reboot takes a scalar command. The caller loaded the image and quiesced devices,
+            // and the final watchdog ping has completed.
+            let rc = unsafe { libc::reboot(libc::LINUX_REBOOT_CMD_KEXEC) };
+            format!("reboot(KEXEC) returned {rc}: {}", std::io::Error::last_os_error())
+        })
     })
 }
 
@@ -109,20 +102,16 @@ mod ordering_tests {
                     }
                 },
                 |watchdog| {
-                    reboot(
-                        watchdog,
-                        || calls.borrow_mut().push("sync"),
-                        || {
-                            calls.borrow_mut().push("reboot");
-                            "returned".into()
-                        },
-                    )
+                    reboot(watchdog, || {
+                        calls.borrow_mut().push("reboot");
+                        "returned".into()
+                    })
                 },
             );
             let expected = if changed_tree {
-                vec!["take", "jump marker", "sync", "ping", "reboot", "close then resume"]
+                vec!["take", "jump marker", "ping", "reboot", "close then resume"]
             } else {
-                vec!["take", "sync", "ping", "reboot", "close then resume"]
+                vec!["take", "ping", "reboot", "close then resume"]
             };
             assert_eq!(*calls.borrow(), expected);
             assert_eq!(result, "returned");
@@ -137,9 +126,10 @@ mod ordering_tests {
             let result = jump(
                 &mut fake,
                 || calls.borrow_mut().push("marker"),
-                |watchdog| reboot(watchdog, || calls.borrow_mut().push("sync"), || panic!("must not reboot")),
+                |watchdog| reboot(watchdog, || panic!("must not reboot")),
             );
             assert_eq!(result, format!("{fail} failed"));
+            assert_eq!(calls.borrow().first(), Some(&"take"));
             assert_eq!(calls.borrow().last(), Some(&"close then resume"));
             assert_eq!(calls.borrow().contains(&"ping"), fail == "ping");
         }

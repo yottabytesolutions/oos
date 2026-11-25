@@ -276,6 +276,7 @@ impl Keys {
 
     /// Replaces the file in one step, readable by root only, and syncs it (the scope is switched off at the mains).
     pub fn save(&self, dir: &Path) -> std::io::Result<()> {
+        oos_hal::system::check_data_write(Path::new("/oos"))?;
         use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
         std::fs::DirBuilder::new().recursive(true).mode(0o700).create(dir)?;
         let tmp = dir.join(format!("{}.new", KEYS_FILE));

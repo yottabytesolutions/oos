@@ -34,6 +34,7 @@ class DataStartup(unittest.TestCase):
             "/dev/mmcblk0": str(self.root / "card"),
             "/proc/mounts": str(self.root / "mounts"),
             "/tmp/oos-data.notice": str(self.notice),
+            "/tmp/oos-data.closing": str(self.root / "closing"),
             "/dev/kmsg": str(self.kmsg),
             "[ -b $P ]": "[ -f $P ]",
             "/oos": str(self.root / "oos"),

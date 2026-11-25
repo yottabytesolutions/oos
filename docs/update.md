@@ -63,7 +63,7 @@ reset a failed kexec start into the installed fallback. An image written to `rec
    (`/oos-kexec.hdr`), the verifying key (`/oos-kexec.key`) and the booted tree section (`/oos-kexec.dt`).
    The command line gets `oos.kexec=install,staged` and `initramfs_async=0`. The archive unpacks before driver
    probes. Under the update lock the watcher and oos-ui stop, the network links go down and the display unbinds
-   to stop their DMA. The updater syncs, attempts to remount `/oos` read only, takes over the watchdog and jumps.
+   to stop their DMA. The updater closes the data area, takes over the watchdog and jumps.
 4. The candidate's rcS runs `oos-oneshot`, mounts `/oos` and runs `oos-update boot`. The receiver verifies
    the header with its built-in release key, checks `trial staged` and the exact running build id, reads the
    signed length from the slot and verifies its SHA-256. The ordinary install checks board, model and loader
@@ -210,7 +210,7 @@ empty request files cannot be recovered automatically. The subsequent preflight 
 is absent, the supervisor need not have published a pid: proceed without a watchdog ping and log that decision.
 Counter survival is then unverified. The checks repeat at takeover to catch changes during teardown.
 
-Both start paths transfer the single-open watchdog from `oos-watchdog` after the read-only remount attempt.
+Both start paths transfer the single-open watchdog from `oos-watchdog` after data shutdown.
 Supervisor crash backoff uses an interruptible background sleep and explicit wait, so USR1 is processed even
 in a 60 s backoff. After reaping the kicker (or cancelling backoff with no kicker), the supervisor copies the
 requester pid to `/tmp/oos-watchdog.ack`. Takeover waits for that exact acknowledgement before opening the
@@ -220,16 +220,18 @@ its acknowledgement, resets backoff and resumes. These task 0067 changes are hos
 on the unit.
 The supervisor publishes its pid; an exclusive handoff request recording the updater pid plus USR1 makes it kill
 and reap only its own BusyBox kicker with SIGKILL, avoiding magic close, then pause until the request is removed.
-The updater waits at most 2 s for acknowledgement and the device, keeps its handle open, writes the immediate jump timestamp for kexec-tools,
-performs a final `sync()` and writes a non-`V` byte to ping hardware immediately before `reboot(KEXEC)`.
-No sync, remount, logging or process launch comes between that ping and the syscall. This makes the final
-userspace ping less than about 1 s before the syscall in normal scheduling. The syscall's shutdown-to-jump delay still needs unit measurement;
-userspace cannot give a hard deadline across a stalled kernel. The normal kicker covers the earlier sync/remount;
-the updater holds the device during the final sync, so a stuck flush remains bounded by the active watchdog.
-On any acquisition/ping error or returned syscall, close the handle without magic close, remove the request,
-and restart the supervised kicker immediately with backoff reset. The ordinary updater undo then restores the UI
-and links. If the updater dies holding the request, no new userspace keepalive occurs and the active watchdog
-expires; it is never deliberately handed to an indefinitely feeding kernel worker.
+The updater gives the data cleanup up to 2 s while the normal kicker runs. It proceeds to the handoff even if
+cleanup fails or times out. It then waits at most 2 s for acknowledgement and the watchdog device. After recording
+the kexec-tools jump timestamp, it writes a non-`V` byte to ping hardware immediately before `reboot(KEXEC)`.
+
+The pinned 6.12.115 kernel calls [device shutdown](https://github.com/gregkh/linux/blob/v6.12.115/kernel/reboot.c#L92-L98)
+before jumping. During [MMC queue shutdown](https://github.com/gregkh/linux/blob/v6.12.115/drivers/mmc/core/queue.c#L483-L493)
+the driver quiesces dispatch and claims the host, which can wait for outstanding requests. The userspace cleanup
+deadline bounds the wait before watchdog takeover. Measure the kernel shutdown interval on the unit, including
+the watchdog fallback if MMC I/O stalls. The 89.1 MB legacy measurement leaves 3.55 s beyond the 5 s reserve.
+On an acquisition or ping error or a returned syscall, the updater closes the handle without magic close,
+removes the request and resumes the supervised kicker immediately. It then tries to restore the data mount
+before resuming the UI and links. If the updater dies holding the request, the active watchdog expires.
 
 Source inspection of the pinned 6.12.115 base and `kernel/config` establishes why this matters:
 
@@ -298,6 +300,27 @@ The state is written before the `recovery` write, after a write test of the stat
 rollback entry is cleared before a slot write. `slot.incomplete yes` records that the slot belongs to the updater
 even if a cut damages its header, until a verified rollback image is saved. A rollback changes the state after
 its write. The updater reads the card to verify "already holds", so an interrupted rollback can be retried.
+
+### Orderly data shutdown
+
+Panel restart, power-off, the staged-update handoff and its trial restart spend up to 2 s preparing the data area
+after UI teardown. The BusyBox init shutdown hook shares a 5 s budget across stopping the UI and closing the data
+area. Thermal power-off sends the panel commands immediately. Watchdog expiry and emergency resets rely on
+startup journal replay. An already admitted update or rollback holds a writable update lock, so an attempted
+read-only remount leaves the transaction able to finish. A new request gets a shutdown error and a pending trial
+remains eligible for rollback on the next boot.
+
+Closing write admission makes OOS writers report an explicit error. The helper syncs and remounts the data area
+read-only before unmounting, so new filesystem writes cannot start while unmount is in progress. A busy writer
+or an I/O error can prevent the read-only transition. The helper then leaves the mount in place and startup can
+recover it. A busy unmount after a successful read-only transition leaves the data area read-only. An already
+unmounted or already read-only area is recorded and left alone. On timeout the caller continues and can rely on
+startup repair if needed. The kernel may finish an in-flight operation after the timeout.
+
+If a reboot or panel command leaves OOS running, recovery has a separate 2 s budget to wait for any unfinished
+shutdown worker and restore the previous writable mount. Write admission reopens after verification. If recovery
+fails, the UI reports that saving is unavailable and offers a restart to retry. These paths have host fakes;
+restart, power-off, staged install and a power pull still need verification on a DHO924S.
 
 ### Data area after an unclean shutdown
 

@@ -214,7 +214,8 @@ fn rollback_trial(a: &Args, path: &Path) {
 
 fn record_ordinary_start(a: &Args, path: &Path) {
     // An ordinary start ends the kexec restart guard.
-    match std::fs::remove_file(restart_mark(path)) {
+    let mark = restart_mark(path);
+    match oos_hal::system::check_data_write(&mark).and_then(|()| std::fs::remove_file(&mark)) {
         Err(error) if error.kind() != ErrorKind::NotFound => {
             tell(&format!("removing the kexec restart guard: {error}"));
         }

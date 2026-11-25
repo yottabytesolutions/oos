@@ -318,7 +318,7 @@ mod sys {
         std::fs::read_to_string("/sys/kernel/kexec_loaded").is_ok_and(|s| s.trim() == "1")
     }
 
-    /// Start the loaded kernel. Returns only on failure. The caller has synced and unmounted (the kernel does not).
+    /// Start the loaded kernel after bounded data cleanup. Returns only on failure.
     pub fn start() -> String {
         super::watchdog::start(|| {})
     }

@@ -4,6 +4,8 @@ pub(crate) mod args;
 pub(crate) mod card_check;
 pub(crate) mod messages;
 pub(crate) mod receive;
+#[cfg(any(target_os = "linux", test))]
+pub(crate) mod recovery;
 pub(crate) mod sign;
 pub(crate) mod slot_status;
 pub(crate) mod startup;

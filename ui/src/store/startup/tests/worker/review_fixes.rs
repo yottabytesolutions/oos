@@ -88,6 +88,6 @@ fn shutdown_applies_pending_recalls_before_saving_even_after_a_write_error() {
             assert_eq!(crate::store::parse_setup_lenient(&fs.text(path).unwrap()).0.tscale, 14);
         }
         assert_eq!(fs.text("/data/oos-ui.running"), None);
-        assert_eq!(lock(&memory).text("/temporary/oos-ui.off").as_deref(), Some(""));
+        assert_eq!(lock(&memory).text("/temporary/oos-ui.off"), None);
     }
 }

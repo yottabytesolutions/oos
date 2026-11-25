@@ -46,6 +46,22 @@ pub fn finish(stored: std::io::Result<()>, exit_code: i32, power: Option<impl Fn
     0
 }
 
+/// If the MCU leaves the process alive, recover before the supervisor can start a fresh UI.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn panel_power<T>(
+    failure: String,
+    prepare: impl FnOnce() -> T,
+    send: impl FnOnce(),
+    grace: impl FnOnce(),
+    restore: impl FnOnce(T, String) -> String,
+    notice: impl FnOnce(&str),
+) {
+    let data = prepare();
+    send();
+    grace();
+    notice(&restore(data, failure));
+}
+
 /// Wait only until the shared deadline, including when several workers overrun.
 /// Dropping a JoinHandle detaches the thread; its owned buffers remain alive.
 pub fn join(handles: Vec<JoinHandle<()>>, deadline: Instant) -> usize {
@@ -97,11 +113,43 @@ mod tests {
     }
 
     #[test]
-    fn failed_save_still_sends_power_without_an_abort() {
-        let sent = std::cell::Cell::new(false);
-        let code = finish(Err(std::io::Error::other("full")), 0, Some(|| sent.set(true)));
-        assert!(sent.get(), "MCU power command must follow failed persistence");
+    fn failed_save_does_not_block_power_and_an_ignored_command_recovers_before_exit() {
+        let events = std::cell::RefCell::new(vec!["persist failed"]);
+        let code = finish(
+            Err(std::io::Error::other("full")),
+            0,
+            Some(|| {
+                panel_power(
+                    "MCU did not power off".into(),
+                    || {
+                        events.borrow_mut().push("close data");
+                        "mount"
+                    },
+                    || events.borrow_mut().push("MCU power"),
+                    || events.borrow_mut().push("power grace"),
+                    |data, failure| {
+                        assert_eq!(data, "mount");
+                        events.borrow_mut().push("restore data");
+                        failure
+                    },
+                    |failure| {
+                        assert_eq!(failure, "MCU did not power off");
+                        events.borrow_mut().push("panel notice");
+                    },
+                )
+            }),
+        );
+        assert_eq!(
+            *events.borrow(),
+            ["persist failed", "close data", "MCU power", "power grace", "restore data", "panel notice"]
+        );
         assert_eq!(code, 0);
+    }
+
+    #[test]
+    fn process_only_exit_keeps_the_data_mount() {
+        assert_eq!(finish(Ok(()), 0, None::<fn()>), 0);
+        assert_eq!(finish(Ok(()), 1, Some(|| panic!("must not send MCU power"))), 1);
     }
 
     #[test]

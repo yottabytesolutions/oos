@@ -35,7 +35,7 @@ enum Job {
     Save(Box<Path>, Box<str>),
     Recall(Box<Path>),
     Automatic(Box<str>, Duration, Duration, Mode),
-    Cleanup(bool),
+    Cleanup,
 }
 
 pub(crate) struct Worker {
@@ -62,8 +62,7 @@ impl Worker {
                     let result = startup.as_mut().map_or(Ok(()), |s| {
                         s.candidate = Some((text.to_string(), since));
                         match mode {
-                            Mode::Finish(true) => s.power_off(text.to_string(), now),
-                            Mode::Finish(false) => s.clean(text.to_string(), now, false),
+                            Mode::Finish(power) => s.clean(text.to_string(), now, power),
                             Mode::Observe => s.observe(text.to_string(), now),
                         }
                     });
@@ -76,14 +75,7 @@ impl Worker {
                     }
                     Done::Automatic(result)
                 }
-                Job::Cleanup(power) => Done::Automatic(startup.as_mut().map_or(Ok(()), |s| {
-                    let cleaned = s.clear_markers();
-                    if power {
-                        cleaned.and(s.stop_supervisor())
-                    } else {
-                        cleaned
-                    }
-                })),
+                Job::Cleanup => Done::Automatic(startup.as_mut().map_or(Ok(()), Startup::clear_markers)),
             };
             Completion { done, promoted }
         })?;
@@ -178,7 +170,7 @@ impl Worker {
             let since = self.candidate.as_ref().filter(|c| *c.text == text).map_or(now, |c| c.since);
             Job::Automatic(text.into_boxed_str(), since, now, Mode::Finish(power))
         } else {
-            Job::Cleanup(power)
+            Job::Cleanup
         };
         self.submit(job)?;
         let finished = self.flush();

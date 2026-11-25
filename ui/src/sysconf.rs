@@ -345,6 +345,7 @@ impl SysConf {
 
     /// Replaces the file in one step and syncs it: the scope is switched off at the mains.
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
+        oos_hal::system::check_data_write(Path::new("/oos"))?;
         let tmp = path.with_extension("conf.new");
         let mut f = std::fs::File::create(&tmp)?;
         f.write_all(self.text().as_bytes())?;

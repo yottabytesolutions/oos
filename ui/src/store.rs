@@ -105,10 +105,6 @@ pub fn check_target(path: &Path) -> std::io::Result<()> {
 
 /// Writes `data` to `path`, creating the directory first. The data partition uses a durable rename.
 pub fn write(path: &Path, data: &[u8]) -> std::io::Result<()> {
-    check_target(path)?;
-    if let Some(d) = path.parent() {
-        std::fs::create_dir_all(d)?;
-    }
     durable::write(path, data)
 }
 

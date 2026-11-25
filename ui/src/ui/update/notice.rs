@@ -3,6 +3,7 @@
 use super::{wrap_lines, Ui};
 
 const NOTICE: &str = "/tmp/oos-update.notice";
+const POWER_NOTICE: &str = "/tmp/oos-power.notice";
 const DATA_NOTICE: &str = "/tmp/oos-data.notice";
 
 pub(super) fn poll(ui: &mut Ui) {
@@ -16,12 +17,19 @@ pub(super) fn poll(ui: &mut Ui) {
             return;
         }
     }
-    if let Some(n) = ui.host.text(NOTICE) {
-        let n = n.trim().to_string();
-        if !n.is_empty() && n != ui.upd.notice_shown {
-            show(ui, "Update", &n);
-            ui.upd.notice_shown = n;
-        }
+    let next = [(POWER_NOTICE, "Power", &mut ui.upd.power_notice_shown), (NOTICE, "Update", &mut ui.upd.notice_shown)]
+        .into_iter()
+        .find_map(|(path, title, shown)| {
+            let notice = ui.host.text(path)?;
+            let trimmed = notice.trim();
+            if trimmed.is_empty() || trimmed == shown {
+                return None;
+            }
+            *shown = trimmed.to_owned();
+            Some((title, notice))
+        });
+    if let Some((title, notice)) = next {
+        show(ui, title, notice.trim());
     }
 }
 
@@ -42,6 +50,7 @@ mod tests {
         let host = crate::ui::host::Host::fixture_with_text(|path| match path {
             DATA_NOTICE => Some(MESSAGE.into()),
             NOTICE => Some("Update completed".into()),
+            POWER_NOTICE => Some("The scope did not power off.".into()),
             _ => None,
         });
         let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 }, host);
@@ -49,6 +58,8 @@ mod tests {
         let data = ui.dialog.take().unwrap();
         assert_eq!(data[0], "Data area");
         assert_eq!(data[1..data.len() - 1].join(" "), MESSAGE);
+        poll(&mut ui);
+        assert_eq!(ui.dialog.take().unwrap()[..2], ["Power", "The scope did not power off."]);
         poll(&mut ui);
         assert_eq!(ui.dialog.take().unwrap()[1], "Update completed");
         poll(&mut ui);

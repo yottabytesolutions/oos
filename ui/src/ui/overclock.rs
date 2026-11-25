@@ -21,6 +21,7 @@ pub(super) fn label(hz: f64) -> String {
 
 /// Replaces limits.conf in one step, the scope is switched off at the mains. No lines left: no file.
 fn store(path: &str, hz: f64) -> std::io::Result<()> {
+    oos_hal::system::check_data_write(Path::new(path))?;
     // only a missing file is empty: a file that cannot be read stays as it is
     let old = match fs::read(path) {
         Ok(b) => String::from_utf8_lossy(&b).into_owned(),

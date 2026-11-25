@@ -1,4 +1,3 @@
 # unsafe outside the allowed paths (architecture.txt): <count> unsafe <file>.
 # Written by `cargo xtask ratchet` (docs/development.md). Values may only fall.
-6 unsafe fpgad/src/bin/oos-update.rs
-1 unsafe fpgad/src/cmd/board.rs
+2 unsafe fpgad/src/bin/oos-update.rs

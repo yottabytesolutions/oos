@@ -202,8 +202,18 @@ fn every_exit_restores_clock_receipt_even_when_no_restart_is_requested() {
         let cpu = std::fs::read_to_string(f.p(&format!("{dir}/scaling_min_freq"))).unwrap();
         let gpu = std::fs::read_to_string(f.p(&format!("{gpu}/min_freq"))).unwrap();
         assert_eq!(cpu.trim(), if restored { "408000" } else { "1416000" });
-        assert_eq!(gpu.trim(), if restored { "400000000" } else { "600000000" });
+        assert_eq!(gpu.trim(), "400000000", "the CPU failure must not prevent GPU recovery");
         let log = std::fs::read_to_string(f.p("tmp/oos-ui.log")).unwrap();
         assert!(log.contains(if restored { "device=cpu restored=408000" } else { "recovery failed" }));
+        assert!(log.contains("device=gpu restored=400000000"));
+        if !restored {
+            assert_eq!(std::fs::read_to_string(f.p("tmp/oos-clock-floors")).unwrap(), "cpu 408000\ngpu 400000000");
+            f.write(&format!("{dir}/scaling_available_frequencies"), "408000 1416000");
+            std::fs::remove_file(f.p("tmp/oos-ui.off")).unwrap();
+            let retry = f.command("oos-ui-loop").env("OOS_CLOCK_SYSFS", f.p("sys")).output().unwrap();
+            assert!(retry.status.success(), "{retry:?}");
+            assert_eq!(std::fs::read_to_string(f.p(&format!("{dir}/scaling_min_freq"))).unwrap().trim(), "408000");
+            assert!(!f.p("tmp/oos-clock-floors").exists());
+        }
     }
 }

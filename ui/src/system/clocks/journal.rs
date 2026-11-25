@@ -35,13 +35,13 @@ impl Journal {
 
     pub(super) fn save(&self, floors: &[Floor], index: usize, previous: u64) -> io::Result<()> {
         self.write(floors.iter().enumerate().filter_map(|(i, floor)| {
-            let saved = if i == index { Some(previous) } else { floor.saved };
+            let saved = if i == index { Some(previous) } else { floor.saved() };
             saved.map(|value| (floor.name, value))
         }))
     }
 
     pub(super) fn sync(&self, floors: &[Floor]) -> io::Result<()> {
-        self.write(floors.iter().filter_map(|floor| floor.saved.map(|value| (floor.name, value))))
+        self.write(floors.iter().filter_map(|floor| floor.saved().map(|value| (floor.name, value))))
     }
 
     fn write(&self, values: impl Iterator<Item = (&'static str, u64)>) -> io::Result<()> {

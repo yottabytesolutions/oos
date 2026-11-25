@@ -338,13 +338,20 @@ The Linux panic hook tries the controller lock without waiting before invoking t
 previous hook; SIGINT/SIGTERM use orderly exit. `oos-ui-loop` restores and logs
 the receipt after every exit, including unclean deaths (SIGKILL, SIGSEGV and
 allocator abort) and clean exits with pending recovery, even without a restart. Startup independently restores it
-before reading new previous minima, including when switches are now off. Failed
-or invalid recovery keeps the receipt and disables new floors for that process.
+before reading new previous minima, including when switches are now off. Both paths
+attempt each saved device even if another fails. The complete startup receipt stays
+until every saved device verifies. Failed or invalid startup recovery disables new
+floors for that process. The controller retries valid pending restores on the sample
+deadline and at teardown.
 Failed applications and STOP/thermal restores retry after one second if the
-request stays the same. Teardown tries immediately. A matching read-back
-confirms a write even when sysfs returns an error. Only the first restore
-failure and eventual success are logged per device. A reboot discards tmpfs
-and resets the kernel's clock policy.
+request stays the same. A new RUN can verify a pending floor again using its
+original saved minimum. If the GPU display floor cannot be verified on STOP, the
+adapter attempts to restore the original minimum. Teardown tries immediately.
+A matching read-back confirms a write even when sysfs returns an error. Only the
+first restore failure and eventual success are logged per device. Apply failures
+log when the target or error changes. Clock status uses the latest sample and
+identifies pending restores. A reboot discards tmpfs and resets the kernel's clock
+policy.
 
 The thermal guard follows each zone's `cdevN` link to the A72 or GPU cooling
 device and uses the matching `cdevN_trip_point` index. Only passive and active

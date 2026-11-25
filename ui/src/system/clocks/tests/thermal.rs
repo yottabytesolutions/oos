@@ -171,10 +171,19 @@ fn unreadable_bound_trip_disables_only_its_device() {
 #[test]
 fn state_tracks_read_back_minimum_and_tolerates_missing_current_frequency() {
     let tree = Tree::new();
-    let mut controller = tree.controller("perf.gpu_floor = off");
+    let clock = ManualClock::new();
+    let mut controller = Controller::with_clock(
+        Box::new(linux::Sysfs(tree.0.clone())),
+        Config::parse("perf.gpu_floor = off"),
+        Some(GPU),
+        tree.0.join("saved"),
+        clock.source(),
+    );
     controller.update(true);
     tree.set(CPU, "scaling_min_freq", "816000");
     std::fs::remove_file(tree.0.join(GPU).join("cur_freq")).unwrap();
+    clock.advance(SAMPLE_PERIOD);
+    controller.update(true);
     let state = status_text(&controller);
     assert!(state.contains("clock.cpu.applied=0 clock.cpu.current_hz=816000000 clock.cpu.reason=minimum_changed"));
     assert!(state.contains("clock.gpu.applied=0 clock.gpu.current_hz=unknown clock.gpu.reason=disabled"));

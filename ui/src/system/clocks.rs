@@ -6,7 +6,7 @@ mod linux;
 mod status;
 mod thermal;
 use floor::Floor;
-use status::Status;
+use status::{Reason, Snapshot, Status};
 #[cfg(test)]
 mod tests;
 
@@ -45,7 +45,7 @@ pub trait Port: Send {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 enum Request {
     Off,
     Draw,
@@ -62,14 +62,21 @@ impl Request {
     }
 }
 
+enum Recovery {
+    Ready,
+    Pending(Instant),
+    Blocked,
+}
+
 pub struct Controller {
     port: Box<dyn Port>,
     floors: [Floor; 2],
     journal: journal::Journal,
-    recovery_failed: bool,
+    recovery: Recovery,
     request: Request,
     critical: thermal::Guard,
     next_receipt_sync: Option<Instant>,
+    snapshot: Snapshot,
     clock: Box<dyn Fn() -> Instant + Send>,
 }
 impl Controller {
@@ -91,40 +98,69 @@ impl Controller {
             port,
             floors,
             journal: journal::Journal::new(saved),
-            recovery_failed: false,
+            recovery: Recovery::Ready,
             request: Request::Off,
             critical,
             next_receipt_sync: None,
+            snapshot: Snapshot::new(now),
             clock,
         };
         // Recover irrespective of current opt-outs, before reading any new previous minimum.
-        if let Err(error) = me.recover() {
-            eprintln!("oos-ui: clock_floor recovery_error={error}; floors disabled");
-            me.recovery_failed = true;
-        }
+        me.start_recovery(now);
+        me.sample(true, now);
         me
     }
 
-    fn recover(&mut self) -> io::Result<()> {
-        let Some(saved) = self.journal.load()? else { return Ok(()) };
+    fn start_recovery(&mut self, now: Instant) {
+        let saved = match self.journal.load() {
+            Ok(None) => return,
+            Ok(Some(saved)) => saved,
+            Err(error) => {
+                eprintln!("oos-ui: clock_floor recovery_error={error}; floors disabled");
+                self.recovery = Recovery::Blocked;
+                return;
+            }
+        };
         for (name, value) in saved {
-            let floor = self
-                .floors
-                .iter_mut()
-                .find(|f| f.name == name)
-                .ok_or_else(|| io::Error::other("saved device is absent"))?;
-            floor.saved = Some(value);
-            floor.restore(self.port.as_mut())?;
-            eprintln!("oos-ui: clock_floor recovery device={name} restored={value}");
+            // The journal validates the device names before handing over ownership.
+            if let Some(floor) = self.floors.iter_mut().find(|f| f.name == name) {
+                floor.claim(value);
+            }
         }
+        if let Err(error) = self.restore_receipt() {
+            eprintln!("oos-ui: clock_floor recovery_error={error}; floors disabled");
+            self.recovery = Recovery::Pending(now + thermal::SAMPLE_PERIOD);
+        }
+    }
+
+    fn restore_receipt(&mut self) -> io::Result<()> {
+        let mut failure = None;
+        for floor in &mut self.floors {
+            let Some(value) = floor.saved() else { continue };
+            let retry = floor.restore_failed();
+            match floor.restore(self.port.as_mut()) {
+                Err(error) => {
+                    failure.get_or_insert(error);
+                }
+                Ok(()) if !retry => {
+                    eprintln!("oos-ui: clock_floor recovery device={} restored={value}", floor.name);
+                }
+                Ok(()) => {}
+            }
+        }
+        if let Some(error) = failure {
+            return Err(error);
+        }
+        // Preserve the complete startup receipt until all of its devices have verified restoration.
         self.journal.clear()
     }
 
     fn apply(&mut self, index: usize, target: u64) -> io::Result<()> {
         let floor = &self.floors[index];
         let previous = floor.prepare(self.port.as_ref(), target)?;
-        if floor.saved.is_none() {
+        if floor.saved().is_none() {
             self.journal.save(&self.floors, index, previous)?;
+            self.floors[index].claim(previous);
             self.next_receipt_sync = None;
         }
         self.floors[index].apply(self.port.as_mut(), previous, target)
@@ -140,17 +176,32 @@ impl Controller {
     }
 
     fn tick(&mut self, request: Request, force: bool) {
+        let changed = request != self.request;
         self.request = request;
-        if self.recovery_failed {
-            return;
-        }
         let now = (self.clock)();
+        let updated = match self.recovery {
+            Recovery::Ready => self.update_floors(request, now, changed, force),
+            Recovery::Pending(next) if force || now >= next => {
+                self.recovery = if self.restore_receipt().is_ok() {
+                    Recovery::Blocked
+                } else {
+                    Recovery::Pending(now + thermal::SAMPLE_PERIOD)
+                };
+                true
+            }
+            _ => false,
+        };
+        self.sample(changed || updated, now);
+    }
+
+    fn update_floors(&mut self, request: Request, now: Instant, changed: bool, force: bool) -> bool {
         let critical = match request {
             Request::Off => None,
             _ => self.critical.inhibit(self.port.as_ref(), "all", now),
         };
+        let mut updated = false;
         for (index, target) in request.minima().into_iter().enumerate() {
-            self.update_floor(index, target, critical, now, force);
+            updated |= self.update_floor(index, target, critical, now, changed, force);
         }
         if self.next_receipt_sync.is_some_and(|next| force || now >= next) {
             self.next_receipt_sync = self.journal.sync(&self.floors).err().map(|error| {
@@ -158,35 +209,54 @@ impl Controller {
                 now + thermal::SAMPLE_PERIOD
             });
         }
+        updated
     }
 
     fn update_floor(
         &mut self,
         index: usize,
         target: Option<u64>,
-        critical: Option<status::Reason>,
+        critical: Option<Reason>,
         now: Instant,
+        changed: bool,
         force: bool,
-    ) {
+    ) -> bool {
         let floor = &mut self.floors[index];
+        let state = floor.state();
         let inhibit = floor.inhibit(self.port.as_ref(), target.is_some(), critical, now);
-        if inhibit.is_some() || floor.restore_failed() {
-            if floor.release(self.port.as_mut(), inhibit, now, force) {
+        let retry_restore = floor.restore_failed() && !changed && state != Reason::ApplyFailed;
+        let mut updated = false;
+        if inhibit.is_some() || retry_restore {
+            let released = floor.release(self.port.as_mut(), inhibit, now, force);
+            if released == Some(true) {
                 self.next_receipt_sync = Some(now);
             }
+            updated = released.is_some() || state != floor.state();
             if inhibit.is_some() || floor.restore_failed() {
-                return;
+                return updated;
             }
         }
-        if let Some(target) = target.filter(|&target| floor.should_apply(target, now)) {
+        if let Some(target) = target.filter(|&target| changed || floor.should_apply(target, now)) {
+            let lowering = floor.lowering(target);
             let result = self.apply(index, target);
-            self.floors[index].finish_apply(target, now, result);
+            let failed_lowering = lowering && result.is_err();
+            let floor = &mut self.floors[index];
+            floor.finish_apply(target, now, result);
+            // If STOP cannot verify the display floor, release the RUN floor to its saved minimum.
+            if failed_lowering && floor.release_failed_lowering(self.port.as_mut()) {
+                self.next_receipt_sync = Some(now);
+            }
+            updated = true;
         }
+        updated
     }
 
-    fn status(&self) -> [Status; 2] {
+    fn sample(&mut self, changed: bool, now: Instant) {
         let minima = self.request.minima();
-        std::array::from_fn(|index| self.floors[index].status(self.port.as_ref(), minima[index], self.recovery_failed))
+        let blocked = !matches!(self.recovery, Recovery::Ready);
+        self.snapshot.refresh(changed, now, || {
+            std::array::from_fn(|index| self.floors[index].status(self.port.as_ref(), minima[index], blocked))
+        });
     }
 }
 impl Drop for Controller {
@@ -196,11 +266,20 @@ impl Drop for Controller {
 }
 
 /// A process-owned guard shared with the panic hook, including panic=abort builds.
-pub struct Handle(Arc<Mutex<Controller>>);
+pub struct Handle {
+    controller: Arc<Mutex<Controller>>,
+    readings: status::Readings,
+}
 impl Handle {
+    #[cfg(any(target_os = "linux", test))]
+    fn new(controller: Controller) -> Self {
+        let readings = controller.snapshot.readings().clone();
+        Self { controller: Arc::new(Mutex::new(controller)), readings }
+    }
+
     #[cfg(test)]
     pub(crate) fn fixture(controller: Controller) -> Self {
-        Self(Arc::new(Mutex::new(controller)))
+        Self::new(controller)
     }
     #[cfg(target_os = "linux")]
     pub fn system(config: Config) -> Self {
@@ -213,8 +292,8 @@ impl Handle {
 
     #[cfg(any(target_os = "linux", test))]
     fn guarded(controller: Controller) -> Self {
-        let handle = Self(Arc::new(Mutex::new(controller)));
-        let state = handle.0.clone();
+        let handle = Self::new(controller);
+        let state = handle.controller.clone();
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |info| {
             // A panic during an update must not deadlock its own restoration hook.
@@ -227,20 +306,20 @@ impl Handle {
     }
 
     fn status(&self) -> [Status; 2] {
-        oos_hal::sync::lock(&self.0).status()
+        *oos_hal::sync::lock(&self.readings)
     }
 
     pub fn poll(&self) {
-        let mut controller = oos_hal::sync::lock(&self.0);
+        let mut controller = oos_hal::sync::lock(&self.controller);
         let request = controller.request;
         controller.tick(request, false);
     }
 
     pub fn update(&self, running: bool) {
-        oos_hal::sync::lock(&self.0).update(running);
+        oos_hal::sync::lock(&self.controller).update(running);
     }
     pub fn restore(&self) {
-        oos_hal::sync::lock(&self.0).restore();
+        oos_hal::sync::lock(&self.controller).restore();
     }
 }
 impl Drop for Handle {

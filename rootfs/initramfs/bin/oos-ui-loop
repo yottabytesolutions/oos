@@ -43,12 +43,13 @@ if [ -s "$mnt/oos-ui.running" ]; then
     esac
 fi
 # The receipt is committed by oos-ui before its first floor write. Keep it on any
-# failed write/read-back so startup can retry, including a later manual launch.
+# unverified recovery so startup can retry, including a later manual launch.
 restore_clocks() (
     receipt=$tmp/oos-clock-floors
     [ -e "$receipt" ] || exit 0
     sys=${OOS_CLOCK_SYSFS:-/sys}
     seen=
+    failed=false
     while read -r device value extra || [ -n "$device$value$extra" ]; do
         case "$value" in ''|*[!0-9]*) exit 1 ;; esac
         [ -z "$extra" ] || exit 1
@@ -62,18 +63,27 @@ restore_clocks() (
                      [ -d "$node" ] || continue
                      dir=$node; break
                  done
-                 [ -n "$dir" ] || exit 1
+                 [ -n "$dir" ] || { failed=true; continue; }
                  minimum=$dir/min_freq; available=$dir/available_frequencies ;;
             *) exit 1 ;;
         esac
-        frequencies=$(cat "$available") || exit 1
-        case " $frequencies " in *" $value "*) ;; *) exit 1 ;; esac
-        echo "$value" > "$minimum" || exit 1
-        restored=$(cat "$minimum") || exit 1
-        [ "$restored" = "$value" ] || exit 1
-        echo "oos-ui-loop: clock_floor recovery device=$device restored=$value"
+        frequencies=$(cat "$available") || { failed=true; continue; }
+        case " $frequencies " in *" $value "*) ;; *) failed=true; continue ;; esac
+        if [ -e "$minimum" ]; then
+            printf '%s\n' "$value" > "$minimum" || :
+        fi
+        if ! restored=$(cat "$minimum"); then
+            echo "oos-ui-loop: clock_floor recovery device=$device restore read-back unavailable"
+            failed=true
+        elif [ "$restored" != "$value" ]; then
+            echo "oos-ui-loop: clock_floor recovery device=$device restore read-back mismatch"
+            failed=true
+        else
+            echo "oos-ui-loop: clock_floor recovery device=$device restored=$value"
+        fi
     done < "$receipt"
     [ -n "$seen" ] || exit 1
+    [ "$failed" = false ] || exit 1
     rm -f "$receipt"
 )
 seq=0

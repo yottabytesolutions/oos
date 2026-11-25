@@ -33,7 +33,7 @@ fn death_child() {
 #[test]
 fn recovery_ignores_optouts_and_retains_unverifiable_receipts() {
     let tree = Tree::new();
-    std::fs::write(tree.0.join("saved"), "cpu 408000\ngpu 400000000\n").unwrap();
+    std::fs::write(tree.0.join("saved"), "gpu 400000000\ncpu 408000\n").unwrap();
     tree.set(CPU, "scaling_min_freq", "1416000");
     tree.set(GPU, "min_freq", "600000000");
     let mut c = tree.controller("perf.cpu_floor = off\nperf.gpu_floor = off");
@@ -57,7 +57,9 @@ fn failed_journal_write_never_raises_and_invalid_receipt_is_kept() {
     c.update(true);
     assert_eq!(tree.minima(), ("408000".into(), "400000000".into()));
     drop(c);
-    for text in ["", "cpu bad\n", "cpu 408000\ncpu 816000\n", "other 1\n"] {
+    for text in
+        ["", "cpu bad\n", "cpu 408000\ncpu 816000\n", "other 1\n", "CPU 408000\n", "cpu\n", "gpu 400000000 extra\n"]
+    {
         std::fs::write(tree.0.join("saved"), text).unwrap();
         let mut c = tree.controller("");
         c.update(true);
@@ -88,7 +90,7 @@ fn locked_panic_child() {
     std::panic::set_hook(Box::new(|_| std::process::exit(74)));
     let handle = Handle::guarded(linux::controller(root, &root.join("saved"), Config::parse("")));
     handle.update(true);
-    let _held = oos_hal::sync::lock(&handle.0);
+    let _held = oos_hal::sync::lock(&handle.controller);
     panic!("locked clock panic");
 }
 

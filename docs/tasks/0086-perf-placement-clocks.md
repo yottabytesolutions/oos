@@ -58,13 +58,19 @@ Reserved paths: `docs/tasks/0086-perf-placement-clocks.md`, `ui/src/placement.rs
    failed writes and restoration against a fake filesystem, debug and release.
    Run the gate's exact clippy step and `cargo xtask check --fast`; preserve
    complete logs and exits. No ratchet edits or commits.
+7. Reconcile PR 197 on the public 0.2.1 base. Keep the existing floor targets and
+   cooling bindings. Track verified and pending rollbacks, retry independent
+   startup recovery at sample deadlines, and publish sampled SCPI clock state.
+   Extend the reserved clock controller and its fixture tests, the supervisor
+   recovery and its test, and the state-query clock contract. Record host evidence
+   in `logs/c3-clock.out` and keep hardware acceptance pending.
 
 Unit acceptance, coordinator under an owner-released scope lease:
 
 - Read `/proc/<pid>/task/*/{comm,status,sched}` for oos-ui and oos-gpu. Check
-  main/GPU cpu4, acquisition cpu5, deposit workers cpu0-3, and web-accept,
-  web-read, web-png and web-send A53 affinity with SCHED_IDLE (nice 10 only
-  where refused). No FIFO/RR/deadline policy.
+  main/GPU cpu4, acquisition cpu5, and deposit workers cpu0-3. Capture actual
+  affinity and policy for `netio` and `web-png`. The HTTP background placement
+  criterion remains A53 SCHED_IDLE (nice 10 where refused). No FIFO/RR/deadline policy.
 - Capture `/proc/interrupts` and `/proc/irq/*/smp_affinity_list` before/after
   startup. XDMA MSI must avoid deposit0's core; eth0 must avoid cpu0 when a
   deposit worker uses it. Check VOP/panfrost/MMC affinities remain unchanged.
@@ -102,8 +108,20 @@ Unit acceptance, coordinator under an owner-released scope lease:
   completion and upload-end-to-final-response latency separately from transfer
   time. Pass: page completion and post-upload response p95 <= 1 s, maximum <=
   2 s, no timeouts, expected HTTP responses, and no acquisition errors. Compare
-  STOP baseline and confirm the tested web threads have A53 SCHED_IDLE. A real
+  STOP baseline and record the shared executor and PNG worker placement. A real
   signed upload/install still requires the separate owner-approved procedure.
+
+### HTTP placement on the public 0.2.1 base
+
+| Work | Current execution owner | Placement in source |
+|---|---|---|
+| HTTP accept, request/body reads and reply sends | `netio`, alongside raw SCPI, VXI-11 and HiSLIP | The executor has no explicit affinity or scheduling-policy call. |
+| HTTP screenshot PNG encoding | `web-png` | Calls the existing `lower_priority` helper. |
+
+The shared `netio` executor uses a current-thread Tokio runtime. The old
+`web-accept`, `web-read`, and `web-send` threads no longer have independent
+thread placement. The executor and PNG worker still need measurement on the
+candidate. The HTTP socket placement criterion remains open.
 
 
 Read-only unit command templates, after acquiring the required lease. Capture
@@ -164,6 +182,16 @@ done
 ```
 
 ## Status
+
+- 2026-11-25: On branch `fix/t0303-clock-floors`, reconciled PR 197 against
+  public 0.2.1 (`425470a3`). The controller keeps rollback ownership through
+  unverified I/O and publishes sampled clock state. The controller and
+  supervisor attempt saved devices independently. The HTTP placement notes
+  reflect the shared executor and separate PNG worker. Formatting, all 12 fast
+  gate steps, 54 clock and 32 supervisor debug tests, and all four selected
+  steps passed. The release run passed 3,835 tests, including the golden
+  comparison. The plan matrix matched 77 entries and 35 perf tests passed.
+  Candidate review and verification on a DHO924S remain pending.
 
 - 2026-11-24: Clock writes are verified by read-back. Failed applications retry
   on the guard cadence. Critical trips protect both floors with 5 °C of headroom

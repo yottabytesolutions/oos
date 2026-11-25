@@ -23,9 +23,36 @@ impl Files {
     }
 }
 
+#[derive(Clone, Copy)]
+enum Phase {
+    Idle,
+    Prepared { previous: u64 },
+    Raised { previous: u64, minimum: u64 },
+    RestorePending { previous: u64, verified: Option<u64> },
+}
+
+impl Phase {
+    fn previous(self) -> Option<u64> {
+        match self {
+            Self::Idle => None,
+            Self::Prepared { previous } | Self::Raised { previous, .. } | Self::RestorePending { previous, .. } => {
+                Some(previous)
+            }
+        }
+    }
+
+    fn verified(self) -> Option<u64> {
+        match self {
+            Self::Raised { minimum, .. } => Some(minimum),
+            Self::RestorePending { verified, .. } => verified,
+            Self::Idle | Self::Prepared { .. } => None,
+        }
+    }
+}
+
 pub(super) struct Floor {
     pub(super) name: &'static str,
-    pub(super) saved: Option<u64>,
+    phase: Phase,
     files: Option<Files>,
     target: Option<u64>,
     hz_per_unit: u64,
@@ -33,7 +60,7 @@ pub(super) struct Floor {
     disabled: Option<Reason>,
     state: Reason,
     logged: bool,
-    restore_failed: bool,
+    apply_error: Option<String>,
     next_write: Instant,
 }
 impl Floor {
@@ -71,15 +98,15 @@ impl Floor {
         };
         Self {
             name,
-            saved: None,
+            phase: Phase::Idle,
             files,
             target: None,
             hz_per_unit,
             thermal,
             disabled,
-            state: Reason::Stopped,
+            state: disabled.unwrap_or(Reason::Stopped),
             logged: false,
-            restore_failed: false,
+            apply_error: None,
             next_write: now,
         }
     }
@@ -108,6 +135,22 @@ impl Floor {
         matches!(self.state, Reason::Applied | Reason::ApplyFailed)
     }
 
+    pub(super) fn state(&self) -> Reason {
+        self.state
+    }
+
+    pub(super) fn saved(&self) -> Option<u64> {
+        self.phase.previous()
+    }
+
+    pub(super) fn claim(&mut self, previous: u64) {
+        self.phase = Phase::Prepared { previous };
+    }
+
+    pub(super) fn lowering(&self, target: u64) -> bool {
+        self.saved().is_some() && self.target.is_some_and(|old| target < old)
+    }
+
     pub(super) fn should_apply(&self, target: u64, now: Instant) -> bool {
         !self.attempted()
             || self.target != Some(target)
@@ -115,33 +158,45 @@ impl Floor {
     }
 
     pub(super) fn finish_apply(&mut self, target: u64, now: Instant, result: io::Result<()>) {
-        self.state = match result {
-            Ok(()) => Reason::Applied,
-            Err(error) => {
-                if self.state != Reason::ApplyFailed || self.target != Some(target) {
-                    eprintln!("oos-ui: clock_floor device={} target={target} error={error}", self.name);
-                }
-                Reason::ApplyFailed
-            }
-        };
+        let error = result.err().map(|error| error.to_string());
+        if let Some(detail) = error.as_ref().filter(|_| error != self.apply_error || self.target != Some(target)) {
+            eprintln!("oos-ui: clock_floor device={} target={target} error={detail}", self.name);
+        }
+        self.state = if error.is_some() { Reason::ApplyFailed } else { Reason::Applied };
+        self.apply_error = error;
         self.target = Some(target);
         self.next_write = now + SAMPLE_PERIOD;
     }
 
     pub(super) fn restore_failed(&self) -> bool {
-        self.restore_failed
+        matches!(self.phase, Phase::RestorePending { .. })
     }
 
-    pub(super) fn release(&mut self, port: &mut dyn Port, inhibit: Option<Reason>, now: Instant, force: bool) -> bool {
+    pub(super) fn release_failed_lowering(&mut self, port: &mut dyn Port) -> bool {
+        if self.restore(port).is_ok() {
+            true
+        } else {
+            self.state = Reason::RestoreFailed;
+            false
+        }
+    }
+
+    pub(super) fn release(
+        &mut self,
+        port: &mut dyn Port,
+        inhibit: Option<Reason>,
+        now: Instant,
+        force: bool,
+    ) -> Option<bool> {
         let immediate = force || self.attempted();
         if let Some(reason) = inhibit {
             self.state = reason;
         }
-        if self.saved.is_none() || (!immediate && now < self.next_write) {
-            return false;
+        if self.saved().is_none() || (!immediate && now < self.next_write) {
+            return None;
         }
         self.next_write = now + SAMPLE_PERIOD;
-        self.restore(port).is_ok()
+        Some(self.restore(port).is_ok())
     }
 
     fn supports(available: &str, value: u64) -> bool {
@@ -150,7 +205,7 @@ impl Floor {
 
     pub(super) fn prepare(&self, io: &dyn Port, target: u64) -> io::Result<u64> {
         let files = self.files()?;
-        let previous = match self.saved {
+        let previous = match self.saved() {
             Some(previous) => previous,
             None => read_freq(io, &files.minimum)?,
         };
@@ -163,30 +218,36 @@ impl Floor {
     }
 
     pub(super) fn apply(&mut self, io: &mut dyn Port, previous: u64, target: u64) -> io::Result<()> {
-        // The controller persisted this minimum before calling apply.
-        self.saved = Some(previous);
-        let applied = previous.max(target);
-        write_minimum(io, &self.files()?.minimum, applied)?;
+        // Keep the persisted minimum, and invalidate verification before attempting a new write.
+        self.phase = if self.restore_failed() {
+            Phase::RestorePending { previous, verified: None }
+        } else {
+            Phase::Prepared { previous }
+        };
+        let minimum = previous.max(target);
+        write_minimum(io, &self.files()?.minimum, minimum, "minimum read-back mismatch")?;
+        self.phase = Phase::Raised { previous, minimum };
         if !self.logged {
-            eprintln!("oos-ui: clock_floor device={} applied={} previous={}", self.name, applied, previous);
+            eprintln!("oos-ui: clock_floor device={} applied={minimum} previous={previous}", self.name);
             self.logged = true;
         }
         Ok(())
     }
 
     pub(super) fn restore(&mut self, io: &mut dyn Port) -> io::Result<()> {
-        let Some(previous) = self.saved else { return Ok(()) };
+        let Some(previous) = self.saved() else { return Ok(()) };
+        let retry = self.restore_failed();
+        self.phase = Phase::RestorePending { previous, verified: self.phase.verified() };
         let result = self.restore_value(io, previous);
         match &result {
-            Err(error) if !self.restore_failed => {
+            Err(error) if !retry => {
                 eprintln!("oos-ui: clock_floor device={} running=false error={error}", self.name);
             }
-            Ok(()) if self.restore_failed => {
+            Ok(()) if retry => {
                 eprintln!("oos-ui: clock_floor device={} restored={previous}", self.name);
             }
             _ => {}
         }
-        self.restore_failed = result.is_err();
         result
     }
 
@@ -195,8 +256,8 @@ impl Floor {
         if !Self::supports(&io.read(&files.available)?, previous) {
             return Err(io::Error::other("saved minimum is no longer available"));
         }
-        write_minimum(io, &files.minimum, previous)?;
-        self.saved = None;
+        write_minimum(io, &files.minimum, previous, "restore read-back mismatch")?;
+        self.phase = Phase::Idle;
         Ok(())
     }
 
@@ -211,16 +272,14 @@ impl Floor {
     }
 
     fn status_reason(&self, port: &dyn Port, target: Option<u64>, recovery_failed: bool) -> (bool, Reason) {
-        if recovery_failed {
-            (false, Reason::RecoveryFailed)
-        } else if self.restore_failed {
-            let minimum = self.compare_minimum(port, target.or(self.target));
+        if self.restore_failed() {
+            let minimum = self.compare_minimum(port, target);
             (minimum.is_ok_and(|order| order != Ordering::Less), Reason::RestoreFailed)
-        } else if self.attempted() {
+        } else if recovery_failed {
+            (false, Reason::RecoveryFailed)
+        } else if self.state == Reason::Applied {
             match self.compare_minimum(port, target) {
-                Ok(Ordering::Equal) => (true, Reason::Applied),
-                result if self.state == Reason::ApplyFailed => (result == Ok(Ordering::Greater), Reason::ApplyFailed),
-                Ok(Ordering::Greater) => (true, Reason::Applied),
+                Ok(Ordering::Equal | Ordering::Greater) => (true, Reason::Applied),
                 Ok(Ordering::Less) => (false, Reason::MinimumChanged),
                 Err(reason) => (false, reason),
             }
@@ -230,22 +289,23 @@ impl Floor {
     }
 
     fn compare_minimum(&self, port: &dyn Port, target: Option<u64>) -> Result<Ordering, Reason> {
-        let (Some(previous), Some(target)) = (self.saved, target) else { return Err(Reason::MinimumUnknown) };
+        let Some(verified) = self.phase.verified() else { return Err(Reason::MinimumUnknown) };
         let minimum =
             self.files().and_then(|files| read_freq(port, &files.minimum)).map_err(|_| Reason::MinimumUnknown)?;
-        Ok(minimum.cmp(&previous.max(target)))
+        Ok(minimum.cmp(&verified.max(target.unwrap_or_default())))
     }
 }
 
-fn write_minimum(port: &mut dyn Port, path: &str, value: u64) -> io::Result<()> {
+fn write_minimum(port: &mut dyn Port, path: &str, value: u64, mismatch: &'static str) -> io::Result<()> {
     let write = port.write(path, value);
-    let minimum = read_freq(port, path);
-    if minimum.as_ref().is_ok_and(|&minimum| minimum == value) {
-        return Ok(());
+    match read_freq(port, path) {
+        Ok(minimum) if minimum == value => Ok(()),
+        Ok(_) => Err(match write {
+            Ok(()) => io::Error::other(mismatch),
+            Err(error) => io::Error::new(error.kind(), format!("{mismatch}: {error}")),
+        }),
+        Err(error) => write.and(Err(error)),
     }
-    write?;
-    minimum?;
-    Err(io::Error::other("minimum read-back mismatch"))
 }
 
 fn read_freq(port: &dyn Port, path: &str) -> io::Result<u64> {

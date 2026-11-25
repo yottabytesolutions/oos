@@ -51,10 +51,17 @@ After a timeout the worker disarms, services requests between 20 ms polls and re
 200 ms. It reconfigures from the current request after STOPPED, a link error, or a one-second deadline.
 The state report and log distinguish an unreadable FPGA status from a deadline without STOPPED.
 
-For a unit verification session, start an observer build with the `private-picture-counts` feature and
-`OOS_OBSERVE_DMA_STALL_ONCE=1` in the UI process environment. Its first ordinary batch DMA asks for
-eight extra bytes. Builds without the observer feature exclude the injection. The one-second configuration,
-injection and restart still need verification on hardware.
+On a unit running the observer build (`private-picture-counts`), run these commands in the unit shell
+to request a stall on the next supervised UI start.
+
+```sh
+touch /tmp/oos-observe-dma-stall-once && killall -TERM oos-ui
+```
+
+The `rootfs/initramfs/bin/oos-ui-loop` supervisor removes the RAM marker and passes
+`OOS_OBSERVE_DMA_STALL_ONCE=1` for the next start. The first ordinary batch DMA asks for eight extra
+bytes. Inspect the result with `grep -F 'c2h DMA timeout' /tmp/oos-ui.log`. A release-configuration build
+ignores the variable. The one-second configuration, injection and restart still need verification on hardware.
 
 ## Acquisition and rendering switches
 

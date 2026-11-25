@@ -193,6 +193,17 @@ mod tests {
     use super::*;
     use crate::model::{encode_vendor_with, TEST_KEYS};
 
+    #[test]
+    fn closed_data_refuses_vendor_key_cache() {
+        use crate::system::admission_test::{assert_refused, with_closed_data};
+        with_closed_data(module_path!(), "closed_data_refuses_vendor_key_cache", |data, _| {
+            let path = data.join("vendor.keys");
+            let mounts = "/dev/mmcblk0p9 /oos ext4 rw 0 0";
+            assert_refused(keep(mounts, &path, "none example\n").unwrap_err());
+            assert!(!path.exists());
+        });
+    }
+
     /// A small ELF image with the keys of the tests at their usual places: code in the first part, data in the second.
     fn image() -> Vec<u8> {
         let k = TEST_KEYS;

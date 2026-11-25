@@ -16,6 +16,10 @@ pub use shutdown::{report_power_failure, DataShutdown};
 use std::io;
 use std::path::Path;
 
+#[cfg(any(test, feature = "data-admission-test"))]
+#[doc(hidden)]
+pub mod admission_test;
+
 /// Whether /proc/mounts lists the data filesystem at /oos.
 pub fn oos_mounted(mounts: &str) -> bool {
     mounts.lines().any(|line| {
@@ -26,6 +30,10 @@ pub fn oos_mounted(mounts: &str) -> bool {
 
 /// Reject data-area mutations during shutdown. Runtime files in /tmp remain writable.
 pub fn check_data_write(path: &Path) -> io::Result<()> {
+    #[cfg(any(test, feature = "data-admission-test"))]
+    if let Some(closing) = admission_test::closing(path) {
+        return data_write_admission(closing);
+    }
     #[cfg(target_os = "linux")]
     if path.starts_with("/oos") {
         return data_write_admission(Path::new("/tmp/oos-data.closing").try_exists());
@@ -34,7 +42,7 @@ pub fn check_data_write(path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", test, feature = "data-admission-test"))]
 fn data_write_admission(closing: io::Result<bool>) -> io::Result<()> {
     if closing? {
         return Err(io::Error::new(io::ErrorKind::ReadOnlyFilesystem, "/oos is closed for shutdown"));

@@ -12,6 +12,7 @@ pub(super) fn persist() -> io::Result<()> {
 }
 
 fn persist_from(data: &Path, ram: &Path) -> io::Result<()> {
+    crate::system::check_data_write(data)?;
     // Use the same data-area readiness check as the WLAN supervisor.
     if !data.join("setups").is_dir() {
         return Ok(());
@@ -51,6 +52,18 @@ mod tests {
 
     const CONFIG: &[u8] =
         b"ctrl_interface=/run/wpa_supplicant\nupdate_config=1\nnetwork={\n\tssid=74657374\n\tkey_mgmt=NONE\n}\n";
+
+    #[test]
+    fn closed_data_refuses_wlan_configuration() {
+        use crate::system::admission_test::{assert_refused, with_closed_data};
+        with_closed_data(module_path!(), "closed_data_refuses_wlan_configuration", |data, ram| {
+            std::fs::create_dir(data.join("setups")).unwrap();
+            let source = ram.join("wpa_supplicant.conf");
+            std::fs::write(&source, CONFIG).unwrap();
+            assert_refused(persist_from(data, &source).unwrap_err());
+            assert!(!data.join("wlan").exists());
+        });
+    }
 
     #[test]
     fn a_cut_keeps_a_complete_saved_configuration() {

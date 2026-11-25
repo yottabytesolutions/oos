@@ -112,7 +112,11 @@ while [ ! -e "$tmp/oos-ui.off" ]; do
     [ "$mode" != safe ] || set -- "$@" --safe
     [ ! -e "$tmp/oos-ui.off" ] || break
     run=$boot:$$:$seq
-    OOS_UI_RUN_ID=$run "$ui" "$@" >> "$tmp/oos-ui.log" 2>&1
+    stall=${OOS_OBSERVE_DMA_STALL_ONCE:-}
+    stall_marker=$tmp/oos-observe-dma-stall-once
+    # Consume the RAM request before launch so a later restart cannot repeat the injection.
+    if [ -f "$stall_marker" ] && rm "$stall_marker"; then stall=1; fi
+    OOS_UI_RUN_ID=$run OOS_OBSERVE_DMA_STALL_ONCE=$stall "$ui" "$@" >> "$tmp/oos-ui.log" 2>&1
     rc=$?
     restore_clocks >> "$tmp/oos-ui.log" 2>&1 ||
         echo 'oos-ui-loop: clock_floor recovery failed; receipt retained' >> "$tmp/oos-ui.log"

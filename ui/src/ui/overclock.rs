@@ -77,6 +77,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn closed_data_refuses_overclock_settings() {
+        use oos_hal::system::admission_test::{assert_refused, with_closed_data};
+        with_closed_data(module_path!(), "closed_data_refuses_overclock_settings", |data, _| {
+            let path = data.join("limits.conf");
+            let name = path.to_str().unwrap();
+            assert_refused(store(name, 2e9).unwrap_err());
+            assert!(!path.exists());
+            fs::write(&path, "adc.clock_hz = 2000000000\n").unwrap();
+            assert_refused(store(name, board().clock_steps()[0]).unwrap_err());
+            assert!(path.exists());
+        });
+    }
+
+    #[test]
     fn writes_the_step_and_keeps_other_lines() {
         let dir = std::env::temp_dir().join(format!("oos-overclock-{}", std::process::id()));
         fs::create_dir_all(&dir).unwrap();

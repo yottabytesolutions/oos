@@ -388,6 +388,17 @@ pub fn apply(on: bool) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn closed_data_refuses_ssh_keys() {
+        use oos_hal::system::admission_test::{assert_refused, with_closed_data};
+        with_closed_data(module_path!(), "closed_data_refuses_ssh_keys", |data, ram| {
+            let dir = data.join("ssh");
+            assert_refused(Keys::default().save(&dir).unwrap_err());
+            assert!(!dir.exists());
+            assert_refused(Keys::default().save(ram).unwrap_err());
+        });
+    }
+
     // ssh-keygen -t ed25519 -C tester@host (public part only)
     const ED: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHpflgL+YU3dK6EtW+scyOzamlWiPXJSwQWA1mfwdC9N tester@host";
 

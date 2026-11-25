@@ -25,3 +25,6 @@ missing_safety_doc = "warn"
 [dependencies]
 libc = "0.2"
 oos-hal = { path = "../hal" }
+
+[dev-dependencies]
+oos-hal = { path = "../hal", features = ["data-admission-test"] }

@@ -60,7 +60,7 @@ pub fn observe_handoff(state_path: &Path, running: &str, status: crate::bootcard
         && state.kexec.as_deref().map(str::trim) == Some(running.trim())
         && state.sd.observe(status, true, true)
     {
-        state.save(state_path).map_err(io("recording the SDR104 handoff observation"))?;
+        state.save_locked(state_path).map_err(io("recording the SDR104 handoff observation"))?;
     }
     Ok(())
 }
@@ -83,13 +83,13 @@ pub(super) fn requested(state_path: &Path) -> Result<Mode, String> {
 }
 
 /// Serialize read-modify-replace of system.conf by the updater and the panel.
-pub fn lock_config(path: &Path) -> Result<super::Lock, String> {
+pub fn lock_config(path: &Path) -> std::io::Result<super::Lock> {
     super::locking::lock_file(path, true, "system.conf")
 }
 
 fn save_preference(state_path: &Path, mode: Mode, retry: Option<&State>) -> Result<(), String> {
     let path = config_path(state_path)?;
-    let _lock = lock_config(&path)?;
+    let _lock = lock_config(&path).map_err(io("locking system.conf"))?;
     let text = read_config(&path).map_err(io("reading device system.conf"))?;
     let mut updated = String::new();
     for line in text.split_inclusive('\n') {
@@ -105,8 +105,9 @@ fn save_preference(state_path: &Path, mode: Mode, retry: Option<&State>) -> Resu
     options.write(true).create(true).truncate(true);
     if let Some(state) = retry {
         // Once the preference is durable, the next install must honor the explicit retry even after a cut.
-        state.save(state_path).map_err(io("saving the SDR104 retry"))?;
+        state.save_locked(state_path).map_err(io("saving the SDR104 retry"))?;
     }
+    crate::system::check_data_write(&path).map_err(io("saving boot card preference"))?;
     crate::system::durable_replace(&path, &path.with_extension("sd.new"), updated.as_bytes(), &options)
         .map_err(io("saving boot card preference"))
 }

@@ -36,6 +36,7 @@ if ! ok "$mac"; then
 fi
 # Only fill an absent key. Existing settings, including legacy selectors, are never rewritten.
 if [ "$(OOS_CONF_FILES="$conf" "$here/oos-conf" eth.mac __absent__)" = __absent__ ]; then
+	[ ! -e /tmp/oos-data.closing ] || { echo "oos-mac: /oos is closed for shutdown" >&2; exit 1; }
 	dir=$(dirname "$conf")
 	mkdir -p "$dir"
 	umask 077

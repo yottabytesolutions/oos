@@ -383,7 +383,7 @@ fn mode_and_lock() {
         locking::lock_with(path, true)
     })
     .unwrap_err();
-    assert!(error.starts_with("locking the update state lock:"), "{error}");
+    assert!(error.starts_with("update state is busy"), "{error}");
     assert!(f.st().persist, "a contended mode change must not write state");
     let t = std::thread::spawn(move || set_mode(&p, false).unwrap());
     drop(l);
@@ -1117,4 +1117,17 @@ fn refused_writes_leave_the_card_unchanged_and_boot_writes_only_four_bytes() {
     assert_eq!(&after[4..], &before[4..]);
     let readonly = Card::open(std::path::Path::new("/dev/null"), true);
     assert!(readonly.is_err());
+}
+
+#[test]
+fn closed_data_refuses_update_state() {
+    use crate::system::admission_test::{assert_refused, with_closed_data};
+    with_closed_data(module_path!(), "closed_data_refuses_update_state", |data, _| {
+        let path = data.join("update/state");
+        assert_refused(State::default().save_locked(&path).unwrap_err());
+        assert_refused(State::default().save(&path).unwrap_err());
+        let error = set_mode(&path, true).unwrap_err();
+        assert!(error.contains("/oos is closed for shutdown"), "{error}");
+        assert!(!data.join("update").exists());
+    });
 }

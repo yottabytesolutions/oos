@@ -79,6 +79,63 @@ exit "$MOUNT_EXIT"
         return subprocess.run(["sh", str(self.script), str(int(stock_confirmed))], env=env,
                               capture_output=True, text=True)
 
+    def test_closed_admission_refuses_the_mount(self):
+        (self.root / "closing").touch()
+        result = self.run_startup()
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("/oos is closed for shutdown", result.stderr)
+        self.assertFalse(self.base.exists())
+        self.assertFalse(self.mount.exists())
+
+    def test_closed_admission_refuses_shell_data_writers(self):
+        (self.root / "closing").touch()
+        data = self.root / "data"
+        data.mkdir()
+        pstore = self.root / "pstore"
+        pstore.mkdir()
+        panic = pstore / "dmesg-ramoops-0"
+        panic.write_text("Panic synthetic fixture\n")
+        self.stub("oos-board", "echo 00:00:5e:00:53:01")
+        self.stub("oos-conf", '''case "$1" in
+    remote.ssh) echo on ;;
+    net.allow) echo 192.0.2.0/24 ;;
+    *) echo "${2:-}" ;;
+esac
+''')
+        self.stub("nft", "exit 0")
+        self.stub("dropbearkey", "exit 1")
+        ssh_pid = self.root / "dropbear.pid"
+        env = {
+            **os.environ,
+            "OOS_TEST": "1",
+            "OOS_UI_DATA": str(data),
+            "OOS_UI_TMP": str(self.root),
+            "OOS_CRASH_MNT": str(data),
+            "OOS_PSTORE": str(pstore),
+            "OOS_KMSG": str(self.kmsg),
+            "OOS_DEVICE_CONF": str(data / "system.conf"),
+            "OOS_SSH_DIR": str(data / "ssh"),
+            "OOS_SSH_STATE": str(self.root / "ssh.state"),
+        }
+        for name, args, status in (
+            ("oos-mac", [], 1),
+            ("oos-net6", ["--secret", str(data / "ipv6.secret")], 1),
+            ("oos-ssh", ["start"], 1),
+            ("oos-ui-exits", ["count", "fixture", "1", "run"], 1),
+            ("oos-crash-save", [], 0),
+        ):
+            with self.subTest(writer=name):
+                source = (ROOT / "rootfs/initramfs/bin" / name).read_text()
+                source = source.replace("/tmp/oos-data.closing", str(self.root / "closing"))
+                source = source.replace("/run/dropbear.pid", str(ssh_pid))
+                script = self.root / name
+                script.write_text(source)
+                result = subprocess.run(["sh", str(script), *args], env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, status, result)
+                self.assertIn("/oos is closed for shutdown", result.stdout + result.stderr)
+                self.assertEqual(list(data.iterdir()), [])
+        self.assertTrue(panic.is_file())
+
     def test_repaired_data_mounts_and_reports_to_panel_and_kernel(self):
         result = self.run_startup(REPAIRED)
         self.assertEqual(result.returncode, 0, result.stderr)

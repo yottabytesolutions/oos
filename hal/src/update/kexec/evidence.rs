@@ -72,6 +72,17 @@ mod tests {
     use super::*;
 
     #[test]
+    fn closed_data_refuses_diagnostics() {
+        use crate::system::admission_test::{assert_refused, with_closed_data};
+        with_closed_data(module_path!(), "closed_data_refuses_diagnostics", |data, _| {
+            let dir = data.join("kexec-last");
+            assert_refused(begin(&dir, 1, 2, b"tree", 0).unwrap_err());
+            assert_refused(write(&dir, "stdout", b"output", TEXT_LIMIT).unwrap_err());
+            assert!(!dir.exists());
+        });
+    }
+
+    #[test]
     fn a_cut_keeps_complete_diagnostics() {
         let dir = Path::new("kexec-last");
         for name in ["jump.log", "stdout", "stderr", "merged.dtb", "staged.log", "load.log"] {

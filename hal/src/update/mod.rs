@@ -138,7 +138,7 @@ fn io(what: &str) -> impl Fn(std::io::Error) -> String + '_ {
 }
 
 mod locking;
-pub use locking::{lock, Lock};
+pub use locking::{lock, try_lock, Lock};
 
 /// `State::event` while the rollback slot is being written.
 const SLOT_WRITING: &str = "writing the rollback slot";
@@ -204,7 +204,7 @@ pub fn rollback(
             st.abandon_card_trial();
             st.track_recovery(prev, id);
             st.trial = None;
-            st.save(state_path).map_err(io("writing the update state"))?;
+            st.save_locked(state_path).map_err(io("writing the update state"))?;
         }
         return Ok(r);
     }
@@ -217,14 +217,14 @@ pub fn rollback(
     // the state keeps naming the image and its trial until the write is done: a cut write stays a rollback to repeat
     st.abandon_card_trial();
     st.event = format!("rolling back from {} to {}", from, short(&prev.build));
-    st.save(state_path).map_err(io("writing the update state (nothing written to the card)"))?;
+    st.save_locked(state_path).map_err(io("writing the update state (nothing written to the card)"))?;
     card.disarm_oos()?;
     card.write_image(Region::Recovery, &b)?;
     r.written = true;
     st.event = format!("rolled back from {} to {}: {}", from, short(&prev.build), reason);
     st.track_recovery(prev.clone(), id);
     st.trial = None;
-    st.save(state_path).map_err(io("writing the update state"))?;
+    st.save_locked(state_path).map_err(io("writing the update state"))?;
     r.say("recovery written and read back");
     r.lines.extend(st.sd_fallback().map(str::to_string));
     match card.arm_oos() {
@@ -313,7 +313,7 @@ pub fn boot_started_with_card(
         changed = st.sd.observe(status, warm, trial);
     }
     if changed || boot != Boot::NoTrial {
-        st.save(state_path).map_err(io("writing the update state"))?;
+        st.save_locked(state_path).map_err(io("writing the update state"))?;
     }
     if restart.is_some() {
         restart_mark::remove_restart_mark(state_path).map_err(io("removing the kexec restart guard"))?;
@@ -334,7 +334,7 @@ fn set_mode_with(
     let _l = acquire(state_path)?;
     let mut st = State::load(state_path).map_err(io("reading the update state"))?;
     st.persist = persist;
-    st.save(state_path).map_err(io("writing the update state"))
+    st.save_locked(state_path).map_err(io("writing the update state"))
 }
 
 /// What the watcher sees after `elapsed` seconds.

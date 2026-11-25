@@ -268,3 +268,21 @@ fn clock_recovery_distinguishes_absent_nodes_from_unreadable_attributes() {
         }
     }
 }
+
+#[test]
+fn supervisor_arms_the_observer_for_one_start() {
+    let f = Fake::new("observer-stall");
+    let marker = "tmp/oos-observe-dma-stall-once";
+    f.write(marker, "");
+    f.exec(
+        "bin/ui",
+        r#"#!/bin/sh
+if [ -e "$OOS_UI_TMP/launches" ]; then touch "$OOS_UI_TMP/oos-ui.off"; fi
+printf 'stall=%s\n' "${OOS_OBSERVE_DMA_STALL_ONCE:-}" >> "$OOS_UI_TMP/launches"
+"#,
+    );
+    let out = f.command("oos-ui-loop").env_remove("OOS_OBSERVE_DMA_STALL_ONCE").output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(std::fs::read_to_string(f.p("tmp/launches")).unwrap(), "stall=1\nstall=\n");
+    assert!(!f.p(marker).exists());
+}

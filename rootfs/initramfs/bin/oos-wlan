@@ -6,9 +6,9 @@
 # 2 s: a WLAN stick there -> load the driver, wlan0 there -> wpa_supplicant, associated -> DHCP. A stick can come and go
 # at any time. The GUI (System > WLAN) talks to wpa_supplicant over its control socket.
 ST=/tmp/oos-boot.status
-DIR=/oos/wlan
-[ -d /oos/setups ] || DIR=/tmp/wlan
-CONF=$DIR/wpa_supplicant.conf
+DATA=/oos
+SAVED=$DATA/wlan/wpa_supplicant.conf
+CONF=/run/oos-wlan/wpa_supplicant.conf
 PID=/run/wpa_supplicant.pid
 DHCP=/run/udhcpc.wlan0.pid
 K=/lib/modules/$(uname -r)/kernel
@@ -38,16 +38,41 @@ load() {
 	echo "oos-wlan: driver loaded"
 }
 
-start() {
-	mkdir -p "$DIR" || return 1
-	if [ ! -s "$CONF" ]; then
-		(umask 077; printf 'ctrl_interface=/run/wpa_supplicant\nupdate_config=1\n' > "$CONF.new") &&
-			sync "$CONF.new" && mv "$CONF.new" "$CONF" && sync "$DIR" && sync "$(dirname "$DIR")" || return 1
-	fi
-	ip link set wlan0 up
-	wpa_supplicant -B -i wlan0 -c $CONF -P $PID -f /tmp/wpa_supplicant.log && echo "oos-wlan: wpa_supplicant runs ($CONF)"
+# The daemon and its temporary files inherit a private umask. Only oos-ui, after SAVE_CONFIG
+# succeeds, publishes this RAM copy to the data area. Logs in /tmp may lose their tail.
+start_supplicant() {
+	umask 077
+	wpa_supplicant -B -i wlan0 -c "$CONF" -P "$PID" -f /tmp/wpa_supplicant.log
 }
 
+empty_config() {
+	(umask 077; printf 'ctrl_interface=/run/wpa_supplicant\nupdate_config=1\n' > "$CONF")
+}
+
+prepare_config() {
+	(umask 077; mkdir -p "$(dirname "$CONF")") || return 1
+	if [ -d "$DATA/setups" ] && grep -qx 'ctrl_interface=/run/wpa_supplicant' "$SAVED" 2>/dev/null &&
+		grep -qx 'update_config=1' "$SAVED" && (umask 077; cp "$SAVED" "$CONF"); then
+		return 0
+	fi
+	empty_config
+}
+
+start() {
+	[ -n "$ready" ] || prepare_config || return 1
+	ip link set wlan0 up || return 1
+	if ! (start_supplicant); then
+		# The supplicant parses the complete copied file before it daemonizes.
+		[ -z "$ready" ] || return 1
+		echo "oos-wlan: saved configuration rejected or WLAN unavailable; trying empty configuration"
+		empty_config && (start_supplicant) || return 1
+	fi
+	# On later restarts leave the RAM file alone, including after an acknowledged save.
+	ready=1
+	echo "oos-wlan: wpa_supplicant runs ($CONF)"
+}
+
+ready=
 net=
 while :; do
 	if [ ! -e /sys/class/net/wlan0 ]; then

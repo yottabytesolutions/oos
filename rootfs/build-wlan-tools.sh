@@ -24,6 +24,31 @@ dep_fetch libnl-musl-patch >/dev/null
 docker run --rm --pull=never --platform linux/arm64 -e OUT_OWNER="$(id -u):$(id -g)" -e VER="$ver" -e LIBNL="$libnl" -v "$out:/out" -v "$DEPS_SOURCES:/src:ro" "$image" sh -euc '
 	apk list -I libnl3-static 2>/dev/null | grep -q "^libnl3-static-$LIBNL-r" || { echo "libnl3-static of this Alpine is not $LIBNL (rootfs/deps.lock): $(apk list -I libnl3-static 2>/dev/null)" >&2; exit 1; }
 	cd /tmp && tar -xzf /src/wpa_supplicant-$VER.tar.gz && cd wpa_supplicant-$VER/wpa_supplicant
+	# A failed serialization must leave the previous RAM copy intact and make SAVE_CONFIG fail.
+	patch -p0 <<PATCH
+--- config_file.c
++++ config_file.c
+@@ -1656,4 +1656,4 @@
+-	if (tmp_name) {
+-		os_snprintf(tmp_name, tmp_len, "%s.tmp", name);
+-		name = tmp_name;
+-	}
++	if (!tmp_name)
++		return -1;
++	os_snprintf(tmp_name, tmp_len, "%s.tmp", name);
++	name = tmp_name;
+@@ -1703,3 +1703,4 @@
+-	os_fdatasync(f);
+-
+-	fclose(f);
++	if (ferror(f) || os_fdatasync(f))
++		ret = -1;
++	if (fclose(f))
++		ret = -1;
+@@ -1714 +1715 @@
+-		if (chmod_ret != 0 || rename(tmp_name, orig_name) != 0)
++		if (!ret && (chmod_ret != 0 || rename(tmp_name, orig_name) != 0))
+PATCH
 	cat > .config <<CFG
 CONFIG_DRIVER_NL80211=y
 CONFIG_LIBNL32=y

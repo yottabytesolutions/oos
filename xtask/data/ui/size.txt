@@ -28,7 +28,7 @@
 416 file ui/src/ui/startup.rs
 498 file ui/src/ui/time.rs
 1277 file ui/src/ui/tools.rs
-772 file ui/src/ui/wlan.rs
+766 file ui/src/ui/wlan.rs
 653 file ui/src/ui/workflow.rs
 804 file ui/src/ui/workspace.rs
 1033 file ui/src/wave.rs

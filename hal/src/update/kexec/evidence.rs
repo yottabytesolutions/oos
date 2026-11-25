@@ -3,7 +3,8 @@
 
 //! One bounded legacy-load attempt on the persistent OOS data partition (docs/boot.md).
 
-use std::io::{self, Read, Write};
+use crate::system::durable::{replace_private, Disk, Files};
+use std::io::{self, Read};
 use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
 
@@ -42,10 +43,11 @@ pub(super) fn run(command: &mut Command) -> Result<(ExitStatus, Vec<u8>, Vec<u8>
 }
 
 pub(super) fn write(dir: &Path, name: &str, bytes: &[u8], limit: usize) -> io::Result<()> {
-    let mut file = std::fs::File::create(dir.join(name))?;
-    file.write_all(&bytes[..bytes.len().min(limit)])?;
-    file.sync_all()?;
-    std::fs::File::open(dir)?.sync_all()
+    write_with(&mut Disk, dir, name, bytes, limit)
+}
+
+fn write_with(files: &mut impl Files, dir: &Path, name: &str, bytes: &[u8], limit: usize) -> io::Result<()> {
+    replace_private(files, &dir.join(name), &bytes[..bytes.len().min(limit)])
 }
 
 pub(super) fn begin(dir: &Path, kernel: usize, initrd: usize, tree: &[u8], from: u64) -> io::Result<()> {
@@ -66,6 +68,16 @@ pub(super) fn begin(dir: &Path, kernel: usize, initrd: usize, tree: &[u8], from:
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cut_keeps_complete_diagnostics() {
+        let dir = Path::new("kexec-last");
+        for name in ["jump.log", "stdout", "stderr", "merged.dtb", "staged.log", "load.log"] {
+            crate::system::durable::tests::assert_cuts(&dir.join(name), b"next", |files| {
+                write_with(files, dir, name, b"next oversized", 4)
+            });
+        }
+    }
 
     #[test]
     fn output_is_drained_and_bounded() {

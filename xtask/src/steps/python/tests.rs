@@ -16,14 +16,14 @@ fn runner_builds_the_host_updater_in_the_selected_target_and_propagates_failure(
                  print('runner output')\nsys.exit({status})\n"
             ),
         );
-        let result = run(&Default::default(), &f.0);
+        let result = run(&Context::default(), &f.0);
         assert_eq!(result.is_ok(), status == 0);
         assert_eq!(result.unwrap_or_else(|lines| lines).last().unwrap(), "runner output\n");
     }
     let commands = std::fs::read_to_string(f.0.join("commands")).unwrap();
     assert_eq!(commands, "build -p oos-fpgad --bin oos-update\ntarget\n".repeat(2));
     f.output("build");
-    assert!(run(&Default::default(), &f.0).unwrap_err().join("\n").contains("failed build"));
+    assert!(run(&Context::default(), &f.0).unwrap_err().join("\n").contains("failed build"));
     assert_eq!(
         std::fs::read_to_string(f.0.join("commands")).unwrap(),
         commands + "build -p oos-fpgad --bin oos-update\n"

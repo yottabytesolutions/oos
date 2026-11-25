@@ -5,7 +5,7 @@
 //! inner one. What was found is kept on the data partition of the unit, so later starts need no search.
 
 use crate::model::{self, Keys};
-use crate::system::{durable_replace, oos_mounted};
+use crate::system::{durable_replace, shared_partition_mounted};
 use std::io;
 use std::path::Path;
 
@@ -176,7 +176,7 @@ pub fn for_file(vendor: &[u8]) -> Option<Keys> {
 
 /// Cache only on mounted data. A stock start or an initramfs directory cannot keep the file.
 fn keep(mounts: &str, path: &Path, line: &str) -> io::Result<()> {
-    if !oos_mounted(mounts) {
+    if !shared_partition_mounted(mounts) {
         return Ok(());
     }
     let tmp = path.with_added_extension("new");

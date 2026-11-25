@@ -19,6 +19,7 @@ Written by `cargo xtask ratchet` (docs/development.md). Floors may only rise.";
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Options {
     pub init: bool,
+    pub style: bool,
     pub coverage: bool,
     pub moves: bool,
 }
@@ -37,6 +38,7 @@ fn current(root: &Path) -> Result<BTreeMap<(&'static str, &'static str), Ratchet
         for (kind, r) in [
             (Kind::Clippy, f.counts),
             (Kind::Size, m.sizes),
+            (Kind::Naming, m.names),
             (Kind::Statics, statics),
             (Kind::Unsafe, unsafes),
             (Kind::Allow, m.allows),
@@ -170,9 +172,22 @@ pub fn run(root: &Path, o: Options) -> Result<(), String> {
     if o.init {
         refuse_init(root)?;
     }
+    let base = crate::base::protected(&Default::default(), root)?;
+    if o.style && !crate::style_rollout::is_pending(&Default::default(), root, &base).map_err(|e| e.to_string())? {
+        return Err("the style baseline is already initialized at the base".into());
+    }
     for ((c, k), now) in current(root)? {
         let k = kind(k);
-        write_current(root, c, k, now, o.init)?;
+        if o.style && matches!(k, Kind::Clippy | Kind::Naming) {
+            let old = combined(root, &crates, k, Some(&base))?;
+            let initial =
+                crate::style_rollout::extend_initial_baseline(&Default::default(), root, &base, k, &old, &now)
+                    .map_err(|e| e.to_string())?;
+            let allowed = store::of_crate(&initial, c);
+            save(root, c, k, &allowed.tightened(&now))?;
+        } else {
+            write_current(root, c, k, now, o.init)?;
+        }
     }
     if o.coverage {
         let path = steps::ratchet_path(root, "coverage.txt");

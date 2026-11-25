@@ -40,7 +40,7 @@ fn matrix(ctx: &Context, root: &Path) -> Result<String, Vec<String>> {
             return Err(vec![format!("{path}: local OOS defaults present; run plan-matrix on a host without them")]);
         }
     }
-    host::build_fpgad_bin(ctx, root, "oos-fpgad")?;
+    host::build_fpgad_binary(ctx, root, "oos-fpgad")?;
     let target = host::target(ctx, root)?;
     let cal = target.join("plan-matrix-cal");
     host::command(ctx, root, "python3", &["-I", "tools/generate-test-cal.py", "--output", &cal.to_string_lossy()])?;

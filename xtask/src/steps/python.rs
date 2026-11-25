@@ -8,9 +8,9 @@ use std::path::Path;
 mod tests;
 
 pub(crate) fn run(ctx: &Context, root: &Path) -> Outcome {
-    let mut lines = host::build_fpgad_bin(ctx, root, "oos-update")?;
+    let mut lines = host::build_fpgad_binary(ctx, root, "oos-update")?;
     let updater = host::target(ctx, root)?.join("debug/oos-update");
-    lines.extend(host::command_env(
+    lines.extend(host::command_with_environment(
         ctx,
         root,
         "python3",

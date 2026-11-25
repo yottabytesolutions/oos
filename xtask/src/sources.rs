@@ -59,6 +59,31 @@ pub(crate) fn cfg_test(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|a| a.path().is_ident("cfg") && a.parse_args::<syn::Meta>().is_ok_and(|m| requires_test(&m)))
 }
 
+/// Shared visit methods for syntax containers that can enclose test-only code.
+macro_rules! visit_production {
+    ($ast:lifetime, |$walker:ident, $node:ident| $is_test:expr) => {
+        $crate::sources::visit_production!(
+            $ast, |$walker, $node| $is_test;
+            visit_item(Item),
+            visit_impl_item(ImplItem),
+            visit_trait_item(TraitItem),
+            visit_stmt(Stmt),
+            visit_field(Field),
+            visit_variant(Variant),
+            visit_arm(Arm),
+            visit_field_value(FieldValue),
+        );
+    };
+    ($ast:lifetime, |$walker:ident, $node:ident| $is_test:expr; $($method:ident($kind:ident)),+ $(,)?) => {
+        $(fn $method(&mut $walker, $node: &$ast syn::$kind) {
+            if !$is_test {
+                syn::visit::$method($walker, $node);
+            }
+        })+
+    };
+}
+pub(crate) use visit_production;
+
 /// `#[path = ..]`, also inside `cfg_attr` (`crate::attrs`).
 fn path_attr(attrs: &[syn::Attribute]) -> bool {
     crate::attrs::any(attrs, &["path"])

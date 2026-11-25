@@ -49,12 +49,19 @@ pub struct Measured {
     pub known: Ratchet,
     /// `#[ignore = "known: .."]` without a task
     pub malformed: Vec<String>,
+    /// Declaration vocabulary findings, measured during the shared source walk.
+    pub names: Ratchet,
 }
 
 /// The walk of one source text, for tests of the checks built on it.
 #[cfg(test)]
 pub fn visit_for_test(text: &str) -> visit::Found {
     visit::walk(text).expect("parses")
+}
+
+/// Whether an item is test-only, using the same attribute interpretation as the size walk.
+pub fn test_item(item: &impl quote::ToTokens) -> bool {
+    visit::test_extent(item).is_some()
 }
 
 /// The production code lines of `src`: none for test code (ADR 0007).
@@ -110,7 +117,7 @@ pub fn measure(krate: &str, sources: &[Source]) -> Measured {
     for (ty, files) in spread {
         over(&mut now, format!("impls {} {}", krate, ty), files.len() as u64, IMPL_FILES);
     }
-    Measured { sizes: now, statics, unsafes, allows, known, malformed }
+    Measured { sizes: now, statics, unsafes, allows, known, malformed, names: Ratchet::default() }
 }
 
 #[cfg(test)]

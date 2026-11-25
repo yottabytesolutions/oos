@@ -8,6 +8,20 @@
 //!   cargo xtask loc [--json] [--compare <git-ref>]   production code lines per crate (ADR 0007)
 //!   cargo xtask plan-matrix [--update]   check or deliberately replace the register-plan baseline
 
+// Tooling keeps its pre-existing zero-warning rules; new pedantic rules use the shared ratchet.
+#![deny(unused, missing_debug_implementations)]
+#![deny(
+    clippy::all,
+    clippy::too_many_lines,
+    clippy::cognitive_complexity,
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::large_enum_variant,
+    clippy::unwrap_used,
+    clippy::undocumented_unsafe_blocks,
+    clippy::missing_safety_doc
+)]
+
 mod agent_rules;
 mod arch;
 mod attrs;
@@ -22,6 +36,7 @@ mod inventory;
 mod links;
 mod loc;
 mod moves;
+mod naming;
 mod plan_matrix;
 mod ratchet;
 mod repo;
@@ -33,6 +48,7 @@ mod sources;
 mod stack_ci;
 mod steps;
 mod store;
+mod style_rollout;
 mod target;
 mod test_time;
 #[cfg(test)]
@@ -61,7 +77,7 @@ fn parse(args: &[String]) -> Result<(&str, Vec<&str>), String> {
         "loc" => return loc::Options::parse(&flags).map(|_| (cmd.as_str(), flags)),
         "doctor" => &["--gpu", "--sim", "--image"],
         "check" => &["--fast", "--no-coverage", "--list", "--image"],
-        "ratchet" => &["--init", "--coverage", "--move"],
+        "ratchet" => &["--init", "--init-style", "--coverage", "--move"],
         "plan-matrix" => &["--update"],
         _ => return Err(USAGE.into()),
     };
@@ -100,6 +116,7 @@ fn main() -> ExitCode {
             &root,
             tighten::Options {
                 init: flags.contains(&"--init"),
+                style: flags.contains(&"--init-style"),
                 coverage: flags.contains(&"--coverage"),
                 moves: flags.contains(&"--move"),
             },

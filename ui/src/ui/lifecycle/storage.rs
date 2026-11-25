@@ -121,13 +121,14 @@ fn apply_recalled_setup(ui: &mut Ui, p: &std::path::Path, text: std::io::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::board::HwShared;
     use crate::model::{RunState, TrigMode};
     use crate::wave::Source;
 
     #[test]
     fn recalled_single_setup_does_not_restore_the_previous_sessions_sweep() {
         for previous in [TrigMode::Normal, TrigMode::Auto] {
-            let mut ui = Ui::for_tests(Source::Hw { shared: Default::default(), seen: 0 });
+            let mut ui = Ui::for_tests(Source::Hw { shared: HwShared::default(), seen: 0 });
             ui.set_sweep(previous);
             ui.single_sweep();
             apply_recalled_setup(&mut ui, std::path::Path::new("single.setup"), Ok("trig_mode = Single\n".into()));

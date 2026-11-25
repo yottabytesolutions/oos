@@ -39,6 +39,35 @@ fn invalid_floor_switches_log_the_key_and_value() {
 }
 
 #[test]
+fn apply_errors_log_when_the_error_changes_or_recurs_after_success() {
+    let tree = Tree::new();
+    let log = child(&tree, "apply-errors");
+    assert_eq!(log.matches("device=gpu target=600000000 error=").count(), 3, "{log}");
+    assert_eq!(log.matches("error=minimum is not in available frequencies").count(), 2, "{log}");
+    assert_eq!(log.matches("error=invalid digit found in string").count(), 1, "{log}");
+}
+
+fn apply_errors(tree: &Tree) {
+    let clock = ManualClock::new();
+    tree.set(GPU, "available_frequencies", "200000000 400000000");
+    let mut controller = tree.controller_with_clock(&clock);
+    for minimum in ["400000000", "bad"] {
+        tree.set(GPU, "min_freq", minimum);
+        for _ in 0..3 {
+            controller.update(true);
+            clock.advance(SAMPLE_PERIOD);
+        }
+    }
+    tree.set(GPU, "min_freq", "400000000");
+    tree.set(GPU, "available_frequencies", "200000000 400000000 600000000");
+    controller.update(true);
+    assert_eq!(tree.minima().1, "600000000");
+    controller.update(false);
+    tree.set(GPU, "available_frequencies", "200000000 400000000");
+    controller.update(true);
+}
+
+#[test]
 fn failed_restore_retries_once_per_second_and_logs_only_failure_then_success() {
     let text = child(&Tree::new(), "restore");
     assert_eq!(text.matches("device=cpu running=false error=").count(), 1, "{text}");
@@ -126,6 +155,7 @@ fn review_child() {
         }
         "restore" => restore_retries(&tree),
         "thermal" => thermal_transitions(&tree),
+        "apply-errors" => apply_errors(&tree),
         case => panic!("unknown review case {case}"),
     }
 }

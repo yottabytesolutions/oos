@@ -72,9 +72,15 @@ and `clock.gpu` (GPU devfreq).
 | Suffix | Meaning |
 |---|---|
 | `.requested_hz` | Current UI floor request in Hz, or `0` when there is no request. A request can be inhibited or disabled. |
-| `.applied` | `1` when the minimum read-back meets the controller's floor, otherwise `0`. A failed retarget or release can leave the floor applied. |
+| `.applied` | `1` when a floor write verified and the sampled minimum still meets the floor, otherwise `0`. During a pending rollback, `1` means the last verified floor still meets the sampled minimum check. An unverified raise or startup rollback reports `0`. |
 | `.current_hz` | Current frequency in Hz, or `unknown` if unreadable. CPU cpufreq values are converted from kHz. |
 | `.reason` | `none`, `stopped`, `disabled`, `absent`, `no_cooling_binding`, `cooling_binding_error`, `thermal`, `sensor_error`, `apply_failed`, `restore_failed`, `recovery_failed`, `minimum_unknown` or `minimum_changed`. |
+
+The controller samples at startup, after a clock request or floor state transition,
+and once per second as it polls. Replies use the latest snapshot. `restore_failed`
+means the saved minimum remains pending, including while a new RUN retries a
+previously pending floor. `recovery_failed` means startup recovery inhibited new
+floors for this process.
 
 Hardware RUN requests 1416000000 Hz for A72 and 600000000 Hz for the GPU.
 STOP and Demo request 400000000 Hz for the GPU.

@@ -1,5 +1,33 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 use std::fmt::Write;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+
+pub(super) type Readings = Arc<Mutex<[Status; 2]>>;
+
+pub(super) struct Snapshot {
+    readings: Readings,
+    next: Instant,
+}
+
+impl Snapshot {
+    pub(super) fn new(now: Instant) -> Self {
+        Self { readings: Arc::new(Mutex::new(Status::absent())), next: now }
+    }
+
+    pub(super) fn readings(&self) -> &Readings {
+        &self.readings
+    }
+
+    pub(super) fn refresh(&mut self, changed: bool, now: Instant, sample: impl FnOnce() -> [Status; 2]) {
+        if changed || now >= self.next {
+            // Queries take only the snapshot lock, which stays free during port I/O.
+            let readings = sample();
+            *oos_hal::sync::lock(&self.readings) = readings;
+            self.next = now + super::thermal::SAMPLE_PERIOD;
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub(super) enum Reason {
@@ -38,6 +66,7 @@ impl Reason {
 }
 
 /// Read-back state for one clock floor. Frequencies are always in Hz.
+#[derive(Clone, Copy)]
 pub(super) struct Status {
     device: &'static str,
     requested_hz: u64,

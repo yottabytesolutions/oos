@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+use super::thermal::SAMPLE_PERIOD;
 use super::*;
 use floor::CPU;
 use std::path::PathBuf;
@@ -91,7 +92,9 @@ impl Drop for Tree {
 }
 
 mod recovery;
+mod retries;
 mod review;
+mod samples;
 mod thermal;
 
 #[test]
@@ -167,23 +170,28 @@ fn missing_nodes_do_not_affect_other_devices_or_create_files() {
 
 #[test]
 fn scpi_reports_requested_current_and_read_back_floors() {
-    use crate::ui::{host::Host, Ui};
-    let _scope = crate::drawpipe::test_scope::Scope::new();
     let tree = Tree::new();
-    let guard = Handle::fixture(tree.controller(""));
-    guard.update(true);
     tree.set(CPU, "scaling_cur_freq", "1800000");
     tree.set(GPU, "cur_freq", "600000000");
-    let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 }, Host::fixture_with_clocks(guard));
-    let mut scpi = crate::scpi::Scpi::disconnected();
-    let cv = crate::gfx::Canvas::new(1, 1);
-    let reply = String::from_utf8(scpi.exec_line(&mut ui, &cv, ":SYSTem:STATe?")).unwrap();
+    let guard = Handle::fixture(tree.controller(""));
+    guard.update(true);
+    let reply = state_reply(Some(guard));
     assert!(reply.contains(
         "clock.cpu.requested_hz=1416000000 clock.cpu.applied=1 clock.cpu.current_hz=1800000000 clock.cpu.reason=none"
     ));
     assert!(reply.contains(
         "clock.gpu.requested_hz=600000000 clock.gpu.applied=1 clock.gpu.current_hz=600000000 clock.gpu.reason=none"
     ));
+}
+
+fn state_reply(handle: Option<Handle>) -> String {
+    use crate::ui::{host::Host, Ui};
+    let _scope = crate::drawpipe::test_scope::Scope::new();
+    let host = handle.map_or_else(Host::fixture, Host::fixture_with_clocks);
+    let mut ui = Ui::new(crate::wave::Source::Demo { t: 0.0 }, host);
+    let mut scpi = crate::scpi::Scpi::disconnected();
+    let canvas = crate::gfx::Canvas::new(1, 1);
+    String::from_utf8(scpi.exec_line(&mut ui, &canvas, ":SYSTem:STATe?")).unwrap()
 }
 
 #[test]
@@ -362,75 +370,9 @@ fn logging_child() {
     }
 }
 
-struct AlteredWrite {
-    inner: linux::Sysfs,
-    first: Option<(u64, io::Result<()>)>,
-}
-impl Port for AlteredWrite {
-    fn read(&self, path: &str) -> io::Result<String> {
-        self.inner.read(path)
-    }
-    fn entries(&self, path: &str) -> io::Result<Vec<String>> {
-        self.inner.entries(path)
-    }
-    fn read_link(&self, path: &str) -> io::Result<PathBuf> {
-        self.inner.read_link(path)
-    }
-    fn write(&mut self, path: &str, value: u64) -> io::Result<()> {
-        if let Some((minimum, result)) = self.first.take() {
-            self.inner.write(path, minimum)?;
-            return result;
-        }
-        self.inner.write(path, value)
-    }
-}
-
-#[test]
-fn mismatched_read_back_reports_applied_and_retries_at_guard_cadence() {
-    for (minimum, applied) in [(816_000, 0), (1_800_000, 1)] {
-        let tree = Tree::new();
-        let port = AlteredWrite { inner: linux::Sysfs(tree.0.clone()), first: Some((minimum, Ok(()))) };
-        let clock = ManualClock::new();
-        let mut c = Controller::with_clock(
-            Box::new(port),
-            Config::parse("perf.gpu_floor = off"),
-            None,
-            tree.0.join("saved"),
-            clock.source(),
-        );
-        c.update(true);
-        assert!(status_text(&c).contains(&format!(
-            "clock.cpu.applied={applied} clock.cpu.current_hz=816000000 clock.cpu.reason=apply_failed"
-        )));
-        clock.advance(Duration::from_secs(1) - Duration::from_nanos(1));
-        c.update(true);
-        assert_eq!(tree.minima().0, minimum.to_string());
-        clock.advance(Duration::from_nanos(1));
-        c.update(true);
-        assert_eq!(tree.minima().0, "1416000");
-        assert!(status_text(&c).contains("clock.cpu.applied=1 clock.cpu.current_hz=816000000 clock.cpu.reason=none"));
-        c.update(false);
-        assert_eq!(tree.minima().0, "408000");
-    }
-}
-
-#[test]
-fn matching_read_back_succeeds_even_with_write_error() {
-    let tree = Tree::new();
-    let port = AlteredWrite {
-        inner: linux::Sysfs(tree.0.clone()),
-        first: Some((1_416_000, Err(io::ErrorKind::PermissionDenied.into()))),
-    };
-    let mut c = Controller::new(Box::new(port), Config::parse("perf.gpu_floor = off"), None, tree.0.join("saved"));
-    c.update(true);
-    assert!(status_text(&c).contains("clock.cpu.applied=1 clock.cpu.current_hz=816000000 clock.cpu.reason=none"));
-    c.update(false);
-    assert_eq!(tree.minima().0, "408000");
-}
-
 fn status_text(controller: &Controller) -> String {
     let mut text = String::new();
-    for status in controller.status() {
+    for status in *oos_hal::sync::lock(controller.snapshot.readings()) {
         status.write_scpi(&mut text);
     }
     text

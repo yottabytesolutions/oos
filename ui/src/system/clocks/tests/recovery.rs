@@ -50,6 +50,60 @@ fn recovery_ignores_optouts_and_retains_unverifiable_receipts() {
 }
 
 #[test]
+fn absent_device_does_not_block_startup_recovery_or_the_other_floor() {
+    for (absent, present, minimum, raised, saved) in
+        [(GPU, CPU, "scaling_min_freq", "1416000", "408000"), (CPU, GPU, "min_freq", "600000000", "400000000")]
+    {
+        let tree = Tree::new();
+        let receipt = tree.0.join("saved");
+        std::fs::write(&receipt, "gpu 400000000\ncpu 408000\n").unwrap();
+        std::fs::remove_dir_all(tree.0.join(absent)).unwrap();
+        tree.set(present, minimum, raised);
+
+        let mut controller = tree.controller("");
+        let read_minimum = || std::fs::read_to_string(tree.0.join(present).join(minimum)).unwrap();
+        assert_eq!(read_minimum(), saved);
+        assert!(!receipt.exists());
+        assert!(!tree.0.join(absent).exists());
+        controller.update(true);
+        assert_eq!(read_minimum(), raised);
+        let state = status_text(&controller);
+        let (present, absent) = if absent == GPU { ("cpu", "gpu") } else { ("gpu", "cpu") };
+        assert_eq!(std::fs::read_to_string(&receipt).unwrap(), format!("{present} {saved}\n"));
+        assert!(state.contains(&format!("clock.{absent}.reason=absent")));
+        controller.restore();
+        assert_eq!(read_minimum(), saved);
+        assert!(!receipt.exists());
+    }
+}
+
+#[test]
+fn existing_gpu_with_unreadable_frequencies_keeps_recovery_pending() {
+    let tree = Tree::new();
+    let receipt = tree.0.join("saved");
+    let contents = "gpu 400000000\ncpu 408000\n";
+    std::fs::write(&receipt, contents).unwrap();
+    std::fs::remove_file(tree.0.join(GPU).join("available_frequencies")).unwrap();
+    tree.set(CPU, "scaling_min_freq", "1416000");
+    tree.set(GPU, "min_freq", "600000000");
+    let clock = ManualClock::new();
+    let mut controller = tree.controller_with_clock(&clock);
+
+    for _ in 0..2 {
+        controller.update(true);
+        assert_eq!(tree.minima(), ("408000".into(), "600000000".into()));
+        assert_eq!(std::fs::read_to_string(&receipt).unwrap(), contents);
+        assert!(status_text(&controller).contains("clock.gpu.reason=restore_failed"));
+        clock.advance(SAMPLE_PERIOD);
+    }
+    tree.set(GPU, "available_frequencies", "400000000 600000000");
+    controller.update(true);
+    assert_eq!(tree.minima(), ("408000".into(), "400000000".into()));
+    assert!(!receipt.exists());
+    assert!(status_text(&controller).contains("clock.cpu.reason=recovery_failed"));
+}
+
+#[test]
 fn failed_journal_write_never_raises_and_invalid_receipt_is_kept() {
     let tree = Tree::new();
     std::fs::create_dir(tree.0.join("saved.new")).unwrap();

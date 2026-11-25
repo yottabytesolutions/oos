@@ -333,10 +333,10 @@ fn check_learning_budget(pair: &crate::system::perfguard::Pair) {
 fn learning_budget_rejects_candidate_regressions() {
     use std::time::Duration;
     for (best, p99) in [((1, 2), (4, 2)), ((2, 1), (1, 2))] {
-        let pair = crate::system::perfguard::Pair {
-            best: (Duration::from_millis(best.0), Duration::from_millis(best.1)),
-            p99: (Duration::from_millis(p99.0), Duration::from_millis(p99.1)),
-        };
+        let pair = crate::system::perfguard::Pair::cpu(
+            (Duration::from_millis(best.0), Duration::from_millis(best.1)),
+            (Duration::from_millis(p99.0), Duration::from_millis(p99.1)),
+        );
         assert!(std::panic::catch_unwind(|| check_learning_budget(&pair)).is_err());
     }
 }

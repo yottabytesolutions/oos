@@ -591,7 +591,7 @@ Most best ratios compare the minimum CPU time for each path. Tail ratios compare
 The worker and counter-overhead probes wait for batch completion and measure the sum of CPU time
 across the serial test process. Unit frame-event quantiles are measured separately.
 
-| Guard ID | Best CPU ratio <= | p99 CPU ratio <= | Workload / reference | Budget covered |
+| Guard ID | Cost ratio <= | p99 CPU ratio <= | Workload / reference | Budget covered |
 |---|---|---|---|---|
 | batch_decode | 0.5 | 0.75 | five channel/depth cases; fused decode / two-pass decode | acquisition decode primitive |
 | decode_f32 | 0.8 | 1.2 | same batches; f32 / f64 fused decode | acquisition decode primitive |
@@ -599,14 +599,15 @@ across the serial test process. Unit frame-event quantiles are measured separate
 | perf_guard_fast_interpolation | 1.1 | 1.65 | seven sparse timebase/channel cases; fast / exact | deposit kernel |
 | perf_guard_compressed_frame | 0.5 | 0.75 | 100 k point square, k=15; compressed / raw decode and draw | deposit kernel |
 | perf_guard_codes_per_frame | 0.9 | 1.35 | five channel/trigger cases; codes / decode and draw | deposit kernel |
-| perf_guard_pipeline_counters | 1.01 | 1.515 | identical warmed Batch pipelines, counters on / off; 1/2/4 channels at 1 and 10 us/div, full production-plan batches | matched CPU overhead <= 1% (ADR 0031) |
+| perf_guard_pipeline_counters | 1.01 | 1.515 | identical warmed Batch pipelines, counters on / off; 1/2/4 channels at 1 and 10 us/div, full production-plan batches | matched work overhead <= 1% (ADR 0031) |
 | perf_guard_deposit_worker_per_frame | 1.5 | 2.25 | three depths, measurements off; one worker / frames mode | worker orchestration |
 | perf_guard_deep_record_reuse | 0.8 | 1.0 | 4 channels, 10M depth (625k pairs each); actual hw_record + reused draw / hw_record + independent draw_frame conversion | main-view conversion and draw |
 | perf_guard_framestats | 0.7 | 1.05 | 125 k points, cheap set; fused / reference statistics | measure primitive |
 
 The pipeline counter guard alternates paths after each picture and sums 16 pictures per side in
-each round. It compares matched rounds on shared workers in the window spanning two thirds of the
-rounds with the lowest combined CPU time. The guard checks picture and record counts. A separate
+each round. It uses the median paired retired-instruction ratio on Apple silicon. On hosts without
+the counter, it uses the median paired ratio among the quarter of rounds with the lowest combined CPU
+time. Both also check CPU p99, picture and record counts. A separate
 deterministic test checks pixel and pacing equivalence. Release acceptance measures four-channel
 30 FPS and scheduling latency on the unit.
 

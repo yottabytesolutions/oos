@@ -139,7 +139,7 @@ fn token(reply: &str) -> Option<String> {
     })
 }
 
-fn finite(reply: &str) -> Option<f64> {
+pub(super) fn finite(reply: &str) -> Option<f64> {
     let value = reply.trim().parse::<f64>().ok().filter(|number| number.is_finite())?;
     Some(if value == 0.0 { 0.0 } else { value })
 }
@@ -166,19 +166,24 @@ fn error_code(reply: &str) -> Result<i32, Error> {
     reply.split_once(',').and_then(|(code, _)| code.trim().parse().ok()).ok_or(Error::InvalidReply(ERROR_QUERY))
 }
 
-fn write(scope: &mut impl Scpi, setter: &str) -> Result<Option<i32>, Error> {
+pub(super) fn write(scope: &mut impl Scpi, setter: &str) -> Result<Option<i32>, Error> {
     scope.send(setter).map_err(Error::Scpi)?;
     let code = error_code(&scope.query(ERROR_QUERY).map_err(Error::Scpi)?)?;
     Ok((code != 0).then_some(code))
 }
 
-fn read(scope: &mut impl Scpi, query: &str, value: Value<'_>, setter_errors: Vec<i32>) -> Result<Readback, Error> {
+pub(super) fn query_setting(scope: &mut impl Scpi, query: &str) -> Result<(Option<String>, Option<i32>), Error> {
     // Keep the error query in the same program so even an older build that omits
     // the failed query's response slot returns a complete line.
     let reply = scope.query(&format!("{query};{ERROR_QUERY}")).map_err(Error::Scpi)?;
     let (observation, error) = reply.rsplit_once(';').map_or((None, reply.as_str()), |(v, e)| (Some(v), e));
     let code = error_code(error)?;
-    let observed = observation.filter(|_| code == 0).and_then(|reply| value.observed(reply.trim()));
+    Ok((observation.filter(|_| code == 0).map(|reply| reply.trim().to_owned()), (code != 0).then_some(code)))
+}
+
+fn read(scope: &mut impl Scpi, query: &str, value: Value<'_>, setter_errors: Vec<i32>) -> Result<Readback, Error> {
+    let (reply, query_error) = query_setting(scope, query)?;
+    let observed = reply.as_deref().and_then(|reply| value.observed(reply));
     let status = match observed.as_deref() {
         _ if !setter_errors.is_empty() => Status::Rejected,
         None => Status::Unavailable,
@@ -186,13 +191,7 @@ fn read(scope: &mut impl Scpi, query: &str, value: Value<'_>, setter_errors: Vec
         Some(actual) if value.matches(actual) => Status::Verified,
         Some(_) => Status::Mismatch,
     };
-    Ok(Readback {
-        requested: value.requested(),
-        observed,
-        status,
-        setter_errors,
-        query_error: (code != 0).then_some(code),
-    })
+    Ok(Readback { requested: value.requested(), observed, status, setter_errors, query_error })
 }
 
 fn setting(
@@ -208,17 +207,28 @@ fn setting(
     Ok(())
 }
 
-pub(super) fn apply(scope: &mut impl Scpi, view: &View, signal: u8) -> Result<Settings, Error> {
+pub(super) fn apply(
+    scope: &mut impl Scpi,
+    view: &View,
+    signal: u8,
+    level: f64,
+    auto_depth: bool,
+) -> Result<Settings, Error> {
     let mut settings = Settings::new();
     let source = format!("CHAN{signal}");
-    configure_trigger(scope, &mut settings, &source)?;
+    configure_trigger(scope, &mut settings, &source, "NORM", Some(level))?;
     let others = (1..=4).filter(|&channel| channel != signal);
     for (index, channel) in std::iter::once(signal).chain(others).enumerate() {
         let displayed = if index < usize::from(view.channels) { "ON" } else { "OFF" };
         setting(scope, &mut settings, &format!(":CHAN{channel}:DISP"), displayed, Value::Token(displayed))?;
     }
-    configure_acquisition(scope, &mut settings, view)?;
+    configure_acquisition(scope, &mut settings, view, auto_depth)?;
     configure_measurements(scope, &mut settings, view, &source)?;
+    start_acquisition(scope, &mut settings)?;
+    Ok(settings)
+}
+
+fn start_acquisition(scope: &mut impl Scpi, settings: &mut Settings) -> Result<(), Error> {
     let errors: Vec<i32> = write(scope, ":RUN")?.into_iter().collect();
     // TRIG:STAT? uses different active statuses. The state header has the Run/Stop field.
     let reply = scope.query(crate::unit_tools::scpi::STATE).map_err(Error::Scpi)?;
@@ -243,13 +253,21 @@ pub(super) fn apply(scope: &mut impl Scpi, view: &View, signal: u8) -> Result<Se
             query_error: None,
         },
     );
-    Ok(settings)
+    Ok(())
 }
 
-fn configure_trigger(scope: &mut impl Scpi, settings: &mut Settings, source: &str) -> Result<(), Error> {
+fn configure_trigger(
+    scope: &mut impl Scpi,
+    settings: &mut Settings,
+    source: &str,
+    sweep: &str,
+    level: Option<f64>,
+) -> Result<(), Error> {
+    // The setup setter changes only the type, without selecting a Bus or demo preset.
+    let errors = write(scope, ":SYST:SET trig_type = Edge")?.into_iter().collect();
+    settings.insert(":TRIG:MODE".into(), read(scope, ":TRIG:MODE?", Value::Token("EDGE"), errors)?);
     for (header, value) in [
-        (":TRIG:MODE", "EDGE"),
-        (":TRIG:SWE", "NORM"),
+        (":TRIG:SWE", sweep),
         (":TRIG:EDGE:SOUR", source),
         (":TRIG:EDGE:SLOP", "POS"),
         (":TRIG:COUP", "DC"),
@@ -257,13 +275,22 @@ fn configure_trigger(scope: &mut impl Scpi, settings: &mut Settings, source: &st
     ] {
         setting(scope, settings, header, value, Value::Token(value))?;
     }
-    for header in [":TRIG:EDGE:LEV", ":TRIG:HOLD", ":TIM:MAIN:OFFS"] {
+    for header in [":TRIG:HOLD", ":TIM:MAIN:OFFS"] {
         setting(scope, settings, header, "0", Value::Number("0"))?;
+    }
+    if let Some(level) = level {
+        let level = level.to_string();
+        setting(scope, settings, ":TRIG:EDGE:LEV", &level, Value::Number(&level))?;
     }
     Ok(())
 }
 
-fn configure_acquisition(scope: &mut impl Scpi, settings: &mut Settings, view: &View) -> Result<(), Error> {
+fn configure_acquisition(
+    scope: &mut impl Scpi,
+    settings: &mut Settings,
+    view: &View,
+    auto_depth: bool,
+) -> Result<(), Error> {
     let feature = view.feature;
     let acquisition = match feature {
         Feature::Peak => "PEAK",
@@ -275,15 +302,57 @@ fn configure_acquisition(scope: &mut impl Scpi, settings: &mut Settings, view: &
     if matches!(feature, Feature::Average) {
         setting(scope, settings, ":ACQ:AVER", "16", Value::Number("16"))?;
     }
-    let errors = write(scope, ":ACQ:MDEP AUTO")?.into_iter().collect();
-    settings.insert(":ACQ:MDEP".into(), read(scope, ":SYST:GET? mdepth", Value::AutoDepth, errors)?);
-    setting(scope, settings, ":ACQ:MDEP:AUTO", "EXT", Value::Token("EXT"))?;
+    set_automatic_memory_depth(scope, settings)?;
+    if auto_depth {
+        setting(scope, settings, ":ACQ:MDEP:AUTO", "EXT", Value::Token("EXT"))?;
+    } else {
+        settings.insert(
+            ":ACQ:MDEP:AUTO".into(),
+            Readback {
+                requested: Some("EXT".into()),
+                observed: None,
+                status: Status::Unavailable,
+                setter_errors: Vec::new(),
+                query_error: None,
+            },
+        );
+    }
     setting(scope, settings, ":TIM:MAIN:SCAL", view.scale, Value::Number(view.scale))?;
     let zoom = if matches!(feature, Feature::Zoom) { "ON" } else { "OFF" };
-    setting(scope, settings, ":TIM:DEL:ENAB", zoom, Value::Token(zoom))?;
+    set_zoom(scope, settings, zoom)?;
     if zoom == "ON" {
         setting(scope, settings, ":TIM:DEL:SCAL", "1e-7", Value::Number("1e-7"))?;
         setting(scope, settings, ":TIM:DEL:OFFS", "0", Value::Number("0"))?;
+    }
+    Ok(())
+}
+
+fn set_automatic_memory_depth(scope: &mut impl Scpi, settings: &mut Settings) -> Result<(), Error> {
+    let errors = write(scope, ":ACQ:MDEP AUTO")?.into_iter().collect();
+    settings.insert(":ACQ:MDEP".into(), read(scope, ":SYST:GET? mdepth", Value::AutoDepth, errors)?);
+    Ok(())
+}
+
+fn set_zoom(scope: &mut impl Scpi, settings: &mut Settings, enabled: &str) -> Result<(), Error> {
+    // Toggling the zoom control would reset the user's vertical scale and pan.
+    let setter = if enabled == "ON" { ":SYST:SET zoom = true" } else { ":SYST:SET zoom = false" };
+    let errors = write(scope, setter)?.into_iter().collect();
+    settings.insert(":TIM:DEL:ENAB".into(), read(scope, ":TIM:DEL:ENAB?", Value::Token(enabled), errors)?);
+    Ok(())
+}
+
+pub(super) fn prepare_trigger(scope: &mut impl Scpi, signal: u8, level: Option<f64>) -> Result<(), Error> {
+    let mut settings = Settings::new();
+    let sweep = if level.is_some() { "NORM" } else { "AUTO" };
+    configure_trigger(scope, &mut settings, &format!("CHAN{signal}"), sweep, level)?;
+    setting(scope, &mut settings, &format!(":CHAN{signal}:DISP"), "ON", Value::Token("ON"))?;
+    setting(scope, &mut settings, ":ACQ:TYPE", "NORM", Value::Token("NORM"))?;
+    set_automatic_memory_depth(scope, &mut settings)?;
+    setting(scope, &mut settings, ":TIM:MAIN:SCAL", "1e-3", Value::Number("1e-3"))?;
+    set_zoom(scope, &mut settings, "OFF")?;
+    start_acquisition(scope, &mut settings)?;
+    if let Some((header, _)) = settings.iter().find(|(_, readback)| readback.status != Status::Verified) {
+        return Err(Error::Setting(header.clone()));
     }
     Ok(())
 }
@@ -302,15 +371,18 @@ fn configure_measurements(
     for header in [":DVM:ENAB", ":COUN:ENAB", ":MEAS:STAT:DISP"] {
         setting(scope, settings, header, "OFF", Value::Token("OFF"))?;
     }
-    let errors = write(scope, ":MEAS:CLE ALL")?.into_iter().collect();
+    // Swap the setup lists without clearing the user's per-row overrides.
+    let mut errors = Vec::new();
+    for key in ["meas", "meas2", "cat"] {
+        errors.extend(write(scope, &format!(":SYST:SET {key} ="))?);
+    }
     settings.insert(":MEAS:CLE".into(), read(scope, STRIP, Value::Strip(&[]), errors)?);
     if matches!(view.feature, Feature::Measurements) {
         // The strip reports canonical names and we sort rows to compare their membership.
         let items = ["FREQUENCY", "RTIME", "VPP"].map(|item| format!("{item},{source}"));
-        let mut errors = Vec::new();
-        for item in &items {
-            errors.extend(write(scope, &format!(":MEAS:ITEM {item}"))?);
-        }
+        let channel = source.trim_start_matches("CHAN");
+        let setter = format!(":SYST:SET meas = Freq:{channel} Rise:{channel} Vpp:{channel}");
+        let errors = write(scope, &setter)?.into_iter().collect();
         settings.insert(
             ":MEAS:ITEM".into(),
             read(scope, STRIP, Value::Strip(&items.each_ref().map(String::as_str)), errors)?,

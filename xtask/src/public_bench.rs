@@ -1,29 +1,34 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+mod interrupt;
 mod report;
+mod restore;
 mod settings;
 mod state;
 #[cfg(test)]
 mod tests;
+mod trigger;
 
 use crate::unit_tools::{
     report::PendingReport,
     scpi::{Scpi, TcpScpi, PORT, STATE},
     Flags,
 };
+use interrupt::HostClock;
 use report::{Metric, Report, Sample, Spread, ViewReport};
+use restore::Snapshot;
 use settings::VIEWS;
 use state::{read_state, State};
 use std::{
     fmt, fs, io,
     path::{Path, PathBuf},
     process::ExitCode,
-    thread,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, SystemTime},
 };
+use trigger::{Level, Trigger};
 
 const USAGE: &str = "usage: cargo xtask public-bench --host <addr> --label <label> \
---signal-channel <1-4> [--runs <n>] --out <dir>\n       cargo xtask public-bench compare <a.json> <b.json>";
+--signal-channel <1-4> [--trigger-level <volts|auto>] [--runs <n>] --out <dir>\n       cargo xtask public-bench compare <a.json> <b.json>";
 const SETTLE: Duration = Duration::from_secs(6);
 const WINDOW: Duration = Duration::from_secs(12);
 const PROBE_INTERVAL: Duration = Duration::from_millis(400);
@@ -36,6 +41,13 @@ enum Error {
     Report(String),
     Output(io::Error),
     Measurement(&'static str),
+    Setting(String),
+    Snapshot(&'static str),
+    TriggerLevel,
+    ZeroRate,
+    Restore { failed: Vec<&'static str>, run: Option<Box<Self>> },
+    Interrupted,
+    InterruptControl(io::Error),
 }
 
 impl fmt::Display for Error {
@@ -43,9 +55,31 @@ impl fmt::Display for Error {
         match self {
             Self::Scpi(error) | Self::Report(error) => f.write_str(error),
             Self::InvalidReply(query) => write!(f, "invalid reply to {query}"),
-            Self::Output(error) => write!(f, "write benchmark report: {error}"),
+            Self::Output(error) => write!(f, "write benchmark output: {error}"),
             Self::Measurement(error) => f.write_str(error),
+            Self::Setting(header) => write!(f, "could not verify {header} for the trigger check"),
+            Self::Snapshot(key) => write!(f, "could not read a restorable value for {key}"),
+            Self::TriggerLevel => f.write_str(
+                "could not measure distinct signal minimum and maximum for auto trigger level. Use --trigger-level <volts>",
+            ),
+            Self::ZeroRate => f.write_str("one or more views had no triggers"),
+            Self::Restore { failed, run } => {
+                if let Some(error) = run {
+                    write!(f, "{error}. ")?;
+                }
+                write!(f, "could not restore or verify settings: {}", failed.join(", "))
+            }
+            Self::Interrupted => f.write_str("benchmark interrupted"),
+            Self::InterruptControl(error) => write!(f, "start benchmark interrupt supervisor: {error}"),
         }
+    }
+}
+
+fn with_restoration<T>(result: Result<T, Error>, failed: Vec<&'static str>) -> Result<T, Error> {
+    if failed.is_empty() {
+        result
+    } else {
+        Err(Error::Restore { failed, run: result.err().map(Box::new) })
     }
 }
 
@@ -54,13 +88,15 @@ struct BenchmarkOptions<'a> {
     host: &'a str,
     label: &'a str,
     signal_channel: u8,
+    trigger_level: Level,
     runs: usize,
     out: PathBuf,
 }
 
 impl<'a> BenchmarkOptions<'a> {
     fn parse(args: &[&'a str]) -> Result<Self, String> {
-        let flags = Flags::parse(args, &["--host", "--label", "--signal-channel", "--runs", "--out"], None)?;
+        let flags =
+            Flags::parse(args, &["--host", "--label", "--signal-channel", "--trigger-level", "--runs", "--out"], None)?;
         let host = flags.required("--host")?;
         let label = flags.required("--label")?;
         if !label.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_'))
@@ -83,19 +119,35 @@ impl<'a> BenchmarkOptions<'a> {
             .ok()
             .filter(|&n| n > 0)
             .ok_or("--runs must be a positive integer")?;
-        Ok(Self { host, label, signal_channel, runs, out: flags.required("--out")?.into() })
+        let trigger_level = match flags.get("--trigger-level").unwrap_or("auto") {
+            "auto" => Level::Auto,
+            volts => Level::Explicit(
+                settings::finite(volts)
+                    .filter(|value| (*value as f32).is_finite())
+                    .ok_or("--trigger-level must be a finite voltage or auto")?,
+            ),
+        };
+        Ok(Self { host, label, signal_channel, trigger_level, runs, out: flags.required("--out")?.into() })
     }
 
     fn measure(&self) -> Result<(), Error> {
+        let clock = HostClock::start()?;
         fs::create_dir_all(&self.out).map_err(Error::Output)?;
         let destination = self.out.join(format!("public-{}.json", self.label));
         let pending = PendingReport::open(&destination).map_err(Error::Output)?;
         let started = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .map_err(|_| Error::Measurement("host time precedes the Unix epoch"))?;
+        clock.check()?;
         let mut scope = TcpScpi::connect(self.host.into(), PORT).map_err(Error::Scpi)?;
-        let report = collect(&mut scope, &HostClock(Instant::now()), self, started)?;
-        pending.write(&report).map_err(Error::Output)
+        let mut out = io::stdout().lock();
+        let (report, failed) = collect(&mut scope, &clock, self, started, &mut out)?;
+        let result = pending
+            .write(&report)
+            .map_err(Error::Output)
+            .and_then(|()| report.write_summary(&mut out))
+            .and_then(|()| report.check_rates());
+        with_restoration(result, failed)
     }
 }
 
@@ -106,16 +158,22 @@ pub(super) fn run(args: &[&str]) -> ExitCode {
             return ExitCode::SUCCESS;
         }
         ["compare", a, b] => report::compare_files(Path::new(a), Path::new(b)),
-        _ => match BenchmarkOptions::parse(args) {
-            Ok(options) => options.measure(),
-            Err(error) => {
-                eprintln!("{error}\n{USAGE}");
-                return ExitCode::from(2);
+        _ => {
+            let worker = args.first() == Some(&interrupt::WORKER);
+            let flags = if worker { &args[1..] } else { args };
+            match BenchmarkOptions::parse(flags) {
+                Ok(options) if worker => options.measure(),
+                Ok(_) => Err(interrupt::supervise(flags)),
+                Err(error) => {
+                    eprintln!("{error}\n{USAGE}");
+                    return ExitCode::from(2);
+                }
             }
-        },
+        }
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,
+        Err(Error::ZeroRate) => ExitCode::FAILURE,
         Err(error) => {
             eprintln!("public-bench: {error}");
             ExitCode::FAILURE
@@ -125,19 +183,9 @@ pub(super) fn run(args: &[&str]) -> ExitCode {
 
 trait Clock {
     fn now(&self) -> Duration;
-    fn wait(&self, duration: Duration);
-}
-
-#[derive(Debug)]
-struct HostClock(Instant);
-
-impl Clock for HostClock {
-    fn now(&self) -> Duration {
-        self.0.elapsed()
-    }
-
-    fn wait(&self, duration: Duration) {
-        thread::sleep(duration);
+    fn wait(&self, duration: Duration) -> Result<(), Error>;
+    fn check(&self) -> Result<(), Error> {
+        Ok(())
     }
 }
 
@@ -146,7 +194,9 @@ fn collect(
     clock: &impl Clock,
     options: &BenchmarkOptions<'_>,
     started: Duration,
-) -> Result<Report, Error> {
+    out: &mut impl io::Write,
+) -> Result<(Report, Vec<&'static str>), Error> {
+    clock.check()?;
     let identity = scope.query("*IDN?").map_err(Error::Scpi)?;
     let version = identity
         .split(',')
@@ -154,23 +204,50 @@ fn collect(
         .map(str::trim)
         .filter(|version| !version.is_empty())
         .ok_or(Error::InvalidReply("*IDN?"))?;
-    let state = State::parse(&scope.query(STATE).map_err(Error::Scpi)?)?;
-    let mut views: Vec<ViewReport> = VIEWS.iter().map(|view| ViewReport::new(view.name)).collect();
     scope.send("*CLS").map_err(Error::Scpi)?;
+    let initial_state = scope.query(STATE).map_err(Error::Scpi)?;
+    let state = State::parse(&initial_state)?;
+    let snapshot = Snapshot::read(scope, &initial_state)?;
+    clock.check()?;
+    let result = collect_views(scope, clock, options, &snapshot, out);
+    let failed = snapshot.restore(scope);
+    match result {
+        Ok((trigger, views)) => Ok((Report::new(options, started, version, state.card_mode, views, trigger), failed)),
+        Err(error) => with_restoration(Err(error), failed),
+    }
+}
+
+fn collect_views(
+    scope: &mut impl Scpi,
+    clock: &impl Clock,
+    options: &BenchmarkOptions<'_>,
+    snapshot: &Snapshot,
+    out: &mut impl io::Write,
+) -> Result<(Trigger, Vec<ViewReport>), Error> {
+    let signal = options.signal_channel;
+    let trigger = Trigger::resolve(scope, clock, signal, options.trigger_level)?;
+    clock.check()?;
+    settings::prepare_trigger(scope, signal, Some(trigger.volts()))?;
+    if !trigger::advances_while_settling(scope, clock)? {
+        return Err(Error::Measurement(
+            "no triggers before the first view: acquired counter did not advance in Normal sweep during the 6 s settle",
+        ));
+    }
+    let mut views: Vec<ViewReport> = VIEWS.iter().map(|view| ViewReport::new(view.name)).collect();
     for run in 1..=options.runs {
         for (view, report) in VIEWS.iter().zip(&mut views) {
-            eprintln!("public-bench: run {run}/{} {}", options.runs, view.name);
-            let mut settings = settings::apply(scope, view, options.signal_channel)?;
-            clock.wait(SETTLE);
+            clock.check()?;
+            let mut settings = settings::apply(scope, view, signal, trigger.volts(), snapshot.has_auto_depth())?;
+            clock.wait(SETTLE)?;
             settings::read_effective_depth(scope, &mut settings)?;
             let (elapsed, values) = measure_window(scope, clock)?;
             report.samples.push(Sample { settings, elapsed_s: elapsed.as_secs_f64(), values });
+            report.summarize();
+            report.write_progress(out, run, options.runs)?;
         }
     }
-    for view in &mut views {
-        view.summarize();
-    }
-    Ok(Report::new(options, started, version, state.card_mode, views))
+    clock.check()?;
+    Ok((trigger, views))
 }
 
 fn measure_window(scope: &mut impl Scpi, clock: &impl Clock) -> Result<(Duration, report::Values), Error> {
@@ -178,12 +255,13 @@ fn measure_window(scope: &mut impl Scpi, clock: &impl Clock) -> Result<(Duration
     let end = start + WINDOW;
     let mut latencies = Vec::new();
     while clock.now() < end {
+        clock.check()?;
         let reply = scope.query_timed(OPC, || clock.now()).map_err(Error::Scpi)?;
         if reply.line.trim() != "1" {
             return Err(Error::InvalidReply(OPC));
         }
         latencies.push((reply.after_line - reply.before_write).as_secs_f64() * 1_000.0);
-        clock.wait(PROBE_INTERVAL.min(end.saturating_sub(clock.now())));
+        clock.wait(PROBE_INTERVAL.min(end.saturating_sub(clock.now())))?;
     }
     let (stop, after) = read_state(scope, clock)?;
     let duration = stop.saturating_sub(start);

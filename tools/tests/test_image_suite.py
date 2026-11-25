@@ -34,7 +34,7 @@ class ImageTier(unittest.TestCase):
                             ['sh', 'boot/sign-dev-image.sh'], ['python3', '-I', 'boot/build-gel.py']):
                 self.assertLess(seen.index(command), validation)
             self.assertEqual(seen[validation + 1:], [['sh', f'tools/{name}.sh'] for name in
-                             ('gel-sim', 'usb-sim', 'wlan-sim')])
+                             ('gel-sim', 'usb-sim', 'wlan-sim', 'test_storage_data')])
             self.assertTrue(manifest.call_args.kwargs['check'])
 
     def test_missing_kernel_source_cannot_pass_or_launch_builders(self):
